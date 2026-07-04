@@ -473,6 +473,33 @@ M4 kickoff decisions (2026-07-04):
     now for M5 listings; template annotation via a Templates UI surface
     (click four corners).
 
+M4 design resolutions (2026-07-04):
+
+32. Gallery-wall v1 fills extra regions with varied deterministic crops of
+    the one photo (mockup presentation only; companion-photo selection
+    arrives with M5 catalog data).
+33. Manual-drop landing files (photo_id unknown) get full mockup sets —
+    this is the catalog-backfill path.
+34. Deterministic mockup compositing (incl. the acrylic gloss overlay) is
+    compatible with "AI never touches the photograph": the rule targets
+    generative edits and the sold file.
+
+Etsy auth design (2026-07-04, from Open API v3 docs verification):
+
+35. Etsy access tokens live 1 hour and refresh tokens ROTATE on every use
+    (90-day life). Therefore: an `EtsyTokenStore` persists tokens in
+    `data/etsy_tokens.json` (gitignored, agent-read-denied) with automatic
+    refresh + immediate rotated-token persistence; a one-time
+    `shopsteward etsy auth` CLI command runs the authorization-code + PKCE
+    consent flow via a localhost redirect (callback
+    `http://localhost:8322/oauth/redirect`) and auto-discovers the shop id;
+    scopes are read-only (`listings_r transactions_r shops_r`) until M5
+    re-consents for write. Only `ETSY_API_KEY` stays in `.env`. Hard rule:
+    **tokens never enter the event log** (append-only = undeletable).
+    Operational notes: keystring inactive until Etsy approves registration;
+    personal access suffices for own-shop use (no commercial access);
+    dormant apps (6 months without a request) are banned.
+
 ## 14. Appendix: Deferred to v2+
 
 Unchanged from PRD v2.

@@ -1,45 +1,68 @@
 # Etsy API setup
 
-## 1. Register an app
+*Amended 2026-07-04 per PRD §13 decision 35 (token manager, `etsy auth`
+command, read-only scopes first).*
 
-1. Go to https://www.etsy.com/developers and create a new app.
-2. Note the **Keystring** (this is `ETSY_API_KEY`).
-3. Request the scopes ShopSteward needs: `listings_r transactions_r shops_r`.
+## 1. Register an app (one-time, ~10 minutes)
 
-## 2. OAuth 2.0 (authorization code + PKCE)
+1. Go to https://www.etsy.com/developers/register and sign in with your
+   regular Etsy account.
+2. Register a new application (e.g. "ShopSteward"). Under **Manage your
+   apps** you'll find the **API Key keystring** (`ETSY_API_KEY`) and a
+   **shared secret**. Treat both like passwords.
+3. Add the callback URL `http://localhost:8322/oauth/redirect` to the app's
+   redirect URIs (used by `shopsteward etsy auth`).
+4. Notes:
+   - The keystring is **not active until Etsy approves** the registration
+     (usually quick).
+   - New apps start with **personal access** — sufficient for managing your
+     own shop. Do NOT request commercial access; it's only for apps serving
+     other sellers.
+   - Apps with no successful API request in **6 months are marked dormant
+     and banned**. Moot once scheduled analytics pulls run.
 
-Etsy's Open API v3 requires OAuth 2.0 with PKCE — there is no static API
-token. Walk the standard authorization-code + PKCE flow (generate a code
-verifier/challenge, redirect the operator to Etsy's consent screen, exchange
-the returned code for an access + refresh token). See Etsy's official
-"Quick Start" guide for the exact endpoints; do not hand-roll this from
-memory — the docs change.
+## 2. One-time consent: `shopsteward etsy auth`
 
-The exchange yields:
+Etsy Open API v3 uses OAuth 2.0 authorization-code + PKCE. The
+`shopsteward etsy auth` command (pre-M5 Etsy wiring) does the whole dance:
 
-- an **access token** (short-lived)
-- a **refresh token** (long-lived; use it to mint new access tokens)
+1. Generates the PKCE verifier/challenge and a state value.
+2. Starts a localhost listener on port 8322 and opens Etsy's consent page
+   in your browser — click **Allow** while logged in as your shop account.
+3. Exchanges the returned code for tokens and writes them to the token
+   store (below).
+4. Auto-discovers your shop id from the token's user-id prefix and stores
+   it (override with `ETSY_SHOP_ID` if you ever need to).
 
-## 3. Environment variables
+Scopes requested now (read-only, matches the §8.4 smoke test):
+`listings_r transactions_r shops_r`. M5 re-runs consent once to add the
+write scopes listing creation needs — least privilege until then.
 
-Store these in your local `.env` (already gitignored, never committed, and
-never read by agents in this repo):
+## 3. Token lifetimes and the token store
+
+- **Access token: 1 hour.** Never configure it by hand.
+- **Refresh token: 90 days, and it ROTATES** — every refresh returns a new
+  refresh token that replaces the old one.
+
+Because of the rotation, tokens live in `data/etsy_tokens.json` — runtime-
+owned, gitignored, and read-denied to agents (same protection class as
+`.env`). The `EtsyTokenStore` refreshes the access token automatically when
+expired and persists the rotated refresh token immediately after every
+refresh. **Tokens must never be written to the event log** — events are
+append-only, so a secret in an event can never be deleted.
+
+Your `.env` holds only:
 
 ```
 ETSY_API_KEY=<keystring>
-ETSY_SHOP_ID=<numeric shop id>
-ETSY_ACCESS_TOKEN=<oauth access token>
-ETSY_REFRESH_TOKEN=<oauth refresh token>
+# optional override; normally auto-discovered by `etsy auth`:
+# ETSY_SHOP_ID=<numeric shop id>
 ```
-
-`src/shopsteward/adapters/etsy/live.py` (`LiveEtsyAdapter`) reads these as
-plain constructor arguments — nothing in core or the CLI wires them up
-automatically. That's intentional; see below.
 
 ## Smoke test (requires operator approval, PRD §8.4)
 
 Live Etsy sync is gated: the CLI's `sync` command refuses to run without an
-explicit `--fixtures` path, and `LiveEtsyAdapter` is not imported anywhere
+explicit `--fixtures` path, and `LiveEtsyAdapter` is not wired anywhere
 outside its own tests. Before wiring it in:
 
 1. Get explicit operator (Eric) sign-off to hit the real API.
