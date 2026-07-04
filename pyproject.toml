@@ -48,8 +48,16 @@ forbidden_modules = [
   "shopsteward.adapters.printful",
   "shopsteward.adapters.gelato",
   "shopsteward.adapters.instagram",
+  "shopsteward.adapters.vision",
   "shopsteward.pipeline",
 ]
+
+[[tool.importlinter.contracts]]
+name = "pipeline is imported by no lower layer"
+type = "forbidden"
+source_modules = ["shopsteward.core", "shopsteward.editing",
+                  "shopsteward.adapters.lightroom", "shopsteward.adapters.vision"]
+forbidden_modules = ["shopsteward.pipeline"]
 
 [tool.ruff]
 target-version = "py312"

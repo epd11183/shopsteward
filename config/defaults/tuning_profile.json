@@ -1,0 +1,37 @@
+{
+  "schema": "shopsteward.tuning/1",
+  "name": "default",
+  "scoring": {
+    "weights": {
+      "technical": 0.35,
+      "commercial": 0.65,
+      "catalog_gap": 0.0,
+      "historical_conversion": 0.0
+    },
+    "gate1_threshold": 60,
+    "borderline_band": 10,
+    "hero_preset_family": "neutral",
+    "technical": {
+      "laplacian_floor": 50,
+      "laplacian_ceiling": 1500,
+      "clip_shadow_pct_max": 2.0,
+      "clip_highlight_pct_max": 1.0,
+      "noise_sigma_ceiling": 12.0,
+      "min_long_edge_px": 4000
+    }
+  },
+  "vision": {
+    "triage_model": "gemini-2.5-flash",
+    "rescore_model": "gemini-2.5-pro",
+    "max_long_edge_px": 1024,
+    "est_cost_per_mtok": {
+      "gemini-2.5-flash": { "in": 0.30, "out": 2.50 },
+      "gemini-2.5-pro": { "in": 1.25, "out": 10.00 }
+    },
+    "monthly_soft_cap_usd": 10.0
+  },
+  "landing": {
+    "min_long_edge_px": 3000,
+    "allowed_formats": ["TIFF", "JPEG"]
+  }
+}
