@@ -14,9 +14,8 @@ class SyncResult(BaseModel):
     receipts: int = 0
 
 
-def _last_receipt_ts(conn: sqlite3.Connection) -> int | None:
-    sales = read_all(conn, "etsy.sale.observed")
-    return max((e.payload["created_timestamp"] for e in sales), default=None)
+def _sale_events_for_user(conn: sqlite3.Connection, user_id: int) -> list[Event]:
+    return [e for e in read_all(conn, "etsy.sale.observed") if e.user_id == user_id]
 
 
 def sync_etsy(conn: sqlite3.Connection, adapter: EtsyAdapter, user_id: int) -> SyncResult:
@@ -30,9 +29,12 @@ def sync_etsy(conn: sqlite3.Connection, adapter: EtsyAdapter, user_id: int) -> S
             Event(user_id=user_id, type="etsy.listing.observed", payload=listing.model_dump()),
         )
         result.listings += 1
-    last_ts = _last_receipt_ts(conn)
-    min_created = last_ts + 1 if last_ts is not None else None
-    for receipt in adapter.list_receipts(min_created=min_created):
+    prior_sales = _sale_events_for_user(conn, user_id)
+    last_ts = max((e.payload["created_timestamp"] for e in prior_sales), default=None)
+    seen_ids = {e.payload["receipt_id"] for e in prior_sales}
+    for receipt in adapter.list_receipts(min_created=last_ts):
+        if receipt.receipt_id in seen_ids:
+            continue
         append(
             conn,
             Event(user_id=user_id, type="etsy.sale.observed", payload=receipt.model_dump()),

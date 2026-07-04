@@ -31,3 +31,17 @@ def test_resync_is_incremental_on_receipts(conn):
     sync_etsy(conn, FixtureEtsyAdapter(FIXTURES), user_id=1)
     sales = read_all(conn, "etsy.sale")
     assert len(sales) == 2  # second sync passes min_created past both receipts
+
+
+def test_cursor_is_per_user(conn):
+    sync_etsy(conn, FixtureEtsyAdapter(FIXTURES), user_id=1)
+    result = sync_etsy(conn, FixtureEtsyAdapter(FIXTURES), user_id=2)
+    assert result.receipts == 2  # user 2's first sync must not inherit user 1's cursor
+
+
+def test_same_timestamp_receipt_not_skipped_but_deduped(conn):
+    sync_etsy(conn, FixtureEtsyAdapter(FIXTURES), user_id=1)
+    result = sync_etsy(conn, FixtureEtsyAdapter(FIXTURES), user_id=1)
+    # boundary receipt is refetched (min_created inclusive) but deduped by id
+    assert result.receipts == 0
+    assert len(read_all(conn, "etsy.sale")) == 2
