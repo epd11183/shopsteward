@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import { fetchSummary, type Summary } from "./api";
 import Ingest from "./pages/Ingest";
+import Gate1 from "./pages/Gate1";
 
 export default function App() {
-  const [tab, setTab] = useState<"analytics" | "ingest">("analytics");
+  const [tab, setTab] = useState<"analytics" | "ingest" | "gate1">(
+    "analytics",
+  );
   return (
     <>
       <header className="border-b">
@@ -20,10 +23,21 @@ export default function App() {
               active={tab === "ingest"}
               onClick={() => setTab("ingest")}
             />
+            <TabButton
+              label="Gate 1"
+              active={tab === "gate1"}
+              onClick={() => setTab("gate1")}
+            />
           </nav>
         </div>
       </header>
-      {tab === "analytics" ? <Analytics /> : <Ingest />}
+      {tab === "analytics" ? (
+        <Analytics />
+      ) : tab === "ingest" ? (
+        <Ingest />
+      ) : (
+        <Gate1 />
+      )}
     </>
   );
 }
