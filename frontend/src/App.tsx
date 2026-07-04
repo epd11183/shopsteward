@@ -1,7 +1,54 @@
 import { useEffect, useState } from "react";
 import { fetchSummary, type Summary } from "./api";
+import Ingest from "./pages/Ingest";
 
 export default function App() {
+  const [tab, setTab] = useState<"analytics" | "ingest">("analytics");
+  return (
+    <>
+      <header className="border-b">
+        <div className="mx-auto max-w-4xl flex items-center gap-6 px-8 py-3">
+          <span className="font-semibold">ShopSteward</span>
+          <nav className="flex gap-2">
+            <TabButton
+              label="Analytics"
+              active={tab === "analytics"}
+              onClick={() => setTab("analytics")}
+            />
+            <TabButton
+              label="Ingest"
+              active={tab === "ingest"}
+              onClick={() => setTab("ingest")}
+            />
+          </nav>
+        </div>
+      </header>
+      {tab === "analytics" ? <Analytics /> : <Ingest />}
+    </>
+  );
+}
+
+const TabButton = ({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) => (
+  <button
+    type="button"
+    className={`rounded px-3 py-1.5 text-sm ${
+      active ? "bg-gray-900 text-white" : "text-gray-500"
+    }`}
+    onClick={onClick}
+  >
+    {label}
+  </button>
+);
+
+function Analytics() {
   const [s, setS] = useState<Summary | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
