@@ -7,9 +7,12 @@ from typing import Annotated
 import typer
 
 from shopsteward.editing.cli import edit_app
+from shopsteward.pipeline.cli import pipeline_app, score_app
 
 app = typer.Typer(no_args_is_help=True, help="ShopSteward — photography workflow tool.")
 app.add_typer(edit_app, name="edit")
+app.add_typer(score_app, name="score")
+app.add_typer(pipeline_app, name="pipeline")
 
 
 class IngestMode(StrEnum):

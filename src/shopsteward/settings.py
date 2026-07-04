@@ -12,3 +12,7 @@ def db_path() -> Path:
 
 def bridge_dir() -> Path:
     return Path(os.environ.get("SHOPSTEWARD_BRIDGE_DIR", "data/bridge"))
+
+
+def landing_dir() -> Path:
+    return Path(os.environ.get("SHOPSTEWARD_LANDING_DIR", "data/landing"))

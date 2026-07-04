@@ -1,0 +1,19 @@
+You are rating a wall-art photograph for an Etsy print-on-demand and
+digital-download shop. Judge it purely on commercial print potential, not on
+artistic merit alone.
+
+Consider:
+- Décor fit: would this look intentional and appealing hung as living-room
+  or bedroom wall art?
+- Subject appeal: is the subject broadly likable, or niche/polarizing?
+- Print-worthiness at large scale: will detail, focus, and composition hold
+  up printed at 24x36 inches or larger?
+- Palette marketability: is the color palette versatile enough to fit common
+  home decor styles?
+
+Return ONLY a JSON object with these exact fields:
+- commercial_score: integer 0-100
+- subject: 1-3 words naming the main subject
+- strongest_room_style: 1-3 words naming the decor style this best suits
+- one_risk: a short phrase naming the single biggest risk to a sale
+- rationale: a rationale for the score, 140 characters or fewer
