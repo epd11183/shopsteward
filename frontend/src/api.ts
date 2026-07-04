@@ -183,3 +183,135 @@ export const scanLanding = async (): Promise<LandingReport> => {
   }
   return res.json();
 };
+
+// --- M4: staging templates + mockup compositor ---------------------------
+
+export type TemplateRow = {
+  user_id: number;
+  template_id: string;
+  image_path: string | null;
+  sidecar_path: string | null;
+  sidecar_hash: string | null;
+  room_type: string | null;
+  style: string | null;
+  lighting: string | null;
+  orientation: string | null;
+  region_count: number | null;
+  avg_hue: number | null;
+  tags_json: string | null;
+  source: string | null;
+  status: string;
+  reason: string | null;
+};
+
+export type TemplateReport = {
+  registered: number;
+  updated: number;
+  invalid: number;
+  unchanged: number;
+};
+
+export type MockupRecord = {
+  path: string;
+  photo_id: string | null;
+  landing_file_id: string;
+  set_key: string;
+  intent: string;
+  template_id: string | null;
+  params: Record<string, number | string | undefined>;
+};
+
+export type MockupJobResult = {
+  sets_completed: number;
+  mockups_written: number;
+  skipped_idempotent: number;
+  intents_skipped_no_template: number;
+  templates_invalid: number;
+};
+
+export type SidecarRegion = {
+  kind: string;
+  quad: number[][];
+  region_width_inches: number;
+};
+
+export type SidecarPayload = {
+  schema: string;
+  template_id: string;
+  room_type: string;
+  style: string;
+  lighting: string;
+  orientation: string;
+  regions: SidecarRegion[];
+  tags: string[];
+};
+
+export type TemplateAnnotateResponse = {
+  report: TemplateReport;
+  template: TemplateRow | null;
+  invalid_reason: string | null;
+};
+
+export const fetchTemplates = async (): Promise<TemplateRow[]> => {
+  const res = await fetch("/api/pipeline/templates");
+  if (!res.ok) throw new Error(`fetch templates failed (${res.status})`);
+  return res.json();
+};
+
+export const scanTemplates = async (): Promise<TemplateReport> => {
+  const res = await fetch("/api/pipeline/templates/scan", { method: "POST" });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? `scan templates failed (${res.status})`);
+  }
+  return res.json();
+};
+
+export const annotateTemplate = async (
+  image_path: string,
+  sidecar: SidecarPayload,
+): Promise<TemplateAnnotateResponse> => {
+  const res = await fetch("/api/pipeline/templates/annotate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image_path, sidecar }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? `annotate failed (${res.status})`);
+  }
+  return res.json();
+};
+
+export const templateImageUrl = (path: string): string =>
+  `/api/pipeline/templates/image?path=${encodeURIComponent(path)}`;
+
+export const fetchMockups = async (
+  photoId?: string,
+): Promise<MockupRecord[]> => {
+  const url = photoId
+    ? `/api/pipeline/mockups?photo_id=${encodeURIComponent(photoId)}`
+    : "/api/pipeline/mockups";
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`fetch mockups failed (${res.status})`);
+  return res.json();
+};
+
+export const runMockups = async (
+  photoId?: string,
+  force?: boolean,
+): Promise<MockupJobResult> => {
+  const res = await fetch("/api/pipeline/mockups/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ photo_id: photoId ?? null, force: force ?? false }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? `run mockups failed (${res.status})`);
+  }
+  return res.json();
+};
+
+export const mockupImageUrl = (path: string): string =>
+  `/api/pipeline/mockups/image?path=${encodeURIComponent(path)}`;

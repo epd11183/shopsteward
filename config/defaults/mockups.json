@@ -1,0 +1,39 @@
+{
+  "schema": "shopsteward.mockups/1",
+  "intents": {
+    "single": { "enabled": true, "count": 2 },
+    "gallery_wall": { "enabled": true, "count": 1 },
+    "framed_poster": { "enabled": true, "count": 1 },
+    "canvas_edge": { "enabled": true, "count": 1 },
+    "acrylic": { "enabled": true, "count": 1 },
+    "digital_whatyougot": { "enabled": true, "count": 1 }
+  },
+  "render": {
+    "output_long_edge_px": 2400,
+    "jpeg_quality": 90,
+    "mat_fraction": 0.06,
+    "mat_color": [246, 246, 244],
+    "frame_width_inches": 0.75,
+    "frame_color": [24, 22, 20],
+    "canvas_wrap_depth_inches": 1.25,
+    "shadow": { "offset_frac": 0.006, "blur_frac": 0.010, "opacity": 0.35, "angle_deg": 115 },
+    "light_match": {
+      "enabled": true,
+      "gain_min": 0.65,
+      "gain_max": 1.15,
+      "wb_min": 0.90,
+      "wb_max": 1.10
+    }
+  },
+  "products": {
+    "default_print_widths_inches": { "landscape": 24, "portrait": 18, "square": 20 }
+  },
+  "whatyougot": {
+    "sizes": ["4x5", "5x7", "8x10", "11x14", "16x20", "A2", "A3", "A4"],
+    "formats": ["JPEG 300 DPI", "sRGB"],
+    "headline": "Instant Digital Download"
+  },
+  "listing_copy": {
+    "ai_disclosure_line": "Room scenes are AI-generated staging mockups. The photograph itself is the artist's original work and is never AI-generated or AI-edited."
+  }
+}

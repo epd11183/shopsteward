@@ -2,17 +2,19 @@ import { useEffect, useState } from "react";
 import { fetchSummary, type Summary } from "./api";
 import Ingest from "./pages/Ingest";
 import Gate1 from "./pages/Gate1";
+import Templates from "./pages/Templates";
+import Mockups from "./pages/Mockups";
+
+type Tab = "analytics" | "ingest" | "gate1" | "templates" | "mockups";
 
 export default function App() {
-  const [tab, setTab] = useState<"analytics" | "ingest" | "gate1">(
-    "analytics",
-  );
+  const [tab, setTab] = useState<Tab>("analytics");
   return (
     <>
       <header className="border-b">
-        <div className="mx-auto max-w-4xl flex items-center gap-6 px-8 py-3">
+        <div className="mx-auto max-w-4xl flex items-center gap-4 px-8 py-3">
           <span className="font-semibold">ShopSteward</span>
-          <nav className="flex gap-2">
+          <nav className="flex gap-1">
             <TabButton
               label="Analytics"
               active={tab === "analytics"}
@@ -28,6 +30,16 @@ export default function App() {
               active={tab === "gate1"}
               onClick={() => setTab("gate1")}
             />
+            <TabButton
+              label="Templates"
+              active={tab === "templates"}
+              onClick={() => setTab("templates")}
+            />
+            <TabButton
+              label="Mockups"
+              active={tab === "mockups"}
+              onClick={() => setTab("mockups")}
+            />
           </nav>
         </div>
       </header>
@@ -35,8 +47,12 @@ export default function App() {
         <Analytics />
       ) : tab === "ingest" ? (
         <Ingest />
-      ) : (
+      ) : tab === "gate1" ? (
         <Gate1 />
+      ) : tab === "templates" ? (
+        <Templates />
+      ) : (
+        <Mockups />
       )}
     </>
   );
@@ -53,7 +69,7 @@ const TabButton = ({
 }) => (
   <button
     type="button"
-    className={`rounded px-3 py-1.5 text-sm ${
+    className={`rounded px-2.5 py-1 text-xs ${
       active ? "bg-gray-900 text-white" : "text-gray-500"
     }`}
     onClick={onClick}

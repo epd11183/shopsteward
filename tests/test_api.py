@@ -231,3 +231,100 @@ def test_pipeline_landing_scan_endpoint(tmp_path, monkeypatch):
     assert body["matched"] == 0
     assert body["manual_drops"] == 1
     assert body["invalid"] == 0
+
+
+def test_mockups_templates_scan_and_list(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHOPSTEWARD_DB", str(tmp_path / "mockups.db"))
+    monkeypatch.setenv("SHOPSTEWARD_TEMPLATES_DIR", str(tmp_path / "no_such_operator_dir"))
+
+    client = TestClient(create_app())
+    scan_resp = client.post("/api/pipeline/templates/scan", json={})
+    assert scan_resp.status_code == 200
+    assert scan_resp.json()["registered"] == 4
+
+    list_resp = client.get("/api/pipeline/templates")
+    assert list_resp.status_code == 200
+    rows = list_resp.json()
+    assert len(rows) == 4
+    assert all(row["status"] == "valid" for row in rows)
+
+
+def test_mockups_templates_annotate_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHOPSTEWARD_DB", str(tmp_path / "mockups.db"))
+    operator_dir = tmp_path / "operator_templates"
+    operator_dir.mkdir()
+    monkeypatch.setenv("SHOPSTEWARD_TEMPLATES_DIR", str(operator_dir))
+
+    image_path = operator_dir / "annotated-01.jpg"
+    _make_jpeg(image_path, size=(800, 600))
+
+    client = TestClient(create_app())
+    resp = client.post(
+        "/api/pipeline/templates/annotate",
+        json={
+            "image_path": str(image_path),
+            "sidecar": {
+                "schema": "shopsteward.stagingtemplate/1",
+                "template_id": "annotated-01",
+                "room_type": "living_room",
+                "style": "modern",
+                "lighting": "warm_daylight",
+                "orientation": "landscape",
+                "regions": [
+                    {
+                        "kind": "wall_print",
+                        "quad": [[100.0, 100.0], [700.0, 110.0], [690.0, 500.0], [110.0, 495.0]],
+                        "region_width_inches": 30.0,
+                    }
+                ],
+                "tags": ["neutral_wall"],
+            },
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["invalid_reason"] is None
+    assert body["template"]["template_id"] == "annotated-01"
+    assert body["template"]["status"] == "valid"
+    assert (operator_dir / "annotated-01.template.json").is_file()
+
+
+def test_mockups_run_and_list_and_image_traversal(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHOPSTEWARD_DB", str(tmp_path / "mockups.db"))
+    monkeypatch.setenv("SHOPSTEWARD_TEMPLATES_DIR", str(tmp_path / "no_such_operator_dir"))
+    mockups_dir = tmp_path / "mockups_out"
+    monkeypatch.setenv("SHOPSTEWARD_MOCKUPS_DIR", str(mockups_dir))
+
+    landing_dir = tmp_path / "landing"
+    landing_dir.mkdir()
+    from PIL import Image
+
+    Image.new("RGB", (3600, 2400), (150, 130, 110)).save(landing_dir / "hero.tif", format="TIFF")
+    monkeypatch.setenv("SHOPSTEWARD_LANDING_DIR", str(landing_dir))
+
+    client = TestClient(create_app())
+    scan_resp = client.post("/api/pipeline/landing/scan", json={})
+    assert scan_resp.status_code == 200
+    assert scan_resp.json()["observed"] == 1
+
+    run_resp = client.post("/api/pipeline/mockups/run", json={})
+    assert run_resp.status_code == 200, run_resp.text
+    result = run_resp.json()
+    assert result["sets_completed"] == 1
+    assert result["mockups_written"] > 0
+
+    list_resp = client.get("/api/pipeline/mockups")
+    assert list_resp.status_code == 200
+    records = list_resp.json()
+    assert len(records) == result["mockups_written"]
+
+    good_path = records[0]["path"]
+    image_resp = client.get("/api/pipeline/mockups/image", params={"path": good_path})
+    assert image_resp.status_code == 200
+
+    traversal_path = str(Path(good_path).parent / ".." / ".." / ".." / "etc" / "passwd")
+    escape_resp = client.get("/api/pipeline/mockups/image", params={"path": traversal_path})
+    assert escape_resp.status_code == 403
+
+    outside_resp = client.get("/api/pipeline/templates/image", params={"path": good_path})
+    assert outside_resp.status_code == 403

@@ -1,0 +1,36 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "bedroom-cool-01",
+  "room_type": "bedroom",
+  "style": "scandinavian",
+  "lighting": "cool_daylight",
+  "orientation": "portrait",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          150.0,
+          150.0
+        ],
+        [
+          1050.0,
+          160.0
+        ],
+        [
+          1040.0,
+          1300.0
+        ],
+        [
+          160.0,
+          1290.0
+        ]
+      ],
+      "region_width_inches": 24.0
+    }
+  ],
+  "tags": [
+    "neutral_wall",
+    "minimal"
+  ]
+}

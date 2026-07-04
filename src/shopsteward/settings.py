@@ -16,3 +16,11 @@ def bridge_dir() -> Path:
 
 def landing_dir() -> Path:
     return Path(os.environ.get("SHOPSTEWARD_LANDING_DIR", "data/landing"))
+
+
+def mockups_dir() -> Path:
+    return Path(os.environ.get("SHOPSTEWARD_MOCKUPS_DIR", "data/mockups"))
+
+
+def operator_templates_dir() -> Path:
+    return Path(os.environ.get("SHOPSTEWARD_TEMPLATES_DIR", "data/staging_templates"))
