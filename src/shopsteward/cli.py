@@ -55,64 +55,93 @@ def ingest(
     db = db_path()
     db.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(db)
-    migrate(conn)
-    presets.seed(conn, DEFAULT_USER_ID, PRESET_FAMILIES_DIR)
+    try:
+        migrate(conn)
+        presets.seed(conn, DEFAULT_USER_ID, PRESET_FAMILIES_DIR)
 
-    report = ingest_folder(
-        conn,
-        DEFAULT_USER_ID,
-        path,
-        mode.value,
-        preset_family=preset,
-        event_name=event,
-        output_folder=str(out) if out else None,
-    )
+        if mode == IngestMode.hero:
+            report = ingest_folder(
+                conn,
+                DEFAULT_USER_ID,
+                path,
+                mode.value,
+                preset_family=preset,
+                event_name=event,
+                output_folder=str(out) if out else None,
+            )
+            rebuild_editing(conn)
+            typer.echo(f"ingested: {report.model_dump()}")
+            typer.echo("Photos await scoring (M3).")
+            return
 
-    if mode == IngestMode.hero:
-        rebuild_editing(conn)
+        # Mass mode: resolve and validate the preset family BEFORE ingesting,
+        # so a typo'd --preset causes no side effects.
+        family_name = preset
+        if family_name is None:
+            families = presets.list_families(conn, DEFAULT_USER_ID)
+            typer.echo(f"Preset families: {', '.join(f.name for f in families)}")
+            family_name = typer.prompt("Preset family")
+        try:
+            presets.get_family(conn, DEFAULT_USER_ID, family_name)
+        except KeyError:
+            names = ", ".join(f.name for f in presets.list_families(conn, DEFAULT_USER_ID))
+            typer.secho(
+                f"Unknown preset family '{family_name}'. Available: {names or '(none seeded)'}",
+                fg="red",
+            )
+            raise typer.Exit(code=1) from None
+
+        editing_defaults = load_editing_defaults()
+        output_folder = (
+            str(out)
+            if out
+            else str(Path(editing_defaults["event_output_root"]) / (event or "untitled"))
+        )
+
+        report = ingest_folder(
+            conn,
+            DEFAULT_USER_ID,
+            path,
+            mode.value,
+            preset_family=family_name,
+            event_name=event,
+            output_folder=output_folder,
+        )
         typer.echo(f"ingested: {report.model_dump()}")
-        typer.echo("Photos await scoring (M3).")
+
+        if not report.photo_ids:
+            rebuild_editing(conn)
+            typer.echo("no new photos to dispatch")
+            return
+
+        if not yes and not typer.confirm(
+            f"Apply '{family_name}' to {len(report.photo_ids)} NEW photos -> {output_folder}?"
+        ):
+            rebuild_editing(conn)
+            typer.echo(
+                "Not dispatched. Photos remain queued_for_edit; "
+                "re-run ingest later to dispatch (ingestion is idempotent)."
+            )
+            return
+
+        bridge = FolderBridge(bridge_dir())
+        job = dispatch_edit_job(
+            conn,
+            DEFAULT_USER_ID,
+            bridge,
+            photo_ids=report.photo_ids,
+            preset_family=family_name,
+            mode=mode.value,
+            event_name=event,
+            output_folder=output_folder,
+            editing_defaults=editing_defaults,
+        )
+        scan_outcomes(conn, DEFAULT_USER_ID, bridge)
+        rebuild_editing(conn)
+
+        typer.echo(f"dispatched edit job {job.job_id}")
+    finally:
         conn.close()
-        return
-
-    family_name = preset
-    if family_name is None:
-        families = presets.list_families(conn, DEFAULT_USER_ID)
-        typer.echo(f"Preset families: {', '.join(f.name for f in families)}")
-        family_name = typer.prompt("Preset family")
-
-    editing_defaults = load_editing_defaults()
-    output_folder = (
-        str(out)
-        if out
-        else str(Path(editing_defaults["event_output_root"]) / (event or "untitled"))
-    )
-
-    if not yes and not typer.confirm(
-        f"Apply '{family_name}' to {report.paired} photos -> {output_folder}?"
-    ):
-        typer.echo("Aborted.")
-        conn.close()
-        raise typer.Exit(code=1)
-
-    bridge = FolderBridge(bridge_dir())
-    job = dispatch_edit_job(
-        conn,
-        DEFAULT_USER_ID,
-        bridge,
-        photo_ids=report.photo_ids,
-        preset_family=family_name,
-        mode=mode.value,
-        event_name=event,
-        output_folder=output_folder,
-        editing_defaults=editing_defaults,
-    )
-    scan_outcomes(conn, DEFAULT_USER_ID, bridge)
-    rebuild_editing(conn)
-
-    typer.echo(f"ingested: {report.model_dump()}")
-    typer.echo(f"dispatched edit job {job.job_id}")
-    conn.close()
 
 
 @app.command()

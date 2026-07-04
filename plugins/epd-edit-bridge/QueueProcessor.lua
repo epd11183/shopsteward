@@ -171,11 +171,9 @@ local function processJob(catalog, job)
             })
             local finalPath = child(outDir, rendered .. '.jpg')
             if pathOrMsg ~= finalPath then
-                local n = 2
-                while LrFileUtils.exists(finalPath) do  -- collision-avoid: -2, -3, ...
-                    finalPath = child(outDir, rendered .. '-' .. n .. '.jpg')
-                    n = n + 1
-                end
+                -- Deterministic overwrite on re-run (design §4): same name,
+                -- no collision suffixes.
+                if LrFileUtils.exists(finalPath) then os.remove(finalPath) end
                 os.rename(pathOrMsg, finalPath)
             end
             exported[#exported + 1] = LrPathUtils.leafName(finalPath)
@@ -204,7 +202,9 @@ local function handleJobFile(catalog, jobsDir, path, leaf)
     end
 
     if not valid then
-        local jobId = leaf:gsub('%.json$', '')
+        -- Derived job_id: filename stem, leading 'edit_' stripped, so a
+        -- corrupted dispatched job recovers its uuid (mirrors FakeBridge).
+        local jobId = leaf:gsub('%.json$', ''):gsub('^edit_', '')
         if okDecode and type(jobOrErr) == 'table' and type(jobOrErr.job_id) == 'string' then
             jobId = jobOrErr.job_id
         end

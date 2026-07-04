@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from shopsteward.core.events import Event, append, read_all
 from shopsteward.editing import presets
 from shopsteward.editing.dispatch import dispatch_edit_job
 from shopsteward.editing.outcomes import scan_outcomes
+from shopsteward.editing.projections import rebuild_editing
 
 DEFAULTS_DIR = Path(__file__).parents[2] / "config" / "defaults" / "preset_families"
 
@@ -169,6 +171,132 @@ def test_scan_outcomes_is_idempotent(conn, tmp_path):
     second_count = scan_outcomes(conn, 1, bridge)
     assert second_count == 0
     assert len(read_all(conn, "editjob.completed")) == 1
+
+
+def test_dispatch_default_output_folder_is_absolute(conn, tmp_path):
+    _ingest_photo(conn, 1, "p1")
+    bridge_root = tmp_path / "bridge"
+    bridge = FolderBridge(bridge_root)
+
+    # No --out: the relative event_output_root default must be resolved.
+    job = dispatch_edit_job(
+        conn,
+        1,
+        bridge,
+        photo_ids=["p1"],
+        preset_family="neutral",
+        mode="mass",
+        event_name="testev",
+        output_folder=None,
+        editing_defaults=EDITING_DEFAULTS,
+    )
+
+    payload = json.loads((bridge_root / "jobs" / f"edit_{job.job_id}.json").read_text())
+    folder = payload["export"]["output_folder"]
+    assert os.path.isabs(folder.replace("/", os.sep)), folder
+
+
+def test_dispatch_explicit_output_folder_is_absolute(conn, tmp_path):
+    _ingest_photo(conn, 1, "p1")
+    bridge_root = tmp_path / "bridge"
+    bridge = FolderBridge(bridge_root)
+
+    job = dispatch_edit_job(
+        conn,
+        1,
+        bridge,
+        photo_ids=["p1"],
+        preset_family="neutral",
+        mode="mass",
+        event_name="testev",
+        output_folder="relative/out",
+        editing_defaults=EDITING_DEFAULTS,
+    )
+
+    payload = json.loads((bridge_root / "jobs" / f"edit_{job.job_id}.json").read_text())
+    folder = payload["export"]["output_folder"]
+    assert os.path.isabs(folder.replace("/", os.sep)), folder
+
+
+def test_dispatch_empty_photo_ids_raises(conn, tmp_path):
+    bridge = FolderBridge(tmp_path / "bridge")
+    with pytest.raises(ValueError, match="photo_ids"):
+        dispatch_edit_job(
+            conn,
+            1,
+            bridge,
+            photo_ids=[],
+            preset_family="neutral",
+            mode="mass",
+            event_name="testev",
+            output_folder=str(tmp_path / "out"),
+            editing_defaults=EDITING_DEFAULTS,
+        )
+    assert read_all(conn, "editjob.dispatched") == []
+
+
+def test_fake_bridge_malformed_dispatched_job_recovers_job_id(conn, tmp_path):
+    """A corrupted dispatched job lands in failed/ with the uuid recovered
+    from the filename (edit_ prefix stripped) so its proj row goes failed."""
+    _ingest_photo(conn, 1, "p1")
+    bridge_root = tmp_path / "bridge"
+    bridge = FolderBridge(bridge_root)
+
+    job = dispatch_edit_job(
+        conn,
+        1,
+        bridge,
+        photo_ids=["p1"],
+        preset_family="neutral",
+        mode="mass",
+        event_name="testev",
+        output_folder=str(tmp_path / "out"),
+        editing_defaults=EDITING_DEFAULTS,
+    )
+
+    job_file = bridge_root / "jobs" / f"edit_{job.job_id}.json"
+    job_file.write_text("{corrupt", encoding="utf-8")
+
+    FakeBridge(bridge_root).consume_all()
+
+    assert (bridge_root / "jobs" / "failed" / f"edit_{job.job_id}.json").exists()
+    assert scan_outcomes(conn, 1, bridge) == 1
+    [failed] = read_all(conn, "editjob.failed")
+    assert failed.payload["edit_job_id"] == job.job_id
+    assert failed.payload["error"]["code"] == "malformed"
+
+    rebuild_editing(conn)
+    row = conn.execute(
+        "SELECT status FROM proj_edit_jobs WHERE user_id=1 AND edit_job_id=?",
+        (job.job_id,),
+    ).fetchone()
+    assert row["status"] == "failed"
+
+
+def test_scan_outcomes_dedupes_results_without_job_id_by_file_name(conn, tmp_path):
+    bridge_root = tmp_path / "bridge"
+    failed_dir = bridge_root / "jobs" / "failed"
+    failed_dir.mkdir(parents=True)
+    (failed_dir / "junk.result.json").write_text(
+        json.dumps(
+            {
+                "schema": "shopsteward.editresult/1",
+                "status": "failed",
+                "file_name": "junk.json",
+                "applied": 0,
+                "skipped": [],
+                "exported": [],
+                "error": {"code": "malformed", "message": "boom"},
+                "finished_at": "2026-01-01T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    bridge = FolderBridge(bridge_root)
+
+    assert scan_outcomes(conn, 1, bridge) == 1
+    assert scan_outcomes(conn, 1, bridge) == 0
+    assert len(read_all(conn, "editjob.failed")) == 1
 
 
 def test_scan_outcomes_records_forced_failure(conn, tmp_path):

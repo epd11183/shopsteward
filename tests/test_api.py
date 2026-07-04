@@ -60,3 +60,55 @@ def test_editing_jobs_endpoint_empty_on_fresh_db(tmp_path, monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert body == {"ingest_jobs": [], "edit_jobs": [], "photos": {}}
+
+
+def test_editing_ingest_mass_invalid_preset_rejected_before_ingest(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHOPSTEWARD_DB", str(tmp_path / "editing.db"))
+    monkeypatch.setenv("SHOPSTEWARD_BRIDGE_DIR", str(tmp_path / "bridge"))
+    shoot = tmp_path / "shoot"
+    shoot.mkdir()
+
+    client = TestClient(create_app())
+    resp = client.post(
+        "/api/editing/ingest",
+        json={"path": str(shoot), "mode": "mass", "preset_family": "nope"},
+    )
+    assert resp.status_code == 400
+    assert "neutral" in resp.json()["detail"]  # lists available families
+
+    # Rejected before ingest: no ingest job was recorded.
+    jobs = client.get("/api/editing/jobs").json()
+    assert jobs["ingest_jobs"] == []
+
+
+def test_editing_ingest_mass_missing_preset_rejected_before_ingest(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHOPSTEWARD_DB", str(tmp_path / "editing.db"))
+    monkeypatch.setenv("SHOPSTEWARD_BRIDGE_DIR", str(tmp_path / "bridge"))
+    shoot = tmp_path / "shoot"
+    shoot.mkdir()
+
+    client = TestClient(create_app())
+    resp = client.post("/api/editing/ingest", json={"path": str(shoot), "mode": "mass"})
+    assert resp.status_code == 400
+
+    jobs = client.get("/api/editing/jobs").json()
+    assert jobs["ingest_jobs"] == []
+
+
+def test_editing_ingest_mass_empty_folder_skips_dispatch(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHOPSTEWARD_DB", str(tmp_path / "editing.db"))
+    monkeypatch.setenv("SHOPSTEWARD_BRIDGE_DIR", str(tmp_path / "bridge"))
+    shoot = tmp_path / "shoot"
+    shoot.mkdir()
+
+    client = TestClient(create_app())
+    resp = client.post(
+        "/api/editing/ingest",
+        json={"path": str(shoot), "mode": "mass", "preset_family": "neutral"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["edit_job_id"] is None
+    assert body["report"]["paired"] == 0
+    # No empty edit job was dispatched to the bridge.
+    assert not (tmp_path / "bridge" / "jobs").exists()

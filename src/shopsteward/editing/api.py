@@ -46,6 +46,17 @@ def ingest(request: IngestRequest) -> IngestResponse:
     conn = _connect()
     try:
         presets.seed(conn, DEFAULT_USER_ID, PRESET_FAMILIES_DIR)
+
+        # Validate before any side effects: mass mode needs a resolvable
+        # preset family, so reject bad requests before ingesting anything.
+        if request.mode != "hero":
+            if not request.preset_family:
+                raise HTTPException(400, "preset_family is required for mass mode")
+            try:
+                presets.get_family(conn, DEFAULT_USER_ID, request.preset_family)
+            except KeyError as exc:
+                raise HTTPException(400, str(exc.args[0])) from exc
+
         report = ingest_folder(
             conn,
             DEFAULT_USER_ID,
@@ -57,9 +68,7 @@ def ingest(request: IngestRequest) -> IngestResponse:
         )
 
         edit_job_id = None
-        if request.mode != "hero":
-            if not request.preset_family:
-                raise HTTPException(400, "preset_family is required for mass mode")
+        if request.mode != "hero" and report.photo_ids:
             editing_defaults = load_editing_defaults()
             output_folder = request.output_folder or str(
                 Path(editing_defaults["event_output_root"]) / (request.event or "untitled")

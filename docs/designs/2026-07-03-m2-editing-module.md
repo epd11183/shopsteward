@@ -66,7 +66,9 @@ exif_json), **proj_ingest_jobs**, **proj_edit_jobs**, **proj_preset_families**
 ## 3. Job-file protocol (schema-versioned)
 
 Bridge layout: `bridge/jobs/` (Python writes), `bridge/jobs/done/`,
-`bridge/jobs/failed/`, `bridge/quarantine/`. Writers write `<name>.part` then
+`bridge/jobs/failed/`, `bridge/jobs/quarantine/` (used by the Python
+reader only — the Lua consumer never quarantines; malformed jobs go to
+`failed/`). Writers write `<name>.part` then
 rename (`os.replace` Python / `os.rename` Lua; job-id-unique names avoid dest
 collisions). Consumers ignore `*.part`.
 
@@ -89,10 +91,15 @@ Resolved develop settings are **inlined** — Lua never reads DB/preset files
 Lua outcome: move job file to `done/` (or `failed/`) + write
 `edit_<uuid>.result.json` beside it (tmp+rename):
 `{ "schema": "shopsteward.editresult/1", "job_id", "status": "completed|failed",
-"applied", "skipped": […], "exported": […], "error": null|{code,message},
-"finished_at" }`. Malformed job → `failed/` with result keyed by filename;
-never a crash. Python observes by scanning `done/`+`failed/` on demand (no
-daemon in M2); event append idempotent by job_id.
+"applied", "skipped": […], "exported": […], "error": {code,message},
+"finished_at" }`. Result files carry a top-level `schema` field; success
+results omit the `error` key entirely (it is present only on failure).
+Malformed job → `failed/` with a result whose `job_id` is derived from the
+filename stem (leading `edit_` stripped) plus a `file_name` field; never a
+crash. Re-running a job overwrites its previous exports and `done/`/`failed/`
+artifacts deterministically (no collision suffixes). Python observes by
+scanning `done/`+`failed/` on demand (no daemon in M2); event append
+idempotent by job_id (file_name fallback when a result lacks one).
 
 ## 4. Lua queue processor
 

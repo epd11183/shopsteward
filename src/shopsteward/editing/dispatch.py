@@ -35,6 +35,8 @@ def dispatch_edit_job(
     output_folder: str | None,
     editing_defaults: dict,
 ) -> EditJobSpec:
+    if not photo_ids:
+        raise ValueError("photo_ids is empty; nothing to dispatch")
     family = presets.get_family(conn, user_id, preset_family)
     records = _photo_records(conn, user_id, photo_ids)
 
@@ -52,9 +54,13 @@ def dispatch_edit_job(
 
     export: ExportSpec | None = None
     if mode != "hero":
+        folder = output_folder or str(
+            Path(editing_defaults["event_output_root"]) / (event_name or "untitled")
+        )
         export = ExportSpec(
-            output_folder=output_folder
-            or str(Path(editing_defaults["event_output_root"]) / (event_name or "untitled")),
+            # Absolute: the Lua consumer must never resolve paths relative to
+            # its own working directory.
+            output_folder=str(Path(folder).resolve()),
             naming_template=editing_defaults["naming_template"],
             event=event_name or "untitled",
             jpeg_quality=editing_defaults["jpeg_quality"],

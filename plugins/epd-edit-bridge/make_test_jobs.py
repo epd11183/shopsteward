@@ -87,8 +87,11 @@ def main() -> None:
         ),
     )
     expectations.append(
-        (name, "done/ — applied=2, exports testev-0001.jpg + testev-0002.jpg, "
-               "collection 'ShopSteward — test-valid' created")
+        (
+            name,
+            "done/ — applied=2, exports testev-0001.jpg + testev-0002.jpg, "
+            "collection 'ShopSteward — test-valid' created",
+        )
     )
 
     # 2. Valid mass job with one nonexistent raw_path — skip case.

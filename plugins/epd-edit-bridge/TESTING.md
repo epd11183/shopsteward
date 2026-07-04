@@ -72,5 +72,5 @@ appears in the LrC progress area while a job runs.
 
 - Copy a processed job file from `jobs/done/` back into `jobs/` while the
   processor runs. It should process again cleanly: absolute develop values
-  are idempotent, exports get `-2` suffixed names on collision, and the
-  done/ copies are overwritten.
+  are idempotent, exports overwrite the previous JPEGs deterministically
+  (same names, no collision suffixes), and the done/ copies are overwritten.
