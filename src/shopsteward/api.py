@@ -6,10 +6,8 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from shopsteward.core.db import connect, migrate
-from shopsteward.core.projections import Summary, analytics_summary
-from shopsteward.settings import db_path
-
-DEFAULT_USER_ID = 1  # single-operator v1; schema stays multi-tenant-ready
+from shopsteward.core.projections import Summary, analytics_summary, rebuild
+from shopsteward.settings import DEFAULT_USER_ID, db_path
 
 
 def create_app() -> FastAPI:
@@ -24,6 +22,9 @@ def create_app() -> FastAPI:
         conn = connect(db_path())
         try:
             migrate(conn)
+            # Projections live in derived tables; rebuilding here is cheap at
+            # this scale and guarantees the endpoint works on a fresh DB.
+            rebuild(conn)
             return analytics_summary(conn, user_id=DEFAULT_USER_ID)
         finally:
             conn.close()

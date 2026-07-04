@@ -33,3 +33,13 @@ def test_analytics_summary_endpoint(client):
 
 def test_healthz(client):
     assert client.get("/healthz").json() == {"ok": True}
+
+
+def test_summary_on_fresh_db_returns_zeros(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHOPSTEWARD_DB", str(tmp_path / "fresh.db"))
+    resp = TestClient(create_app()).get("/api/analytics/summary")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total_revenue_usd"] == 0
+    assert body["total_orders"] == 0
+    assert body["active_listings"] == 0

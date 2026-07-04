@@ -44,7 +44,7 @@ def sync(
     from shopsteward.core.db import connect, migrate
     from shopsteward.core.projections import rebuild
     from shopsteward.core.sync import sync_etsy
-    from shopsteward.settings import db_path
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
 
     if fixtures is None:
         typer.secho(
@@ -56,6 +56,6 @@ def sync(
     db.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(db)
     migrate(conn)
-    result = sync_etsy(conn, FixtureEtsyAdapter(fixtures), user_id=1)
+    result = sync_etsy(conn, FixtureEtsyAdapter(fixtures), user_id=DEFAULT_USER_ID)
     rebuild(conn)
     typer.echo(f"synced: {result.model_dump()}")

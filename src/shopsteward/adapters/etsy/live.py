@@ -39,6 +39,6 @@ class LiveEtsyAdapter:
         return [EtsyListing.model_validate(r) for r in rows]
 
     def list_receipts(self, min_created: int | None = None) -> list[EtsyReceipt]:
-        params: dict[str, int] = {"min_created": min_created} if min_created else {}
+        params: dict[str, int] = {"min_created": min_created} if min_created is not None else {}
         rows = self._paginate(f"/shops/{self._shop_id}/receipts", **params)
         return [EtsyReceipt.model_validate(r) for r in rows]
