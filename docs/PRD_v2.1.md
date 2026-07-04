@@ -432,6 +432,23 @@ M2 kickoff decisions (2026-07-03):
 19. import-linter approved as dev dependency; boundary rule lands in the first M2 PR
 20. Preset families: DB-stored, seeded from config/defaults/preset_families/ (§5.2)
 
+M3 kickoff decisions (2026-07-03):
+
+21. Composite score 0–100 over registered scorers (technical + commercial live;
+    catalog-gap and historical-conversion registered at weight 0 until M5 data
+    exists). Default Gate 1 queue threshold 60; Flash scores within ±10
+    escalate to Gemini Pro. All tunable in the DB tuning profile.
+22. Vision input: paired JPEG downscaled to 1024px long edge, ALL EXIF
+    (incl. GPS) stripped before upload. Vision adapter uses httpx against the
+    Gemini REST API directly — no vendor SDK dependency. Structured verdict
+    (scores + subject + strongest_room_style + one_risk + one-line rationale).
+    LLM spend logged as events from the first call.
+23. Gate 1 UI: keyboard-first single card (A/R/S + Z undo, auto-advance,
+    preload, snoozed shelf, inline dispatch state).
+24. Landing folder: on-demand scan (CLI/API/UI-poll triggered), no daemon.
+    Technical validation only (resolution, color space, integrity) — never
+    re-scored (decision 6).
+
 ## 14. Appendix: Deferred to v2+
 
 Unchanged from PRD v2.
