@@ -43,3 +43,20 @@ def test_summary_on_fresh_db_returns_zeros(tmp_path, monkeypatch):
     assert body["total_revenue_usd"] == 0
     assert body["total_orders"] == 0
     assert body["active_listings"] == 0
+
+
+def test_editing_preset_families_endpoint(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHOPSTEWARD_DB", str(tmp_path / "editing.db"))
+    resp = TestClient(create_app()).get("/api/editing/preset-families")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 4
+    assert {f["name"] for f in body} == {"neutral", "wedding", "race", "brewery"}
+
+
+def test_editing_jobs_endpoint_empty_on_fresh_db(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHOPSTEWARD_DB", str(tmp_path / "editing.db"))
+    resp = TestClient(create_app()).get("/api/editing/jobs")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {"ingest_jobs": [], "edit_jobs": [], "photos": {}}
