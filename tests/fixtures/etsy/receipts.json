@@ -1,0 +1,4 @@
+{"count": 2, "results": [
+  {"receipt_id": 9001, "created_timestamp": 1751000000, "grandtotal": {"amount": 2500, "divisor": 100, "currency_code": "USD"}, "transactions": [{"transaction_id": 1, "listing_id": 111, "quantity": 1, "price": {"amount": 2500, "divisor": 100, "currency_code": "USD"}}]},
+  {"receipt_id": 9002, "created_timestamp": 1751430000, "grandtotal": {"amount": 4700, "divisor": 100, "currency_code": "USD"}, "transactions": [{"transaction_id": 2, "listing_id": 222, "quantity": 1, "price": {"amount": 3500, "divisor": 100, "currency_code": "USD"}}, {"transaction_id": 3, "listing_id": 333, "quantity": 1, "price": {"amount": 1200, "divisor": 100, "currency_code": "USD"}}]}
+]}
