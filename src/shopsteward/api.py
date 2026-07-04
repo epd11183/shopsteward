@@ -7,11 +7,13 @@ from fastapi.staticfiles import StaticFiles
 
 from shopsteward.core.db import connect, migrate
 from shopsteward.core.projections import Summary, analytics_summary, rebuild
+from shopsteward.editing.api import router as editing_router
 from shopsteward.settings import DEFAULT_USER_ID, db_path
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="ShopSteward")
+    app.include_router(editing_router)
 
     @app.get("/healthz")
     def healthz() -> dict[str, bool]:

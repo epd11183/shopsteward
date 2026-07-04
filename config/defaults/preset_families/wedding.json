@@ -1,0 +1,10 @@
+{
+  "name": "wedding",
+  "description": "Soft, airy grade for wedding coverage: lifted shadows, gentle highlight rolloff.",
+  "settings": {
+    "Contrast2012": 12,
+    "Vibrance": 18,
+    "Highlights2012": -30,
+    "Shadows2012": 20
+  }
+}

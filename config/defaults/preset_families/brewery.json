@@ -1,0 +1,11 @@
+{
+  "name": "brewery",
+  "description": "Warm, custom-balanced grade for taproom and brewery event photography.",
+  "settings": {
+    "Contrast2012": 15,
+    "Vibrance": 20,
+    "Temperature": 5200,
+    "Tint": 8,
+    "WhiteBalance": "Custom"
+  }
+}

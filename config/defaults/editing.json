@@ -1,0 +1,5 @@
+{
+  "naming_template": "{event}-{seq:04}",
+  "event_output_root": "data/deliveries",
+  "jpeg_quality": 92
+}

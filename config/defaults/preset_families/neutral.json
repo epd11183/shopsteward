@@ -1,0 +1,8 @@
+{
+  "name": "neutral",
+  "description": "No-op baseline: passthrough develop settings for un-edited comparisons.",
+  "settings": {
+    "Contrast2012": 0,
+    "Vibrance": 0
+  }
+}
