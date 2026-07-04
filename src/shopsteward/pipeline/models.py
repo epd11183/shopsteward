@@ -14,6 +14,7 @@ __all__ = [
     "LandingReport",
     "ScoreBreakdown",
     "ScoringConfig",
+    "ScoringRunResult",
     "TuningProfile",
     "VisionConfig",
     "VisionVerdict",
@@ -77,3 +78,11 @@ class LandingReport(BaseModel):
     invalid: int = 0
     matched: int = 0
     unmatched: int = 0
+
+
+class ScoringRunResult(BaseModel):
+    scored: int = 0
+    queued: int = 0
+    escalated: int = 0
+    failed: int = 0
+    cap_hit: bool = False
