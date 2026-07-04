@@ -1,0 +1,5 @@
+{"count": 3, "results": [
+  {"listing_id": 111, "title": "Misty Ridge Print", "state": "active", "quantity": 5, "views": 120, "num_favorers": 7, "price": {"amount": 2500, "divisor": 100, "currency_code": "USD"}, "tags": ["landscape", "wall art"]},
+  {"listing_id": 222, "title": "Heron at Dawn", "state": "active", "quantity": 3, "views": 340, "num_favorers": 21, "price": {"amount": 3500, "divisor": 100, "currency_code": "USD"}, "tags": ["bird", "wildlife"]},
+  {"listing_id": 333, "title": "Digital Download Bundle", "state": "active", "quantity": 999, "views": 88, "num_favorers": 4, "price": {"amount": 1200, "divisor": 100, "currency_code": "USD"}, "tags": ["digital", "printable"]}
+]}

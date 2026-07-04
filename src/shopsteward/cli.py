@@ -31,3 +31,31 @@ def ingest(
     """Folder-pointed ingestion (M2 — stub until then)."""
     typer.secho(f"ingest is M2 scope (mode={mode.value}, preset={preset})", fg="yellow")
     raise typer.Exit(code=1)
+
+
+@app.command()
+def sync(
+    fixtures: Annotated[
+        Path | None, typer.Option(help="Fixture dir (default source until live approved)")
+    ] = None,
+) -> None:
+    """Pull Etsy data into the event store and rebuild projections."""
+    from shopsteward.adapters.etsy.fake import FixtureEtsyAdapter
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.core.projections import rebuild
+    from shopsteward.core.sync import sync_etsy
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    if fixtures is None:
+        typer.secho(
+            "Live Etsy sync is gated on operator approval (PRD §8.4); pass --fixtures.",
+            fg="red",
+        )
+        raise typer.Exit(1)
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    migrate(conn)
+    result = sync_etsy(conn, FixtureEtsyAdapter(fixtures), user_id=DEFAULT_USER_ID)
+    rebuild(conn)
+    typer.echo(f"synced: {result.model_dump()}")
