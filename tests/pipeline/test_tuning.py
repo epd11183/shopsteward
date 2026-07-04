@@ -54,7 +54,9 @@ def test_get_profile_missing_raises_keyerror(conn):
         tuning.get_profile(conn, user_id=1, name="default")
 
 
-def test_seed_reseeds_when_profile_changes(conn, tmp_path):
+def test_seed_never_overwrites_existing_profile(conn, tmp_path):
+    """Once a profile name exists, seed() must not touch it — re-seeding on
+    changed defaults would silently revert future operator tuning updates."""
     tuning.seed(conn, user_id=1, path=DEFAULTS_PATH)
     changed = json.loads(DEFAULTS_PATH.read_text())
     changed["scoring"]["gate1_threshold"] = 75
@@ -62,5 +64,5 @@ def test_seed_reseeds_when_profile_changes(conn, tmp_path):
     changed_path.write_text(json.dumps(changed))
 
     seeded = tuning.seed(conn, user_id=1, path=changed_path)
-    assert seeded is True
-    assert tuning.get_profile(conn, user_id=1).scoring.gate1_threshold == 75
+    assert seeded is False
+    assert tuning.get_profile(conn, user_id=1).scoring.gate1_threshold == 60
