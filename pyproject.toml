@@ -33,6 +33,22 @@ dev = [
   "pytest-asyncio>=0.23",
   "ruff>=0.6",
   "respx>=0.21",
+  "import-linter>=2.0",
+]
+
+[tool.importlinter]
+root_package = "shopsteward"
+
+[[tool.importlinter.contracts]]
+name = "editing module is standalone"
+type = "forbidden"
+source_modules = ["shopsteward.editing"]
+forbidden_modules = [
+  "shopsteward.adapters.etsy",
+  "shopsteward.adapters.printful",
+  "shopsteward.adapters.gelato",
+  "shopsteward.adapters.instagram",
+  "shopsteward.pipeline",
 ]
 
 [tool.ruff]
