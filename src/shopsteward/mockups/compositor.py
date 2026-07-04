@@ -40,6 +40,15 @@ def prep_master(path: Path, max_long_edge: int) -> np.ndarray:
     with Image.open(path) as img:
         img.load()
         icc_bytes = img.info.get("icc_profile")
+
+        # PIL's default I;16 -> RGB conversion clamps at 255 instead of
+        # scaling (a 16-bit midtone like 32768 comes out ~white), so scale
+        # 16-bit grayscale down to 8-bit ourselves first. Only the I;16
+        # variants are handled here -- "I" is 32-bit and not a mode any of
+        # our supported masters actually load as.
+        if img.mode in ("I;16", "I;16L", "I;16B"):
+            img = img.point(lambda v: v / 256).convert("L")
+
         needs_base_convert = img.mode not in ("RGB", "RGBA")
 
         rgb = None

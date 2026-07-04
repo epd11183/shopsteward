@@ -54,11 +54,11 @@ def _eligible_landing_rows(
 
 def _template_library_hash(conn: sqlite3.Connection, user_id: int) -> str:
     rows = conn.execute(
-        "SELECT template_id, sidecar_hash FROM proj_staging_templates "
+        "SELECT template_id, sidecar_hash, image_hash FROM proj_staging_templates "
         "WHERE user_id=? AND status='valid' ORDER BY template_id",
         (user_id,),
     ).fetchall()
-    canonical = "|".join(f"{r['template_id']}:{r['sidecar_hash']}" for r in rows)
+    canonical = "|".join(f"{r['template_id']}:{r['sidecar_hash']}:{r['image_hash']}" for r in rows)
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 

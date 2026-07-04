@@ -12,7 +12,7 @@ PROJECTION_SCHEMA = """
 DROP TABLE IF EXISTS proj_staging_templates;
 CREATE TABLE proj_staging_templates (
     user_id INTEGER NOT NULL, template_id TEXT NOT NULL,
-    image_path TEXT, sidecar_path TEXT, sidecar_hash TEXT,
+    image_path TEXT, sidecar_path TEXT, sidecar_hash TEXT, image_hash TEXT,
     room_type TEXT, style TEXT, lighting TEXT, orientation TEXT,
     region_count INTEGER, avg_hue REAL, tags_json TEXT, source TEXT,
     status TEXT NOT NULL, reason TEXT,
@@ -43,13 +43,14 @@ def rebuild_mockups(conn: sqlite3.Connection) -> None:
         if e.type in ("stagingtemplate.registered", "stagingtemplate.updated"):
             conn.execute(
                 "INSERT OR REPLACE INTO proj_staging_templates VALUES "
-                "(?,?,?,?,?,?,?,?,?,?,?,?,?,'valid',NULL)",
+                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'valid',NULL)",
                 (
                     e.user_id,
                     p["template_id"],
                     p["image_path"],
                     p["sidecar_path"],
                     p["sidecar_hash"],
+                    p.get("image_hash"),
                     p["room_type"],
                     p["style"],
                     p["lighting"],
@@ -81,7 +82,7 @@ def rebuild_mockups(conn: sqlite3.Connection) -> None:
             else:
                 conn.execute(
                     "INSERT OR REPLACE INTO proj_staging_templates VALUES "
-                    "(?,?,NULL,?,?,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'invalid',?)",
+                    "(?,?,NULL,?,?,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'invalid',?)",
                     (e.user_id, key, p.get("sidecar_path"), p.get("sidecar_hash"), p.get("reason")),
                 )
 

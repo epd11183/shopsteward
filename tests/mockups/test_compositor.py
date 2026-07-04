@@ -189,3 +189,16 @@ def test_prep_master_converts_16bit_mode_without_raising(tmp_path):
     arr = prep_master(path, max_long_edge=1000)
     assert arr.dtype == np.uint8
     assert arr.shape == (150, 200, 3)
+
+
+def test_prep_master_scales_16bit_midgray_instead_of_clamping_to_white(tmp_path):
+    img = PILImage.new("I;16", (200, 150), 32768)  # mid-gray in 16-bit range
+    path = tmp_path / "master16_midgray.tif"
+    img.save(path)
+
+    arr = prep_master(path, max_long_edge=1000)
+    mean_pixel = arr.mean()
+    assert 100 <= mean_pixel <= 160, (
+        f"expected scaled mid-gray, got mean={mean_pixel} (PIL's default I;16->RGB "
+        "clamp would produce ~255)"
+    )
