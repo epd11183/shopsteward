@@ -70,8 +70,12 @@ Projections (rebuild_pipeline, drop/rebuild, user_id everywhere):
 
 **Ownership rule:** pipeline never writes proj_photos. Unscored candidates =
 `proj_photos.status='awaiting_scoring' AND photo_id NOT IN proj_scores`.
-proj_photos.status stays `awaiting_scoring` for hero photos permanently (by
-design; UI state is a join).
+proj_photos.status for hero photos reads `awaiting_scoring` until Gate 1
+approval, after which editing's own fold advances it (`editing` → `edited`)
+because approval dispatches a real edit job. (Corrected 2026-07-04 — the
+original claim that it stays `awaiting_scoring` forever was wrong.)
+landing.file_invalid carries a file_id (sha256) so unfixed bad files are not
+re-emitted every scan; a fixed file has new bytes → new id → re-observed.
 
 ## 3. Scorer registry + tuning profile
 

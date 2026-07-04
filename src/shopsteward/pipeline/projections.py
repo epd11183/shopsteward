@@ -107,13 +107,12 @@ def rebuild_pipeline(conn: sqlite3.Connection) -> None:
             )
 
         elif e.type == "landing.file_invalid":
-            # landing.file_invalid carries no file_id (the file may not even
-            # be hashable); key on the path so re-observing the same bad file
-            # updates in place instead of accumulating duplicates.
+            # file_id present since 2026-07-04 (bytes are always hashable);
+            # path-key fallback covers events recorded before that.
             conn.execute(
                 "INSERT OR REPLACE INTO proj_landing_files VALUES "
                 "(?,?,?,NULL,NULL,NULL,NULL,NULL,NULL,'invalid',?)",
-                (e.user_id, f"invalid:{p['path']}", p["path"], p.get("reason")),
+                (e.user_id, p.get("file_id") or f"invalid:{p['path']}", p["path"], p.get("reason")),
             )
 
     conn.commit()

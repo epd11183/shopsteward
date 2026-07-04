@@ -126,3 +126,16 @@ def test_second_scan_is_idempotent(conn, tmp_path):
     second = landing.scan_landing(conn, user_id=1, landing_path=landing_dir)
     assert second.observed == 0
     assert len(read_all(conn, "landing.file_observed")) == 1
+
+
+def test_unfixed_invalid_file_not_reemitted(conn, tmp_path):
+    landing_dir = tmp_path / "landing"
+    landing_dir.mkdir()
+    (landing_dir / "broken.jpg").write_bytes(b"not a jpeg at all")
+
+    first = landing.scan_landing(conn, user_id=1, landing_path=landing_dir)
+    assert first.invalid == 1
+
+    second = landing.scan_landing(conn, user_id=1, landing_path=landing_dir)
+    assert second.invalid == 0
+    assert len(read_all(conn, "landing.file_invalid")) == 1

@@ -24,9 +24,10 @@ def seed(conn: sqlite3.Connection, user_id: int, path: Path) -> bool:
     profile = TuningProfile.model_validate(json.loads(Path(path).read_text()))
     profile_dump = profile.model_dump(by_alias=True)
 
-    existing = _latest_by_name(conn, user_id)
-    prior = existing.get(profile.name)
-    if prior is not None and prior == profile_dump:
+    # Seed only when this profile name has never been written for the user.
+    # Comparing against the latest payload would silently re-seed defaults
+    # over a future operator `tuningprofile.updated` (last-write-wins).
+    if profile.name in _latest_by_name(conn, user_id):
         return False
 
     append(

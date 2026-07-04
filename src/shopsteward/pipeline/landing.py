@@ -28,11 +28,14 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _known_valid_file_ids(conn: sqlite3.Connection, user_id: int) -> set[str]:
+def _known_file_ids(conn: sqlite3.Connection, user_id: int) -> set[str]:
+    """File ids already recorded — valid or invalid — so an unfixed bad file
+    doesn't re-emit landing.file_invalid on every scan. A fixed file has new
+    bytes, hence a new sha256, and is picked up normally."""
     return {
         e.payload["file_id"]
-        for e in read_all(conn, "landing.file_observed")
-        if e.user_id == user_id
+        for e in read_all(conn, "landing.file_")
+        if e.user_id == user_id and e.payload.get("file_id")
     }
 
 
@@ -108,7 +111,7 @@ def scan_landing(
     profile = tuning.get_profile(conn, user_id)
     landing_cfg = profile.landing
 
-    known_file_ids = _known_valid_file_ids(conn, user_id)
+    known_file_ids = _known_file_ids(conn, user_id)
     base_names = _known_base_names(conn, user_id)
 
     observed = matched = invalid = 0
@@ -136,9 +139,10 @@ def scan_landing(
                 Event(
                     user_id=user_id,
                     type="landing.file_invalid",
-                    payload={"path": str(f), "reason": result["reason"]},
+                    payload={"file_id": file_id, "path": str(f), "reason": result["reason"]},
                 ),
             )
+            known_file_ids.add(file_id)
             invalid += 1
             continue
 
