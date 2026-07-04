@@ -1,0 +1,44 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+secrets/
+
+# Runtime data (shop DB, caches, exports, photos)
+data/
+!data/.gitkeep
+*.db
+*.sqlite*
+epd_develop_report.json
+
+# Photo files never belong in the repo
+*.tif
+*.tiff
+*.cr3
+*.dng
+*.psd
+
+# Claude Code — personal overrides and local state stay local
+.claude/settings.local.json
+.claude/projects/
+.claude/logs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
