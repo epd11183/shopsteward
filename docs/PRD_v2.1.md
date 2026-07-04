@@ -143,7 +143,9 @@ Mass mode has one active touchpoint plus optional post-hoc curation:
   path is a folder containing mixed RAW (`.CR3`) and JPEG previews. The
   ingester pairs files by base filename (`IMG_1234.CR3` + `IMG_1234.JPG`),
   records content hashes on the RAW to prevent duplicates, and extracts EXIF
-  from the RAW.
+  from the paired JPEG via Pillow (capture metadata is identical to the
+  RAW's; avoids a CR3-parsing dependency — amended 2026-07-03). The RAW is
+  hash-tracked and carried forward as the print master.
 - **Mass-mode preset selection.** The event preset family is chosen at
   invocation (`--preset <family>`, or the UI equivalent); if omitted, the
   tool lists available families and asks for confirmation. No folder-name
@@ -180,7 +182,14 @@ the release overhead.
   is open, applies preset families as develop settings (one undoable history
   step each, as today), and adds photos to a mode-specific collection
   ("ShopSteward — Needs Finishing" for hero; the event's own collection for
-  mass).
+  mass). In mass mode the plugin then auto-exports gallery-ready JPEGs via
+  an export session to the configured event output folder using a per-event
+  naming template (decided 2026-07-03); the queue processor's write
+  authorization is granted per-session by the operator when it starts.
+- **Preset families** are named develop-settings dicts stored in the
+  database, seeded from `config/defaults/preset_families/` (JSON), never
+  hardcoded. v1 ships neutral placeholders; the operator captures real
+  looks with the Bridge's export command.
 - **Hero-mode finishing.** Operator's Gate 2 quick pass in LrC; export to
   the landing folder using a provided export preset (AdobeRGB TIFF print
   master + sRGB JPEG web derivative, deterministic naming).
@@ -415,6 +424,13 @@ questions remain. Decision log summary:
 14. C-Suite cadence: milestone kickoffs + §8.2 decisions (§8.5)
 15. Budget: Max plan for dev; Gemini free tier for runtime; $10/mo soft cap (§8.5)
 16. Workiva addendum: confirmed enumerated; public repo cleared (§10)
+
+M2 kickoff decisions (2026-07-03):
+
+17. EXIF read from paired JPEG via Pillow, not the CR3; RAW is hash-only (§5.1)
+18. Mass-mode export: plugin auto-exports via export session, per-event naming template (§5.2)
+19. import-linter approved as dev dependency; boundary rule lands in the first M2 PR
+20. Preset families: DB-stored, seeded from config/defaults/preset_families/ (§5.2)
 
 ## 14. Appendix: Deferred to v2+
 
