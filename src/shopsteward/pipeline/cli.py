@@ -1,17 +1,16 @@
 """`shopsteward score` sub-app: run the scoring pipeline over awaiting_scoring
-hero photos and queue passers for Gate 1."""
+hero photos and queue passers for Gate 1. `shopsteward pipeline` sub-app:
+landing-folder scan + status. No gate1 CLI -- the UI is the decision surface."""
 
-import os
-from pathlib import Path
 from typing import Annotated
 
 import typer
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-TUNING_PROFILE_PATH = _REPO_ROOT / "config" / "defaults" / "tuning_profile.json"
-COMMERCIAL_PROMPT_PATH = _REPO_ROOT / "config" / "defaults" / "prompts" / "commercial_score.txt"
+from shopsteward.pipeline.config import COMMERCIAL_PROMPT_PATH, TUNING_PROFILE_PATH
+from shopsteward.pipeline.live_gate import LIVE_VISION_ERROR, live_vision_open
 
 score_app = typer.Typer(no_args_is_help=True, help="Hero scoring pipeline.")
+pipeline_app = typer.Typer(no_args_is_help=True, help="Gate 1 + landing-folder utilities.")
 
 
 @score_app.command("run")
@@ -22,16 +21,11 @@ def run(
     ] = False,
 ) -> None:
     """Score awaiting_scoring hero photos; queue composite>=threshold for Gate 1."""
-    if live_vision and (
-        os.environ.get("SHOPSTEWARD_LIVE_VISION") != "1" or not os.environ.get("GEMINI_API_KEY")
-    ):
-        typer.secho(
-            "Live vision scoring is gated on operator approval (PRD §8.4): set "
-            "SHOPSTEWARD_LIVE_VISION=1 and GEMINI_API_KEY in the environment, "
-            "then re-run with --live-vision.",
-            fg="red",
-        )
+    if live_vision and not live_vision_open():
+        typer.secho(LIVE_VISION_ERROR, fg="red")
         raise typer.Exit(code=1)
+
+    import os
 
     from shopsteward.adapters.vision.fake import FixtureVisionAdapter
     from shopsteward.adapters.vision.gemini import GeminiVisionAdapter
@@ -65,5 +59,71 @@ def run(
                 "stay eligible for the next run",
                 fg="yellow",
             )
+    finally:
+        conn.close()
+
+
+@pipeline_app.command("scan")
+def scan() -> None:
+    """Scan the landing folder for new/invalid TIFF & JPEG files."""
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.pipeline import landing, tuning
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        tuning.seed(conn, DEFAULT_USER_ID, TUNING_PROFILE_PATH)
+        report = landing.scan_landing(conn, DEFAULT_USER_ID)
+        typer.echo(f"landing scan: {report.model_dump()}")
+    finally:
+        conn.close()
+
+
+@pipeline_app.command("status")
+def status() -> None:
+    """Print Gate 1 queue counts, landing counts, and the UI URL."""
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.pipeline.projections import rebuild_pipeline
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        rebuild_pipeline(conn)
+
+        gate1_counts = {
+            row["state"]: row["n"]
+            for row in conn.execute(
+                "SELECT state, COUNT(*) AS n FROM proj_gate1 WHERE user_id = ? GROUP BY state",
+                (DEFAULT_USER_ID,),
+            ).fetchall()
+        }
+        landing_counts = {
+            row["status"]: row["n"]
+            for row in conn.execute(
+                "SELECT status, COUNT(*) AS n FROM proj_landing_files WHERE user_id = ? "
+                "GROUP BY status",
+                (DEFAULT_USER_ID,),
+            ).fetchall()
+        }
+        manual_drops = conn.execute(
+            "SELECT COUNT(*) AS n FROM proj_landing_files "
+            "WHERE user_id = ? AND status = 'valid' AND photo_id IS NULL",
+            (DEFAULT_USER_ID,),
+        ).fetchone()["n"]
+
+        typer.echo("Gate 1 queue:")
+        for state in ("pending", "snoozed", "approved", "rejected"):
+            typer.echo(f"  {state}: {gate1_counts.get(state, 0)}")
+        typer.echo("Landing:")
+        typer.echo(f"  valid: {landing_counts.get('valid', 0)}")
+        typer.echo(f"  invalid: {landing_counts.get('invalid', 0)}")
+        typer.echo(f"  manual: {manual_drops}")
+        typer.echo("UI: http://127.0.0.1:8321")
     finally:
         conn.close()

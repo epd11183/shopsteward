@@ -63,21 +63,25 @@ class ScoreBreakdown(BaseModel):
 
 class Gate1Card(BaseModel):
     photo_id: str
+    base_name: str
     composite: float
-    scores: ScoreBreakdown
+    technical: float | None = None
+    commercial: float | None = None
     subject: str
     strongest_room_style: str
     one_risk: str
     rationale: str
     escalated: bool = False
+    state: str
+    edit_job_id: str | None = None
     dispatch_state: str | None = None
 
 
 class LandingReport(BaseModel):
     observed: int = 0
-    invalid: int = 0
     matched: int = 0
-    unmatched: int = 0
+    manual_drops: int = 0
+    invalid: int = 0
 
 
 class ScoringRunResult(BaseModel):
