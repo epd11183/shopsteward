@@ -457,6 +457,22 @@ M3 kickoff decisions (2026-07-03):
 27. §5.2 landing-folder wording amended: sole *image* handoff; commands flow
     pipeline→editing.dispatch one-way (import-linter enforced).
 
+M4 kickoff decisions (2026-07-04):
+
+28. Development against synthetic placeholder templates (programmatically
+    drawn rooms with known quads, committed as dev defaults); the real ~15
+    AI-generated rooms land later as a content-only PR (annotate + commit).
+29. Compositing v1 realism: perspective warp + ambient brightness/WB match +
+    soft edge shadow + intent-appropriate frame/wrap border. Deterministic,
+    no AI, no reflections.
+30. All six mockup intents ship in M4: single, gallery-wall bundle (multi-
+    region templates), canvas edge-on, framed-poster room scene, acrylic
+    depth shot, digital "what you get" graphic.
+31. Sidecar schema includes `region_width_inches` for believable print
+    scale, computed not eyeballed. Etsy AI-imagery disclosure line templated
+    now for M5 listings; template annotation via a Templates UI surface
+    (click four corners).
+
 ## 14. Appendix: Deferred to v2+
 
 Unchanged from PRD v2.
