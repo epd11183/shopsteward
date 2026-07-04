@@ -68,6 +68,34 @@ return {
   two-script version is the no-friction starting point; we can graduate to the MCP
   once the workflow proves out.
 
+## Queue processor (v1.1)
+
+The third menu item — *EPD: Start/Stop ShopSteward Queue Processor* — is the
+Lightroom half of the ShopSteward editing module. It polls a bridge folder
+for job files written by `shopsteward ingest`, and for each job: imports
+missing photos, applies the inlined develop settings (one undoable history
+step per photo), adds them to a named collection, and — for mass jobs —
+exports sRGB JPEGs renamed via the job's naming template.
+
+- **Per-session authorization.** Starting the processor always shows a
+  confirmation dialog naming the watched folder and the exact powers it
+  will use (import, apply, collections, export). Decline and nothing runs.
+  Authorization does not persist across Lightroom sessions.
+- **Bridge folder layout** (shared contract with
+  `src/shopsteward/core/folderproto.py`):
+
+  ```
+  <bridge>/jobs/             inbox — ShopSteward writes edit_<uuid>.json
+  <bridge>/jobs/done/        processed job + <name>.result.json
+  <bridge>/jobs/failed/      failed/malformed job + <name>.result.json
+  <bridge>/jobs/quarantine/  used by the Python reader only
+  ```
+
+  Writers use `<name>.part` + rename so consumers never see partial files.
+- Malformed job files land in `failed/` with an error result — the loop
+  never crashes on bad input.
+- Manual test plan: see `TESTING.md` (canned jobs via `make_test_jobs.py`).
+
 ## Safety notes
 
 - Export is strictly read-only.

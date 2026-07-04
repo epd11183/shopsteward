@@ -21,7 +21,11 @@ return {
             title = 'EPD: Apply Settings from Claude (.lua file)...',
             file  = 'ApplySettings.lua',
         },
+        {
+            title = 'EPD: Start/Stop ShopSteward Queue Processor',
+            file  = 'QueueProcessor.lua',
+        },
     },
 
-    VERSION = { major = 1, minor = 0, revision = 0 },
+    VERSION = { major = 1, minor = 1, revision = 0 },
 }
