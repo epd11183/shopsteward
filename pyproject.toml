@@ -59,6 +59,14 @@ source_modules = ["shopsteward.core", "shopsteward.editing",
                   "shopsteward.adapters.lightroom", "shopsteward.adapters.vision"]
 forbidden_modules = ["shopsteward.pipeline"]
 
+[[tool.importlinter.contracts]]
+name = "mockups is imported by no lower layer"
+type = "forbidden"
+source_modules = ["shopsteward.core", "shopsteward.editing", "shopsteward.pipeline",
+                  "shopsteward.adapters.lightroom", "shopsteward.adapters.vision",
+                  "shopsteward.adapters.etsy"]
+forbidden_modules = ["shopsteward.mockups"]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100

@@ -1,0 +1,37 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "livingroom-warm-01",
+  "room_type": "living_room",
+  "style": "modern",
+  "lighting": "warm_daylight",
+  "orientation": "landscape",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          300.0,
+          200.0
+        ],
+        [
+          1300.0,
+          215.0
+        ],
+        [
+          1290.0,
+          800.0
+        ],
+        [
+          310.0,
+          785.0
+        ]
+      ],
+      "region_width_inches": 36.0
+    }
+  ],
+  "tags": [
+    "neutral_wall",
+    "sofa",
+    "warm"
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "gallery-charcoal-01",
+  "room_type": "living_room",
+  "style": "industrial",
+  "lighting": "moody",
+  "orientation": "landscape",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          200.0,
+          250.0
+        ],
+        [
+          750.0,
+          260.0
+        ],
+        [
+          745.0,
+          750.0
+        ],
+        [
+          205.0,
+          740.0
+        ]
+      ],
+      "region_width_inches": 24.0
+    },
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          850.0,
+          270.0
+        ],
+        [
+          1250.0,
+          275.0
+        ],
+        [
+          1246.0,
+          730.0
+        ],
+        [
+          854.0,
+          725.0
+        ]
+      ],
+      "region_width_inches": 16.0
+    }
+  ],
+  "tags": [
+    "gallery_wall",
+    "charcoal",
+    "sofa"
+  ]
+}
