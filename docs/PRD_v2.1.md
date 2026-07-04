@@ -198,8 +198,10 @@ the release overhead.
   pass) and delivery-ready JPEGs exported to the configured event output
   folder. Client gallery / delivery is out of scope for v1 (§3.2).
 - **Landing folder handoff.** The Etsy pipeline watches only the landing
-  folder. This is the sole interface between the editing module and the rest
-  of ShopSteward. Files arrive by either path: the Gate 2 export preset
+  folder. This is the sole *image/artifact* handoff between the editing
+  module and the rest of ShopSteward; commands flow one-way from the
+  pipeline into editing's dispatch (never the reverse — CI-enforced).
+  (Wording amended 2026-07-03.) Files arrive by either path: the Gate 2 export preset
   writes there directly, or the operator drags files in manually (mass-mode
   standouts, catalog backfill). Anything in the landing folder is
   commercially approved by definition — the pipeline never re-scores it,
@@ -448,6 +450,12 @@ M3 kickoff decisions (2026-07-03):
 24. Landing folder: on-demand scan (CLI/API/UI-poll triggered), no daemon.
     Technical validation only (resolution, color space, integrity) — never
     re-scored (decision 6).
+25. Hero preset selection: `hero_preset_family` key in the tuning profile
+    (seeded "neutral"); subject-mapped selection deferred until real
+    subject-specific families exist.
+26. Gate 1 snooze: indefinite visible shelf, manual re-queue only.
+27. §5.2 landing-folder wording amended: sole *image* handoff; commands flow
+    pipeline→editing.dispatch one-way (import-linter enforced).
 
 ## 14. Appendix: Deferred to v2+
 
