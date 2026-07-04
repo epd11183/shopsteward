@@ -2,6 +2,23 @@
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# VisionVerdict is owned by shopsteward.adapters.vision.interface (import-linter
+# contracts make adapters -> pipeline imports forbidden, not the reverse).
+# Re-exported here so existing `from shopsteward.pipeline.models import
+# VisionVerdict` call sites keep working.
+from shopsteward.adapters.vision.interface import VisionVerdict
+
+__all__ = [
+    "Gate1Card",
+    "LandingConfig",
+    "LandingReport",
+    "ScoreBreakdown",
+    "ScoringConfig",
+    "TuningProfile",
+    "VisionConfig",
+    "VisionVerdict",
+]
+
 
 class ScoringConfig(BaseModel):
     weights: dict[str, float]
@@ -41,14 +58,6 @@ class ScoreBreakdown(BaseModel):
     historical_conversion: float | None = None
     composite: float
     escalated: bool = False
-
-
-class VisionVerdict(BaseModel):
-    commercial_score: int = Field(ge=0, le=100)
-    subject: str
-    strongest_room_style: str
-    one_risk: str
-    rationale: str = Field(max_length=140)
 
 
 class Gate1Card(BaseModel):
