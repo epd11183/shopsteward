@@ -1,0 +1,36 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "livingroom-sage-scandi-02",
+  "room_type": "living_room",
+  "style": "scandinavian",
+  "lighting": "soft",
+  "orientation": "landscape",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          682.6,
+          203.5
+        ],
+        [
+          1845.4,
+          203.5
+        ],
+        [
+          1845.4,
+          898.9
+        ],
+        [
+          682.6,
+          898.9
+        ]
+      ],
+      "region_width_inches": 72.0
+    }
+  ],
+  "tags": [
+    "sage",
+    "sofa"
+  ]
+}

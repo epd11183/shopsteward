@@ -1,0 +1,36 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "entryway-white-midcentury-01",
+  "room_type": "entryway",
+  "style": "midcentury",
+  "lighting": "bright",
+  "orientation": "any",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          657.3,
+          203.5
+        ],
+        [
+          1478.9,
+          203.5
+        ],
+        [
+          1478.9,
+          848.0
+        ],
+        [
+          657.3,
+          848.0
+        ]
+      ],
+      "region_width_inches": 56.0
+    }
+  ],
+  "tags": [
+    "white",
+    "console"
+  ]
+}

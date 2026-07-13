@@ -1,0 +1,36 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "bedroom-beige-01",
+  "room_type": "bedroom",
+  "style": "transitional",
+  "lighting": "soft",
+  "orientation": "landscape",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          460.8,
+          51.2
+        ],
+        [
+          1075.2,
+          51.2
+        ],
+        [
+          1075.2,
+          491.5
+        ],
+        [
+          460.8,
+          491.5
+        ]
+      ],
+      "region_width_inches": 42.0
+    }
+  ],
+  "tags": [
+    "beige",
+    "above_bed"
+  ]
+}

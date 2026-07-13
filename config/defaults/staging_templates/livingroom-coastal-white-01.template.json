@@ -1,0 +1,36 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "livingroom-coastal-white-01",
+  "room_type": "living_room",
+  "style": "coastal",
+  "lighting": "bright",
+  "orientation": "landscape",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          368.6,
+          102.4
+        ],
+        [
+          1167.4,
+          102.4
+        ],
+        [
+          1167.4,
+          512.0
+        ],
+        [
+          368.6,
+          512.0
+        ]
+      ],
+      "region_width_inches": 72.0
+    }
+  ],
+  "tags": [
+    "white",
+    "slipcover_sofa"
+  ]
+}

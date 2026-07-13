@@ -1,0 +1,37 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "office-olive-02",
+  "room_type": "office",
+  "style": "moody_modern",
+  "lighting": "soft",
+  "orientation": "any",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          368.6,
+          81.9
+        ],
+        [
+          1259.5,
+          81.9
+        ],
+        [
+          1259.5,
+          512.0
+        ],
+        [
+          368.6,
+          512.0
+        ]
+      ],
+      "region_width_inches": 68.0
+    }
+  ],
+  "tags": [
+    "olive",
+    "desk",
+    "shelf"
+  ]
+}

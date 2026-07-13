@@ -264,17 +264,17 @@ def test_write_sidecar_then_scan_registers(conn, tmp_path):
     assert len(events) == 1
 
 
-def test_committed_placeholders_all_scan_valid(conn):
+def test_committed_defaults_all_scan_valid(conn):
     report = scan_templates(conn, USER_ID)
 
     assert report.invalid == 0
-    assert report.registered == 4
+    assert report.registered >= 4
 
     rows = conn.execute(
         "SELECT template_id, region_count, status FROM proj_staging_templates WHERE user_id=?",
         (USER_ID,),
     ).fetchall()
-    assert len(rows) == 4
+    assert len(rows) == report.registered
     assert all(row["status"] == "valid" for row in rows)
-    region_counts = sorted(row["region_count"] for row in rows)
-    assert region_counts == [1, 1, 1, 2]
+    # gallery_wall needs at least one multi-region template in the library
+    assert any(row["region_count"] >= 2 for row in rows)

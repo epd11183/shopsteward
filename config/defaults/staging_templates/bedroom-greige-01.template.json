@@ -1,0 +1,36 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "bedroom-greige-01",
+  "room_type": "bedroom",
+  "style": "transitional",
+  "lighting": "soft",
+  "orientation": "landscape",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          460.8,
+          102.4
+        ],
+        [
+          1075.2,
+          102.4
+        ],
+        [
+          1075.2,
+          512.0
+        ],
+        [
+          460.8,
+          512.0
+        ]
+      ],
+      "region_width_inches": 42.0
+    }
+  ],
+  "tags": [
+    "greige",
+    "above_bed"
+  ]
+}

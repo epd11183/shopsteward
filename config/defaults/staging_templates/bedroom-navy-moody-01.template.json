@@ -1,0 +1,37 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "bedroom-navy-moody-01",
+  "room_type": "bedroom",
+  "style": "modern",
+  "lighting": "moody",
+  "orientation": "landscape",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          758.4,
+          237.4
+        ],
+        [
+          1769.6,
+          237.4
+        ],
+        [
+          1769.6,
+          780.2
+        ],
+        [
+          758.4,
+          780.2
+        ]
+      ],
+      "region_width_inches": 64.0
+    }
+  ],
+  "tags": [
+    "navy",
+    "above_bed",
+    "dark_wall"
+  ]
+}

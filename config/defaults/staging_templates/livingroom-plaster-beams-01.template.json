@@ -1,0 +1,37 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "livingroom-plaster-beams-01",
+  "room_type": "living_room",
+  "style": "rustic",
+  "lighting": "warm",
+  "orientation": "landscape",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          505.6,
+          373.1
+        ],
+        [
+          2022.4,
+          373.1
+        ],
+        [
+          2022.4,
+          1017.6
+        ],
+        [
+          505.6,
+          1017.6
+        ]
+      ],
+      "region_width_inches": 62.0
+    }
+  ],
+  "tags": [
+    "beams",
+    "plaster",
+    "leather_sofa"
+  ]
+}
