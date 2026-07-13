@@ -1,0 +1,37 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "loft-gray-industrial-02",
+  "room_type": "living_room",
+  "style": "industrial",
+  "lighting": "soft",
+  "orientation": "any",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          556.2,
+          169.6
+        ],
+        [
+          1769.6,
+          169.6
+        ],
+        [
+          1769.6,
+          932.8
+        ],
+        [
+          556.2,
+          932.8
+        ]
+      ],
+      "region_width_inches": 84.0
+    }
+  ],
+  "tags": [
+    "loft",
+    "gray_wall",
+    "sofa"
+  ]
+}

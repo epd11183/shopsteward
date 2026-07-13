@@ -1,0 +1,36 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "office-olive-01",
+  "room_type": "office",
+  "style": "japandi",
+  "lighting": "soft",
+  "orientation": "any",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          657.3,
+          169.6
+        ],
+        [
+          1870.7,
+          169.6
+        ],
+        [
+          1870.7,
+          898.9
+        ],
+        [
+          657.3,
+          898.9
+        ]
+      ],
+      "region_width_inches": 70.0
+    }
+  ],
+  "tags": [
+    "olive",
+    "desk"
+  ]
+}

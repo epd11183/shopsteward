@@ -1,0 +1,36 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "sittingroom-greige-01",
+  "room_type": "living_room",
+  "style": "warm_minimal",
+  "lighting": "soft",
+  "orientation": "any",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          910.1,
+          203.5
+        ],
+        [
+          2022.4,
+          203.5
+        ],
+        [
+          2022.4,
+          983.7
+        ],
+        [
+          910.1,
+          983.7
+        ]
+      ],
+      "region_width_inches": 64.0
+    }
+  ],
+  "tags": [
+    "greige",
+    "armchair"
+  ]
+}

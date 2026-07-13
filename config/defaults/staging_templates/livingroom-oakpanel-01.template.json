@@ -1,0 +1,36 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "livingroom-oakpanel-01",
+  "room_type": "living_room",
+  "style": "japandi",
+  "lighting": "soft",
+  "orientation": "landscape",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          707.8,
+          237.4
+        ],
+        [
+          1820.2,
+          237.4
+        ],
+        [
+          1820.2,
+          746.2
+        ],
+        [
+          707.8,
+          746.2
+        ]
+      ],
+      "region_width_inches": 72.0
+    }
+  ],
+  "tags": [
+    "oak_panel",
+    "sofa"
+  ]
+}

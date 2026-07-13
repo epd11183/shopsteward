@@ -1,0 +1,36 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "livingroom-white-modern-01",
+  "room_type": "living_room",
+  "style": "modern_minimal",
+  "lighting": "bright",
+  "orientation": "landscape",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          657.3,
+          237.4
+        ],
+        [
+          1870.7,
+          237.4
+        ],
+        [
+          1870.7,
+          983.7
+        ],
+        [
+          657.3,
+          983.7
+        ]
+      ],
+      "region_width_inches": 76.0
+    }
+  ],
+  "tags": [
+    "sofa",
+    "white_wall"
+  ]
+}

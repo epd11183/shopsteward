@@ -1,0 +1,36 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "dining-terracotta-01",
+  "room_type": "dining_room",
+  "style": "warm_modern",
+  "lighting": "soft",
+  "orientation": "landscape",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          261.1,
+          102.4
+        ],
+        [
+          1044.5,
+          102.4
+        ],
+        [
+          1044.5,
+          532.5
+        ],
+        [
+          261.1,
+          532.5
+        ]
+      ],
+      "region_width_inches": 62.0
+    }
+  ],
+  "tags": [
+    "terracotta",
+    "dining"
+  ]
+}

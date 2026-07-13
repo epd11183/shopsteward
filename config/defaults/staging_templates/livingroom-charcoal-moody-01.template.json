@@ -1,0 +1,37 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "livingroom-charcoal-moody-01",
+  "room_type": "living_room",
+  "style": "moody_modern",
+  "lighting": "moody",
+  "orientation": "any",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          707.8,
+          203.5
+        ],
+        [
+          1921.3,
+          203.5
+        ],
+        [
+          1921.3,
+          881.9
+        ],
+        [
+          707.8,
+          881.9
+        ]
+      ],
+      "region_width_inches": 76.0
+    }
+  ],
+  "tags": [
+    "charcoal",
+    "leather_sofa",
+    "dark_wall"
+  ]
+}

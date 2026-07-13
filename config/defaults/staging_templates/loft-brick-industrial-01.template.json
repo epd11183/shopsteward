@@ -1,0 +1,59 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "loft-brick-industrial-01",
+  "room_type": "living_room",
+  "style": "industrial",
+  "lighting": "soft",
+  "orientation": "any",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          556.2,
+          203.5
+        ],
+        [
+          1264.0,
+          203.5
+        ],
+        [
+          1264.0,
+          1051.5
+        ],
+        [
+          556.2,
+          1051.5
+        ]
+      ],
+      "region_width_inches": 44.0
+    },
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          1415.7,
+          237.4
+        ],
+        [
+          2224.6,
+          237.4
+        ],
+        [
+          2224.6,
+          932.8
+        ],
+        [
+          1415.7,
+          932.8
+        ]
+      ],
+      "region_width_inches": 48.0
+    }
+  ],
+  "tags": [
+    "brick",
+    "loft",
+    "textured"
+  ]
+}

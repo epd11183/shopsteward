@@ -1,0 +1,81 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "livingroom-white-minimal-02",
+  "room_type": "living_room",
+  "style": "modern_minimal",
+  "lighting": "bright",
+  "orientation": "any",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          606.7,
+          169.6
+        ],
+        [
+          1390.4,
+          169.6
+        ],
+        [
+          1390.4,
+          932.8
+        ],
+        [
+          606.7,
+          932.8
+        ]
+      ],
+      "region_width_inches": 46.0
+    },
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          1478.9,
+          169.6
+        ],
+        [
+          1971.8,
+          169.6
+        ],
+        [
+          1971.8,
+          644.5
+        ],
+        [
+          1478.9,
+          644.5
+        ]
+      ],
+      "region_width_inches": 28.0
+    },
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          1478.9,
+          712.3
+        ],
+        [
+          1971.8,
+          712.3
+        ],
+        [
+          1971.8,
+          1017.6
+        ],
+        [
+          1478.9,
+          1017.6
+        ]
+      ],
+      "region_width_inches": 28.0
+    }
+  ],
+  "tags": [
+    "white",
+    "sofa",
+    "gallery_wall"
+  ]
+}

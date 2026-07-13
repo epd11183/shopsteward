@@ -1,0 +1,37 @@
+{
+  "schema": "shopsteward.stagingtemplate/1",
+  "template_id": "cabin-log-rustic-01",
+  "room_type": "living_room",
+  "style": "rustic_cabin",
+  "lighting": "warm",
+  "orientation": "any",
+  "regions": [
+    {
+      "kind": "wall_print",
+      "quad": [
+        [
+          353.9,
+          237.4
+        ],
+        [
+          1466.2,
+          237.4
+        ],
+        [
+          1466.2,
+          983.7
+        ],
+        [
+          353.9,
+          983.7
+        ]
+      ],
+      "region_width_inches": 60.0
+    }
+  ],
+  "tags": [
+    "log_wall",
+    "cabin",
+    "textured"
+  ]
+}
