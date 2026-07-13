@@ -34,3 +34,7 @@ class VisionResult(BaseModel):
 
 class VisionAdapter(Protocol):
     def score_commercial(self, jpeg_bytes: bytes, *, model: str) -> VisionResult: ...
+
+
+class VisionParseError(RuntimeError):
+    """Raised when a vision-provider response cannot be parsed into a VisionVerdict."""

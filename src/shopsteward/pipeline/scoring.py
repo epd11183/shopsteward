@@ -97,7 +97,12 @@ def run_scoring(
                 escalated_flag = True
                 if live:
                     _maybe_append_llm_call(
-                        conn, user_id, row["photo_id"], "borderline_rescore", rescore_result.detail
+                        conn,
+                        user_id,
+                        row["photo_id"],
+                        "borderline_rescore",
+                        rescore_result.detail,
+                        profile.vision.provider,
                     )
                 composite = _composite(scores, weights)
 
@@ -196,7 +201,14 @@ def _run_scorers(
         scores[scorer.name] = result.score
         details[scorer.name] = result.detail
         if live and scorer.name == "commercial":
-            _maybe_append_llm_call(conn, user_id, ctx.photo_id, "commercial_triage", result.detail)
+            _maybe_append_llm_call(
+                conn,
+                user_id,
+                ctx.photo_id,
+                "commercial_triage",
+                result.detail,
+                ctx.profile.vision.provider,
+            )
 
     return scores, details, False
 
@@ -219,7 +231,12 @@ def _append_score_failed(
 
 
 def _maybe_append_llm_call(
-    conn: sqlite3.Connection, user_id: int, photo_id: str, purpose: str, detail: dict
+    conn: sqlite3.Connection,
+    user_id: int,
+    photo_id: str,
+    purpose: str,
+    detail: dict,
+    provider: str,
 ) -> None:
     usage = detail.get("usage")
     if not usage:
@@ -230,7 +247,7 @@ def _maybe_append_llm_call(
             user_id=user_id,
             type="llm.call",
             payload={
-                "provider": "gemini",
+                "provider": provider,
                 "model": detail.get("model"),
                 "purpose": purpose,
                 "photo_id": photo_id,

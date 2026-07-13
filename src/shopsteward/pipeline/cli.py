@@ -6,8 +6,8 @@ from typing import Annotated
 
 import typer
 
-from shopsteward.pipeline.config import COMMERCIAL_PROMPT_PATH, TUNING_PROFILE_PATH
-from shopsteward.pipeline.live_gate import LIVE_VISION_ERROR, live_vision_open
+from shopsteward.pipeline.config import TUNING_PROFILE_PATH
+from shopsteward.pipeline.live_gate import live_vision_error, live_vision_open
 
 score_app = typer.Typer(no_args_is_help=True, help="Hero scoring pipeline.")
 pipeline_app = typer.Typer(no_args_is_help=True, help="Gate 1 + landing-folder utilities.")
@@ -21,17 +21,10 @@ def run(
     ] = False,
 ) -> None:
     """Score awaiting_scoring hero photos; queue composite>=threshold for Gate 1."""
-    if live_vision and not live_vision_open():
-        typer.secho(LIVE_VISION_ERROR, fg="red")
-        raise typer.Exit(code=1)
-
-    import os
-
-    from shopsteward.adapters.vision.fake import FixtureVisionAdapter
-    from shopsteward.adapters.vision.gemini import GeminiVisionAdapter
     from shopsteward.core.db import connect, migrate
     from shopsteward.pipeline import tuning
     from shopsteward.pipeline.scoring import run_scoring
+    from shopsteward.pipeline.vision_factory import build_vision_adapter
     from shopsteward.settings import DEFAULT_USER_ID, db_path
 
     db = db_path()
@@ -42,14 +35,11 @@ def run(
         tuning.seed(conn, DEFAULT_USER_ID, TUNING_PROFILE_PATH)
         profile = tuning.get_profile(conn, DEFAULT_USER_ID)
 
-        if live_vision:
-            vision = GeminiVisionAdapter(
-                api_key=os.environ["GEMINI_API_KEY"],
-                prompt=COMMERCIAL_PROMPT_PATH.read_text(),
-                pricing=profile.vision.est_cost_per_mtok,
-            )
-        else:
-            vision = FixtureVisionAdapter()
+        if live_vision and not live_vision_open(profile.vision.provider):
+            typer.secho(live_vision_error(profile.vision.provider), fg="red")
+            raise typer.Exit(code=1)
+
+        vision = build_vision_adapter(profile, live=live_vision)
 
         result = run_scoring(conn, DEFAULT_USER_ID, vision, limit=limit, live=live_vision)
         typer.echo(f"scored: {result.model_dump()}")
