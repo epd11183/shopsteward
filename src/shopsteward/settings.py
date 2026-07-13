@@ -24,3 +24,7 @@ def mockups_dir() -> Path:
 
 def operator_templates_dir() -> Path:
     return Path(os.environ.get("SHOPSTEWARD_TEMPLATES_DIR", "data/staging_templates"))
+
+
+def etsy_tokens_path() -> Path:
+    return Path(os.environ.get("SHOPSTEWARD_ETSY_TOKENS", "data/etsy_tokens.json"))

@@ -7,6 +7,7 @@ from typing import Annotated
 import typer
 
 from shopsteward.editing.cli import edit_app
+from shopsteward.etsy_cli import etsy_app
 from shopsteward.mockups.cli import mockups_app
 from shopsteward.pipeline.cli import pipeline_app, score_app
 
@@ -15,6 +16,7 @@ app.add_typer(edit_app, name="edit")
 app.add_typer(score_app, name="score")
 app.add_typer(pipeline_app, name="pipeline")
 app.add_typer(mockups_app, name="mockups")
+app.add_typer(etsy_app, name="etsy")
 
 
 class IngestMode(StrEnum):
