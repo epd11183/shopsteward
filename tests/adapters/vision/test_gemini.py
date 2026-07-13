@@ -102,6 +102,52 @@ def test_verdict_out_of_range_raises_vision_parse_error() -> None:
 
 
 @respx.mock
+def test_google_prefixed_model_id_is_stripped_for_url_but_not_for_pricing() -> None:
+    """Tuning-profile model ids are OpenRouter-prefixed (PRD §13 decision 36)
+    so the same id + pricing entry serves both providers; the gemini fallback
+    must strip "google/" for the native generateContent URL while still
+    keying the pricing lookup off the original, prefixed id."""
+    prefixed_model = "google/gemini-2.5-pro"
+    native_path = "gemini-2.5-pro"
+    pricing = {prefixed_model: {"in": 1.25, "out": 10.00}}
+
+    route = respx.post(f"{BASE}/{native_path}:generateContent").mock(
+        return_value=_response(
+            json.dumps(VALID_VERDICT),
+            usage_metadata={"promptTokenCount": 1000, "candidatesTokenCount": 200},
+        )
+    )
+    adapter = GeminiVisionAdapter(api_key="k", prompt=PROMPT, pricing=pricing)
+
+    result = adapter.score_commercial(JPEG_BYTES, model=prefixed_model)
+
+    sent = route.calls.last.request
+    assert sent.url == f"{BASE}/{native_path}:generateContent"
+    assert "google/" not in str(sent.url)
+
+    assert result.usage is not None
+    assert result.usage.model == prefixed_model
+    assert result.usage.est_cost_usd == (1000 / 1e6) * 1.25 + (200 / 1e6) * 10.00
+
+
+@respx.mock
+def test_bare_model_id_behavior_is_unchanged() -> None:
+    route = respx.post(f"{BASE}/{MODEL}:generateContent").mock(
+        return_value=_response(
+            json.dumps(VALID_VERDICT),
+            usage_metadata={"promptTokenCount": 1000, "candidatesTokenCount": 200},
+        )
+    )
+    adapter = GeminiVisionAdapter(api_key="k", prompt=PROMPT, pricing=PRICING)
+
+    result = adapter.score_commercial(JPEG_BYTES, model=MODEL)
+
+    assert route.calls.last.request.url == f"{BASE}/{MODEL}:generateContent"
+    assert result.usage is not None
+    assert result.usage.est_cost_usd == (1000 / 1e6) * 0.30 + (200 / 1e6) * 2.50
+
+
+@respx.mock
 def test_missing_usage_metadata_yields_none_tokens_and_cost() -> None:
     respx.post(f"{BASE}/{MODEL}:generateContent").mock(
         return_value=_response(json.dumps(VALID_VERDICT))

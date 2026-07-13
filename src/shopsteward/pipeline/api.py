@@ -1,7 +1,6 @@
 """APIRouter for /api/pipeline: scoring runs, Gate 1 decisions, landing scans.
 Mounted by the top-level FastAPI app (shopsteward.api), mirroring editing/api.py."""
 
-import os
 import sqlite3
 
 from fastapi import APIRouter, HTTPException
@@ -9,16 +8,15 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from shopsteward.adapters.lightroom.bridge import FolderBridge
-from shopsteward.adapters.vision.fake import FixtureVisionAdapter
-from shopsteward.adapters.vision.gemini import GeminiVisionAdapter
 from shopsteward.core.db import connect, migrate
 from shopsteward.editing.projections import rebuild_editing
 from shopsteward.pipeline import gate1, landing, tuning
-from shopsteward.pipeline.config import COMMERCIAL_PROMPT_PATH, TUNING_PROFILE_PATH
-from shopsteward.pipeline.live_gate import LIVE_VISION_ERROR, live_vision_open
+from shopsteward.pipeline.config import TUNING_PROFILE_PATH
+from shopsteward.pipeline.live_gate import live_vision_error, live_vision_open
 from shopsteward.pipeline.models import Gate1Card, LandingReport, ScoringRunResult
 from shopsteward.pipeline.projections import rebuild_pipeline
 from shopsteward.pipeline.scoring import run_scoring
+from shopsteward.pipeline.vision_factory import build_vision_adapter
 from shopsteward.settings import DEFAULT_USER_ID, bridge_dir, db_path
 
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
@@ -46,23 +44,16 @@ def _connect() -> sqlite3.Connection:
 
 @router.post("/score/run")
 def score_run(request: ScoreRunRequest) -> ScoringRunResult:
-    if request.live_vision and not live_vision_open():
-        raise HTTPException(403, LIVE_VISION_ERROR)
-
     conn = _connect()
     try:
         rebuild_editing(conn)
         tuning.seed(conn, DEFAULT_USER_ID, TUNING_PROFILE_PATH)
         profile = tuning.get_profile(conn, DEFAULT_USER_ID)
 
-        if request.live_vision:
-            vision = GeminiVisionAdapter(
-                api_key=os.environ["GEMINI_API_KEY"],
-                prompt=COMMERCIAL_PROMPT_PATH.read_text(),
-                pricing=profile.vision.est_cost_per_mtok,
-            )
-        else:
-            vision = FixtureVisionAdapter()
+        if request.live_vision and not live_vision_open(profile.vision.provider):
+            raise HTTPException(403, live_vision_error(profile.vision.provider))
+
+        vision = build_vision_adapter(profile, live=request.live_vision)
 
         return run_scoring(
             conn, DEFAULT_USER_ID, vision, limit=request.limit, live=request.live_vision

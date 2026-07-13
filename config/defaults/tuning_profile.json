@@ -21,12 +21,14 @@
     }
   },
   "vision": {
-    "triage_model": "gemini-2.5-flash",
-    "rescore_model": "gemini-2.5-pro",
+    "_comment": "PRD v2.1 §13 decision 36: provider=openrouter is the default transport. Model ids are OpenRouter-prefixed (e.g. google/gemini-2.5-pro); the provider=gemini fallback strips the 'google/' prefix at the adapter for the native API URL but keys pricing off the original prefixed id, so these ids + pricing entries serve both providers.",
+    "provider": "openrouter",
+    "triage_model": "google/gemini-2.5-flash-lite",
+    "rescore_model": "google/gemini-2.5-pro",
     "max_long_edge_px": 1024,
     "est_cost_per_mtok": {
-      "gemini-2.5-flash": { "in": 0.30, "out": 2.50 },
-      "gemini-2.5-pro": { "in": 1.25, "out": 10.00 }
+      "google/gemini-2.5-flash-lite": { "in": 0.10, "out": 0.40 },
+      "google/gemini-2.5-pro": { "in": 1.25, "out": 10.00 }
     },
     "monthly_soft_cap_usd": 10.0
   },

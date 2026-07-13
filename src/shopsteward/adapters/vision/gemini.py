@@ -10,7 +10,14 @@ import json
 import httpx
 from pydantic import ValidationError
 
-from shopsteward.adapters.vision.interface import VisionResult, VisionUsage, VisionVerdict
+from shopsteward.adapters.vision.interface import (
+    VisionParseError,
+    VisionResult,
+    VisionUsage,
+    VisionVerdict,
+)
+
+__all__ = ["BASE", "GeminiVisionAdapter", "VisionParseError"]
 
 BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
@@ -31,10 +38,6 @@ _VERDICT_SCHEMA = {
         "rationale",
     ],
 }
-
-
-class VisionParseError(RuntimeError):
-    """Raised when a Gemini response cannot be parsed into a VisionVerdict."""
 
 
 class GeminiVisionAdapter:
@@ -70,7 +73,13 @@ class GeminiVisionAdapter:
                 "responseSchema": _VERDICT_SCHEMA,
             },
         }
-        resp = self._client.post(f"{BASE}/{model}:generateContent", json=body)
+        # Tuning-profile model ids are OpenRouter-prefixed (e.g.
+        # "google/gemini-2.5-pro") so the same id + pricing entry serves both
+        # providers (PRD §13 decision 36); strip the prefix for the native
+        # Gemini URL only. Pricing lookup in _build_usage keeps the original,
+        # prefixed `model` string as the single source of truth.
+        native_model = model.removeprefix("google/")
+        resp = self._client.post(f"{BASE}/{native_model}:generateContent", json=body)
         resp.raise_for_status()
         payload = resp.json()
 

@@ -153,7 +153,9 @@ class _AlwaysPassVision:
 def test_pipeline_gate1_queue_decide_preview_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setenv("SHOPSTEWARD_DB", str(tmp_path / "pipeline.db"))
     monkeypatch.setenv("SHOPSTEWARD_BRIDGE_DIR", str(tmp_path / "bridge"))
-    monkeypatch.setattr("shopsteward.pipeline.api.FixtureVisionAdapter", _AlwaysPassVision)
+    monkeypatch.setattr(
+        "shopsteward.pipeline.vision_factory.FixtureVisionAdapter", _AlwaysPassVision
+    )
 
     shoot = tmp_path / "shoot"
     shoot.mkdir()

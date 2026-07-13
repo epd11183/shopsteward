@@ -500,6 +500,27 @@ Etsy auth design (2026-07-04, from Open API v3 docs verification):
     personal access suffices for own-shop use (no commercial access);
     dormant apps (6 months without a request) are banned.
 
+LLM routing amendment (2026-07-12, operator-approved):
+
+36. Runtime AI calls route through **OpenRouter** with a dedicated
+    ShopSteward API key (`OPENROUTER_API_KEY`) so spend is tracked
+    per-project, models are swappable via configuration with no code
+    change, and providers can be A/B tested. This amends the *transport*
+    of decision 15, not its substance: the vision models stay in the
+    Gemini family (triage `google/gemini-2.5-flash-lite` at $0.10/$0.40
+    per Mtok; borderline re-score `google/gemini-2.5-pro` at $1.25/$10 —
+    OpenRouter adds no markup on these), the $10/month soft cap and the
+    §8.4 triple gate (flag + env + key) are unchanged, and EXIF-stripped
+    1024px inputs remain the rule. The native `GeminiVisionAdapter` is
+    retained behind the same `VisionAdapter` protocol as a fallback:
+    `vision.provider` in the tuning profile selects `"openrouter"`
+    (default) or `"gemini"`. Verified 2026-07-12 against the OpenRouter
+    catalog: DeepSeek models are text-only there and CANNOT score
+    photos; they remain candidates for M5 listing copy, where the copy
+    model will be DB-configured (decision 15's one-model + house-style
+    rule) and A/B tested against a quality-first default before adoption.
+    httpx-only remains the rule (decision 22) — no OpenRouter SDK.
+
 ## 14. Appendix: Deferred to v2+
 
 Unchanged from PRD v2.
