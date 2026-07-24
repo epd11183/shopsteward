@@ -1,4 +1,1284 @@
-{"count": 2, "results": [
-  {"receipt_id": 9001, "created_timestamp": 1751000000, "grandtotal": {"amount": 2500, "divisor": 100, "currency_code": "USD"}, "transactions": [{"transaction_id": 1, "listing_id": 111, "quantity": 1, "price": {"amount": 2500, "divisor": 100, "currency_code": "USD"}}]},
-  {"receipt_id": 9002, "created_timestamp": 1751430000, "grandtotal": {"amount": 4700, "divisor": 100, "currency_code": "USD"}, "transactions": [{"transaction_id": 2, "listing_id": 222, "quantity": 1, "price": {"amount": 3500, "divisor": 100, "currency_code": "USD"}}, {"transaction_id": 3, "listing_id": 333, "quantity": 1, "price": {"amount": 1200, "divisor": 100, "currency_code": "USD"}}]}
-]}
+{
+  "count": 10,
+  "results": [
+    {
+      "receipt_id": 9001,
+      "receipt_type": 0,
+      "seller_user_id": 500001,
+      "seller_email": "seller@example.com",
+      "buyer_user_id": 500002,
+      "buyer_email": null,
+      "name": "Example Name",
+      "first_line": "123 Example St",
+      "second_line": null,
+      "city": "Exampleville",
+      "state": "CA",
+      "zip": "00000",
+      "status": "Completed",
+      "formatted_address": "123 Example St, Exampleville",
+      "country_iso": "US",
+      "payment_method": "cc",
+      "payment_email": null,
+      "message_from_payment": null,
+      "message_from_seller": null,
+      "message_from_buyer": null,
+      "is_shipped": true,
+      "is_paid": true,
+      "create_timestamp": 1753246400,
+      "created_timestamp": 1753246400,
+      "update_timestamp": 1753332800,
+      "updated_timestamp": 1753332800,
+      "is_gift": false,
+      "gift_message": "scrubbed-gift_message",
+      "gift_sender": "scrubbed-gift_sender",
+      "grandtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "subtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_shipping_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_tax_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_vat_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "discount_amt": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "gift_wrap_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "shipments": [],
+      "transactions": [
+        {
+          "transaction_id": 1,
+          "title": "Scrubbed Print Title",
+          "description": "Scrubbed description.",
+          "seller_user_id": 500001,
+          "buyer_user_id": 500002,
+          "create_timestamp": 1753246400,
+          "created_timestamp": 1753246400,
+          "paid_timestamp": 1753419200,
+          "shipped_timestamp": 1753419200,
+          "quantity": 1,
+          "listing_image_id": 888,
+          "receipt_id": 9001,
+          "is_digital": true,
+          "file_data": "1 JPG",
+          "listing_id": 111,
+          "sku": "SCRUBBED-SKU",
+          "product_id": 7002,
+          "transaction_type": "listing",
+          "price": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "shipping_cost": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "variations": [],
+          "product_data": [],
+          "shipping_profile_id": 602,
+          "min_processing_days": null,
+          "max_processing_days": null,
+          "shipping_method": null,
+          "shipping_upgrade": null,
+          "expected_ship_date": 1782677120,
+          "buyer_coupon": 0,
+          "shop_coupon": 0
+        }
+      ],
+      "refunds": []
+    },
+    {
+      "receipt_id": 9002,
+      "receipt_type": 0,
+      "seller_user_id": 500001,
+      "seller_email": "seller@example.com",
+      "buyer_user_id": 500003,
+      "buyer_email": null,
+      "name": "Example Name",
+      "first_line": "123 Example St",
+      "second_line": "",
+      "city": "Exampleville",
+      "state": "CA",
+      "zip": "00000",
+      "status": "Completed",
+      "formatted_address": "123 Example St, Exampleville",
+      "country_iso": "US",
+      "payment_method": "cc",
+      "payment_email": null,
+      "message_from_payment": null,
+      "message_from_seller": null,
+      "message_from_buyer": null,
+      "is_shipped": true,
+      "is_paid": true,
+      "create_timestamp": 1753505600,
+      "created_timestamp": 1753505600,
+      "update_timestamp": 1753592000,
+      "updated_timestamp": 1753592000,
+      "is_gift": false,
+      "gift_message": "scrubbed-gift_message",
+      "gift_sender": "scrubbed-gift_sender",
+      "grandtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "subtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_shipping_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_tax_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_vat_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "discount_amt": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "gift_wrap_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "shipments": [],
+      "transactions": [
+        {
+          "transaction_id": 2,
+          "title": "Scrubbed Print Title",
+          "description": "Scrubbed description.",
+          "seller_user_id": 500001,
+          "buyer_user_id": 500003,
+          "create_timestamp": 1753505600,
+          "created_timestamp": 1753505600,
+          "paid_timestamp": 1753678400,
+          "shipped_timestamp": 1753678400,
+          "quantity": 1,
+          "listing_image_id": 999,
+          "receipt_id": 9002,
+          "is_digital": true,
+          "file_data": "1 JPG",
+          "listing_id": 444,
+          "sku": "SCRUBBED-SKU",
+          "product_id": 7003,
+          "transaction_type": "listing",
+          "price": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "shipping_cost": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "variations": [],
+          "product_data": [],
+          "shipping_profile_id": 603,
+          "min_processing_days": null,
+          "max_processing_days": null,
+          "shipping_method": null,
+          "shipping_upgrade": null,
+          "expected_ship_date": 1774797422,
+          "buyer_coupon": 0,
+          "shop_coupon": 0
+        },
+        {
+          "transaction_id": 3,
+          "title": "Scrubbed Print Title",
+          "description": "Scrubbed description.",
+          "seller_user_id": 500001,
+          "buyer_user_id": 500003,
+          "create_timestamp": 1753505600,
+          "created_timestamp": 1753505600,
+          "paid_timestamp": 1753678400,
+          "shipped_timestamp": 1753678400,
+          "quantity": 1,
+          "listing_image_id": 1110,
+          "receipt_id": 9002,
+          "is_digital": true,
+          "file_data": "1 JPG",
+          "listing_id": 333,
+          "sku": "SCRUBBED-SKU",
+          "product_id": 7004,
+          "transaction_type": "listing",
+          "price": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "shipping_cost": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "variations": [],
+          "product_data": [],
+          "shipping_profile_id": 604,
+          "min_processing_days": null,
+          "max_processing_days": null,
+          "shipping_method": null,
+          "shipping_upgrade": null,
+          "expected_ship_date": 1774797422,
+          "buyer_coupon": 0,
+          "shop_coupon": 0
+        }
+      ],
+      "refunds": []
+    },
+    {
+      "receipt_id": 9003,
+      "receipt_type": 0,
+      "seller_user_id": 500001,
+      "seller_email": "seller@example.com",
+      "buyer_user_id": 500004,
+      "buyer_email": null,
+      "name": "Example Name",
+      "first_line": "123 Example St",
+      "second_line": "",
+      "city": "Exampleville",
+      "state": "CA",
+      "zip": "00000",
+      "status": "Completed",
+      "formatted_address": "123 Example St, Exampleville",
+      "country_iso": "US",
+      "payment_method": "cc",
+      "payment_email": null,
+      "message_from_payment": null,
+      "message_from_seller": null,
+      "message_from_buyer": null,
+      "is_shipped": true,
+      "is_paid": true,
+      "create_timestamp": 1753764800,
+      "created_timestamp": 1753764800,
+      "update_timestamp": 1753851200,
+      "updated_timestamp": 1753851200,
+      "is_gift": false,
+      "gift_message": "scrubbed-gift_message",
+      "gift_sender": "scrubbed-gift_sender",
+      "grandtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "subtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_shipping_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_tax_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_vat_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "discount_amt": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "gift_wrap_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "shipments": [
+        {
+          "receipt_shipping_id": 9004,
+          "shipment_notification_timestamp": 1753851200,
+          "carrier_name": "USPS",
+          "tracking_code": "scrubbed-tracking_code"
+        }
+      ],
+      "transactions": [
+        {
+          "transaction_id": 4,
+          "title": "Scrubbed Print Title",
+          "description": "Scrubbed description.",
+          "seller_user_id": 500001,
+          "buyer_user_id": 500004,
+          "create_timestamp": 1753764800,
+          "created_timestamp": 1753764800,
+          "paid_timestamp": 1753937600,
+          "shipped_timestamp": 1753851200,
+          "quantity": 1,
+          "listing_image_id": 1221,
+          "receipt_id": 9003,
+          "is_digital": false,
+          "file_data": "",
+          "listing_id": 555,
+          "sku": "SCRUBBED-SKU",
+          "product_id": 7005,
+          "transaction_type": "listing",
+          "price": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "shipping_cost": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "variations": [
+            {
+              "property_id": 42006,
+              "value_id": 42007,
+              "formatted_name": "scrubbed-formatted_name",
+              "formatted_value": "scrubbed-formatted_value",
+              "question_id": null
+            }
+          ],
+          "product_data": [
+            {
+              "property_id": 42006,
+              "property_name": "Custom Property",
+              "scale_id": null,
+              "scale_name": null,
+              "value_ids": [
+                853461762306
+              ],
+              "values": [
+                "scrubbed-values"
+              ]
+            }
+          ],
+          "shipping_profile_id": 601,
+          "min_processing_days": 2,
+          "max_processing_days": 6,
+          "shipping_method": null,
+          "shipping_upgrade": null,
+          "expected_ship_date": 1774897816,
+          "buyer_coupon": 0,
+          "shop_coupon": 0
+        }
+      ],
+      "refunds": []
+    },
+    {
+      "receipt_id": 9005,
+      "receipt_type": 0,
+      "seller_user_id": 500001,
+      "seller_email": "seller@example.com",
+      "buyer_user_id": 500005,
+      "buyer_email": null,
+      "name": "Example Name",
+      "first_line": "123 Example St",
+      "second_line": "",
+      "city": "Exampleville",
+      "state": "CA",
+      "zip": "00000",
+      "status": "Completed",
+      "formatted_address": "123 Example St, Exampleville",
+      "country_iso": "US",
+      "payment_method": "cc",
+      "payment_email": null,
+      "message_from_payment": null,
+      "message_from_seller": null,
+      "message_from_buyer": null,
+      "is_shipped": true,
+      "is_paid": true,
+      "create_timestamp": 1754024000,
+      "created_timestamp": 1754024000,
+      "update_timestamp": 1754110400,
+      "updated_timestamp": 1754110400,
+      "is_gift": true,
+      "gift_message": "scrubbed-gift_message",
+      "gift_sender": "scrubbed-gift_sender",
+      "grandtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "subtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_shipping_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_tax_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_vat_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "discount_amt": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "gift_wrap_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "shipments": [
+        {
+          "receipt_shipping_id": 9006,
+          "shipment_notification_timestamp": 1754196800,
+          "carrier_name": "UPS",
+          "tracking_code": "scrubbed-tracking_code"
+        }
+      ],
+      "transactions": [
+        {
+          "transaction_id": 5,
+          "title": "Scrubbed Print Title",
+          "description": "Scrubbed description.",
+          "seller_user_id": 500001,
+          "buyer_user_id": 500005,
+          "create_timestamp": 1754024000,
+          "created_timestamp": 1754024000,
+          "paid_timestamp": 1754283200,
+          "shipped_timestamp": 1754110400,
+          "quantity": 1,
+          "listing_image_id": 1332,
+          "receipt_id": 9005,
+          "is_digital": false,
+          "file_data": "",
+          "listing_id": 666,
+          "sku": "SCRUBBED-SKU",
+          "product_id": 7006,
+          "transaction_type": "listing",
+          "price": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "shipping_cost": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "variations": [],
+          "product_data": [],
+          "shipping_profile_id": 601,
+          "min_processing_days": 2,
+          "max_processing_days": 6,
+          "shipping_method": null,
+          "shipping_upgrade": null,
+          "expected_ship_date": 1774574413,
+          "buyer_coupon": 0,
+          "shop_coupon": 0
+        }
+      ],
+      "refunds": []
+    },
+    {
+      "receipt_id": 9007,
+      "receipt_type": 0,
+      "seller_user_id": 500001,
+      "seller_email": "seller@example.com",
+      "buyer_user_id": 500006,
+      "buyer_email": null,
+      "name": "Example Name",
+      "first_line": "123 Example St",
+      "second_line": null,
+      "city": "Exampleville",
+      "state": "CA",
+      "zip": "00000",
+      "status": "Completed",
+      "formatted_address": "123 Example St, Exampleville",
+      "country_iso": "US",
+      "payment_method": "cc",
+      "payment_email": null,
+      "message_from_payment": null,
+      "message_from_seller": null,
+      "message_from_buyer": null,
+      "is_shipped": true,
+      "is_paid": true,
+      "create_timestamp": 1754369600,
+      "created_timestamp": 1754369600,
+      "update_timestamp": 1754456000,
+      "updated_timestamp": 1754456000,
+      "is_gift": false,
+      "gift_message": "scrubbed-gift_message",
+      "gift_sender": "scrubbed-gift_sender",
+      "grandtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "subtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_shipping_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_tax_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_vat_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "discount_amt": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "gift_wrap_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "shipments": [],
+      "transactions": [
+        {
+          "transaction_id": 6,
+          "title": "Scrubbed Print Title",
+          "description": "Scrubbed description.",
+          "seller_user_id": 500001,
+          "buyer_user_id": 500006,
+          "create_timestamp": 1754369600,
+          "created_timestamp": 1754369600,
+          "paid_timestamp": 1754542400,
+          "shipped_timestamp": 1754542400,
+          "quantity": 1,
+          "listing_image_id": 1443,
+          "receipt_id": 9007,
+          "is_digital": true,
+          "file_data": "1 JPG",
+          "listing_id": 777,
+          "sku": "SCRUBBED-SKU",
+          "product_id": 7007,
+          "transaction_type": "listing",
+          "price": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "shipping_cost": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "variations": [],
+          "product_data": [],
+          "shipping_profile_id": 605,
+          "min_processing_days": null,
+          "max_processing_days": null,
+          "shipping_method": null,
+          "shipping_upgrade": null,
+          "expected_ship_date": 1774308390,
+          "buyer_coupon": 0,
+          "shop_coupon": 0
+        }
+      ],
+      "refunds": []
+    },
+    {
+      "receipt_id": 9008,
+      "receipt_type": 0,
+      "seller_user_id": 500001,
+      "seller_email": "seller@example.com",
+      "buyer_user_id": 500007,
+      "buyer_email": null,
+      "name": "Example Name",
+      "first_line": "123 Example St",
+      "second_line": null,
+      "city": "Exampleville",
+      "state": "CA",
+      "zip": "00000",
+      "status": "Completed",
+      "formatted_address": "123 Example St, Exampleville",
+      "country_iso": "US",
+      "payment_method": "cc",
+      "payment_email": null,
+      "message_from_payment": null,
+      "message_from_seller": null,
+      "message_from_buyer": null,
+      "is_shipped": true,
+      "is_paid": true,
+      "create_timestamp": 1754628800,
+      "created_timestamp": 1754628800,
+      "update_timestamp": 1754715200,
+      "updated_timestamp": 1754715200,
+      "is_gift": false,
+      "gift_message": "scrubbed-gift_message",
+      "gift_sender": "scrubbed-gift_sender",
+      "grandtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "subtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_shipping_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_tax_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_vat_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "discount_amt": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "gift_wrap_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "shipments": [],
+      "transactions": [
+        {
+          "transaction_id": 7,
+          "title": "Scrubbed Print Title",
+          "description": "Scrubbed description.",
+          "seller_user_id": 500001,
+          "buyer_user_id": 500007,
+          "create_timestamp": 1754628800,
+          "created_timestamp": 1754628800,
+          "paid_timestamp": 1754801600,
+          "shipped_timestamp": 1754801600,
+          "quantity": 1,
+          "listing_image_id": 1554,
+          "receipt_id": 9008,
+          "is_digital": true,
+          "file_data": "1 JPG",
+          "listing_id": 1665,
+          "sku": "SCRUBBED-SKU",
+          "product_id": 7008,
+          "transaction_type": "listing",
+          "price": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "shipping_cost": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "variations": [],
+          "product_data": [],
+          "shipping_profile_id": 606,
+          "min_processing_days": null,
+          "max_processing_days": null,
+          "shipping_method": null,
+          "shipping_upgrade": null,
+          "expected_ship_date": 1773294082,
+          "buyer_coupon": 0,
+          "shop_coupon": 0
+        }
+      ],
+      "refunds": []
+    },
+    {
+      "receipt_id": 9009,
+      "receipt_type": 0,
+      "seller_user_id": 500001,
+      "seller_email": "seller@example.com",
+      "buyer_user_id": 500008,
+      "buyer_email": null,
+      "name": "Example Name",
+      "first_line": "123 Example St",
+      "second_line": "",
+      "city": "Exampleville",
+      "state": "CA",
+      "zip": "00000",
+      "status": "Completed",
+      "formatted_address": "123 Example St, Exampleville",
+      "country_iso": "US",
+      "payment_method": "cc",
+      "payment_email": null,
+      "message_from_payment": null,
+      "message_from_seller": null,
+      "message_from_buyer": null,
+      "is_shipped": true,
+      "is_paid": true,
+      "create_timestamp": 1754888000,
+      "created_timestamp": 1754888000,
+      "update_timestamp": 1754974400,
+      "updated_timestamp": 1754974400,
+      "is_gift": false,
+      "gift_message": "scrubbed-gift_message",
+      "gift_sender": "scrubbed-gift_sender",
+      "grandtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "subtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_shipping_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_tax_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_vat_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "discount_amt": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "gift_wrap_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "shipments": [],
+      "transactions": [
+        {
+          "transaction_id": 8,
+          "title": "Scrubbed Print Title",
+          "description": "Scrubbed description.",
+          "seller_user_id": 500001,
+          "buyer_user_id": 500008,
+          "create_timestamp": 1754888000,
+          "created_timestamp": 1754888000,
+          "paid_timestamp": 1755060800,
+          "shipped_timestamp": 1754974400,
+          "quantity": 1,
+          "listing_image_id": 1776,
+          "receipt_id": 9009,
+          "is_digital": true,
+          "file_data": "1 JPG",
+          "listing_id": 1887,
+          "sku": "SCRUBBED-SKU",
+          "product_id": 7009,
+          "transaction_type": "listing",
+          "price": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "shipping_cost": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "variations": [],
+          "product_data": [],
+          "shipping_profile_id": 607,
+          "min_processing_days": null,
+          "max_processing_days": null,
+          "shipping_method": null,
+          "shipping_upgrade": null,
+          "expected_ship_date": 1772666528,
+          "buyer_coupon": 0,
+          "shop_coupon": 0
+        },
+        {
+          "transaction_id": 9,
+          "title": "Scrubbed Print Title",
+          "description": "Scrubbed description.",
+          "seller_user_id": 500001,
+          "buyer_user_id": 500008,
+          "create_timestamp": 1754888000,
+          "created_timestamp": 1754888000,
+          "paid_timestamp": 1755060800,
+          "shipped_timestamp": 1754974400,
+          "quantity": 1,
+          "listing_image_id": 1998,
+          "receipt_id": 9009,
+          "is_digital": true,
+          "file_data": "1 JPG",
+          "listing_id": 2109,
+          "sku": "SCRUBBED-SKU",
+          "product_id": 7010,
+          "transaction_type": "listing",
+          "price": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "shipping_cost": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "variations": [],
+          "product_data": [],
+          "shipping_profile_id": 608,
+          "min_processing_days": null,
+          "max_processing_days": null,
+          "shipping_method": null,
+          "shipping_upgrade": null,
+          "expected_ship_date": 1772666528,
+          "buyer_coupon": 0,
+          "shop_coupon": 0
+        }
+      ],
+      "refunds": []
+    },
+    {
+      "receipt_id": 9010,
+      "receipt_type": 0,
+      "seller_user_id": 500001,
+      "seller_email": "seller@example.com",
+      "buyer_user_id": 500009,
+      "buyer_email": null,
+      "name": "Example Name",
+      "first_line": "123 Example St",
+      "second_line": "",
+      "city": "Exampleville",
+      "state": "CA",
+      "zip": "00000",
+      "status": "Completed",
+      "formatted_address": "123 Example St, Exampleville",
+      "country_iso": "US",
+      "payment_method": "cc",
+      "payment_email": null,
+      "message_from_payment": null,
+      "message_from_seller": null,
+      "message_from_buyer": "scrubbed-message_from_buyer",
+      "is_shipped": true,
+      "is_paid": true,
+      "create_timestamp": 1755147200,
+      "created_timestamp": 1755147200,
+      "update_timestamp": 1755233600,
+      "updated_timestamp": 1755233600,
+      "is_gift": false,
+      "gift_message": "scrubbed-gift_message",
+      "gift_sender": "scrubbed-gift_sender",
+      "grandtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "subtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_shipping_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_tax_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_vat_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "discount_amt": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "gift_wrap_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "shipments": [
+        {
+          "receipt_shipping_id": 9011,
+          "shipment_notification_timestamp": 1755233600,
+          "carrier_name": "UPS",
+          "tracking_code": "scrubbed-tracking_code"
+        }
+      ],
+      "transactions": [
+        {
+          "transaction_id": 10,
+          "title": "Scrubbed Print Title",
+          "description": "Scrubbed description.",
+          "seller_user_id": 500001,
+          "buyer_user_id": 500009,
+          "create_timestamp": 1755147200,
+          "created_timestamp": 1755147200,
+          "paid_timestamp": 1755320000,
+          "shipped_timestamp": 1755233600,
+          "quantity": 1,
+          "listing_image_id": 2220,
+          "receipt_id": 9010,
+          "is_digital": false,
+          "file_data": "",
+          "listing_id": 2331,
+          "sku": "SCRUBBED-SKU",
+          "product_id": 7011,
+          "transaction_type": "listing",
+          "price": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "shipping_cost": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "variations": [],
+          "product_data": [],
+          "shipping_profile_id": 601,
+          "min_processing_days": 2,
+          "max_processing_days": 6,
+          "shipping_method": null,
+          "shipping_upgrade": null,
+          "expected_ship_date": 1742988987,
+          "buyer_coupon": 0,
+          "shop_coupon": 0
+        }
+      ],
+      "refunds": []
+    },
+    {
+      "receipt_id": 9012,
+      "receipt_type": 0,
+      "seller_user_id": 500001,
+      "seller_email": "seller@example.com",
+      "buyer_user_id": 500010,
+      "buyer_email": null,
+      "name": "Example Name",
+      "first_line": "123 Example St",
+      "second_line": null,
+      "city": "Exampleville",
+      "state": "CA",
+      "zip": "00000",
+      "status": "Completed",
+      "formatted_address": "123 Example St, Exampleville",
+      "country_iso": "US",
+      "payment_method": "cc",
+      "payment_email": null,
+      "message_from_payment": null,
+      "message_from_seller": null,
+      "message_from_buyer": "scrubbed-message_from_buyer",
+      "is_shipped": true,
+      "is_paid": true,
+      "create_timestamp": 1755406400,
+      "created_timestamp": 1755406400,
+      "update_timestamp": 1755492800,
+      "updated_timestamp": 1755492800,
+      "is_gift": false,
+      "gift_message": "scrubbed-gift_message",
+      "gift_sender": "scrubbed-gift_sender",
+      "grandtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "subtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_shipping_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_tax_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_vat_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "discount_amt": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "gift_wrap_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "shipments": [],
+      "transactions": [
+        {
+          "transaction_id": 11,
+          "title": "Scrubbed Print Title",
+          "description": "Scrubbed description.",
+          "seller_user_id": 500001,
+          "buyer_user_id": 500010,
+          "create_timestamp": 1755406400,
+          "created_timestamp": 1755406400,
+          "paid_timestamp": 1755579200,
+          "shipped_timestamp": 1755579200,
+          "quantity": 1,
+          "listing_image_id": 2442,
+          "receipt_id": 9012,
+          "is_digital": true,
+          "file_data": "1 JPG",
+          "listing_id": 2553,
+          "sku": "SCRUBBED-SKU",
+          "product_id": 7012,
+          "transaction_type": "listing",
+          "price": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "shipping_cost": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "variations": [],
+          "product_data": [],
+          "shipping_profile_id": 609,
+          "min_processing_days": null,
+          "max_processing_days": null,
+          "shipping_method": null,
+          "shipping_upgrade": null,
+          "expected_ship_date": 1733081035,
+          "buyer_coupon": 0,
+          "shop_coupon": 0
+        }
+      ],
+      "refunds": []
+    },
+    {
+      "receipt_id": 9013,
+      "receipt_type": 0,
+      "seller_user_id": 500001,
+      "seller_email": "seller@example.com",
+      "buyer_user_id": 500011,
+      "buyer_email": null,
+      "name": "Example Name",
+      "first_line": "123 Example St",
+      "second_line": "",
+      "city": "Exampleville",
+      "state": "CA",
+      "zip": "00000",
+      "status": "Completed",
+      "formatted_address": "123 Example St, Exampleville",
+      "country_iso": "US",
+      "payment_method": "cc",
+      "payment_email": null,
+      "message_from_payment": null,
+      "message_from_seller": null,
+      "message_from_buyer": "scrubbed-message_from_buyer",
+      "is_shipped": true,
+      "is_paid": true,
+      "create_timestamp": 1755665600,
+      "created_timestamp": 1755665600,
+      "update_timestamp": 1755752000,
+      "updated_timestamp": 1755752000,
+      "is_gift": false,
+      "gift_message": "scrubbed-gift_message",
+      "gift_sender": "scrubbed-gift_sender",
+      "grandtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "subtotal": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_shipping_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_tax_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "total_vat_cost": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "discount_amt": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "gift_wrap_price": {
+        "amount": 2500,
+        "divisor": 100,
+        "currency_code": "USD"
+      },
+      "shipments": [
+        {
+          "receipt_shipping_id": 9014,
+          "shipment_notification_timestamp": 1755752000,
+          "carrier_name": "UPS",
+          "tracking_code": "scrubbed-tracking_code"
+        }
+      ],
+      "transactions": [
+        {
+          "transaction_id": 12,
+          "title": "Scrubbed Print Title",
+          "description": "Scrubbed description.",
+          "seller_user_id": 500001,
+          "buyer_user_id": 500011,
+          "create_timestamp": 1755665600,
+          "created_timestamp": 1755665600,
+          "paid_timestamp": 1755838400,
+          "shipped_timestamp": 1755752000,
+          "quantity": 1,
+          "listing_image_id": 2664,
+          "receipt_id": 9013,
+          "is_digital": false,
+          "file_data": "",
+          "listing_id": 2775,
+          "sku": "SCRUBBED-SKU",
+          "product_id": 7013,
+          "transaction_type": "listing",
+          "price": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "shipping_cost": {
+            "amount": 2500,
+            "divisor": 100,
+            "currency_code": "USD"
+          },
+          "variations": [],
+          "product_data": [],
+          "shipping_profile_id": 601,
+          "min_processing_days": 2,
+          "max_processing_days": 6,
+          "shipping_method": null,
+          "shipping_upgrade": null,
+          "expected_ship_date": 1729683990,
+          "buyer_coupon": 0,
+          "shop_coupon": 0
+        }
+      ],
+      "refunds": []
+    }
+  ]
+}

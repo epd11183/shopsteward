@@ -26,9 +26,9 @@ def client(tmp_path, monkeypatch):
 
 def test_analytics_summary_endpoint(client):
     body = client.get("/api/analytics/summary").json()
-    assert body["total_revenue_usd"] == 72.0
-    assert body["active_listings"] == 3
-    assert len(body["top_listings"]) == 3
+    assert body["total_revenue_usd"] == 250.0
+    assert body["active_listings"] == 7
+    assert len(body["top_listings"]) == 7
 
 
 def test_healthz(client):

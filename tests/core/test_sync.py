@@ -19,24 +19,24 @@ def conn(tmp_path):
 
 def test_sync_appends_observation_events(conn):
     result = sync_etsy(conn, FixtureEtsyAdapter(FIXTURES), user_id=1)
-    assert result.shops == 1 and result.listings == 3 and result.receipts == 2
+    assert result.shops == 1 and result.listings == 7 and result.receipts == 10
     types = [e.type for e in read_all(conn)]
     assert types.count("etsy.shop.observed") == 1
-    assert types.count("etsy.listing.observed") == 3
-    assert types.count("etsy.sale.observed") == 2
+    assert types.count("etsy.listing.observed") == 7
+    assert types.count("etsy.sale.observed") == 10
 
 
 def test_resync_is_incremental_on_receipts(conn):
     sync_etsy(conn, FixtureEtsyAdapter(FIXTURES), user_id=1)
     sync_etsy(conn, FixtureEtsyAdapter(FIXTURES), user_id=1)
     sales = read_all(conn, "etsy.sale")
-    assert len(sales) == 2  # second sync passes min_created past both receipts
+    assert len(sales) == 10  # second sync must not duplicate any receipt
 
 
 def test_cursor_is_per_user(conn):
     sync_etsy(conn, FixtureEtsyAdapter(FIXTURES), user_id=1)
     result = sync_etsy(conn, FixtureEtsyAdapter(FIXTURES), user_id=2)
-    assert result.receipts == 2  # user 2's first sync must not inherit user 1's cursor
+    assert result.receipts == 10  # user 2's first sync must not inherit user 1's cursor
 
 
 def test_same_timestamp_receipt_not_skipped_but_deduped(conn):
@@ -44,4 +44,4 @@ def test_same_timestamp_receipt_not_skipped_but_deduped(conn):
     result = sync_etsy(conn, FixtureEtsyAdapter(FIXTURES), user_id=1)
     # boundary receipt is refetched (min_created inclusive) but deduped by id
     assert result.receipts == 0
-    assert len(read_all(conn, "etsy.sale")) == 2
+    assert len(read_all(conn, "etsy.sale")) == 10
