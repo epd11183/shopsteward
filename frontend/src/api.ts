@@ -315,3 +315,84 @@ export const runMockups = async (
 
 export const mockupImageUrl = (path: string): string =>
   `/api/pipeline/mockups/image?path=${encodeURIComponent(path)}`;
+
+// --- M5a slice 4: listings build + Gate 3 ---------------------------------
+
+export type Economics = {
+  price: number;
+  etsy_fees: number;
+  net: number;
+};
+
+export type ListingImage = {
+  path: string;
+  intent: string;
+  rank: number;
+};
+
+export type Gate3Card = {
+  draft_id: string;
+  etsy_listing_id: string | null;
+  title: string | null;
+  tags: string[];
+  description: string | null;
+  price: number | null;
+  currency: string | null;
+  margin_floor: number | null;
+  economics: Economics | null;
+  images: ListingImage[];
+  file_source: string | null;
+  state: string;
+  retry_error: string | null;
+};
+
+export type BuildReport = {
+  drafts_built: number;
+  pushed: number;
+  copy_calls: number;
+  skipped_idempotent: number;
+  push_failed: number;
+};
+
+export type Gate3EditFields = {
+  title?: string;
+  tags?: string[];
+  description?: string;
+  price?: number;
+};
+
+const _postJson = async <T>(url: string, body: unknown): Promise<T> => {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? `request failed (${res.status})`);
+  }
+  return res.json();
+};
+
+export const runListingsBuild = async (): Promise<BuildReport> =>
+  _postJson("/api/pipeline/listings/build", {});
+
+export const fetchGate3Queue = async (): Promise<Gate3Card[]> => {
+  const res = await fetch("/api/pipeline/gate3/queue");
+  if (!res.ok) throw new Error(`fetch gate3 queue failed (${res.status})`);
+  return res.json();
+};
+
+export const gate3ImageUrl = (draftId: string, path: string): string =>
+  `/api/pipeline/gate3/draft/${draftId}/image?path=${encodeURIComponent(path)}`;
+
+export const editGate3Draft = async (
+  draft_id: string,
+  fields: Gate3EditFields,
+): Promise<Gate3Card> => _postJson("/api/pipeline/gate3/edit", { draft_id, ...fields });
+
+export const publishGate3Draft = async (draft_id: string): Promise<Gate3Card> =>
+  _postJson("/api/pipeline/gate3/publish", { draft_id });
+
+export const retryGate3Draft = async (draft_id: string): Promise<Gate3Card> =>
+  _postJson("/api/pipeline/gate3/retry", { draft_id });

@@ -331,3 +331,135 @@ def test_mockups_run_and_list_and_image_traversal(tmp_path, monkeypatch):
 
     outside_resp = client.get("/api/pipeline/templates/image", params={"path": good_path})
     assert outside_resp.status_code == 403
+
+
+# --- M5a slice 4: listings build + Gate 3 ----------------------------------
+
+
+def _build_one_pushed_draft_via_api(client, tmp_path, monkeypatch):
+    """landing/scan -> mockups/run -> listings/build, all through the API,
+    mirroring the real operator flow. Returns the pushed draft_id."""
+    monkeypatch.setenv("SHOPSTEWARD_TEMPLATES_DIR", str(tmp_path / "no_such_operator_dir"))
+    mockups_dir = tmp_path / "mockups_out"
+    monkeypatch.setenv("SHOPSTEWARD_MOCKUPS_DIR", str(mockups_dir))
+
+    landing_dir = tmp_path / "landing"
+    landing_dir.mkdir()
+    _make_jpeg(landing_dir / "hero.jpg", size=(3600, 2400))
+    monkeypatch.setenv("SHOPSTEWARD_LANDING_DIR", str(landing_dir))
+
+    assert client.post("/api/pipeline/landing/scan", json={}).status_code == 200
+    mockups_resp = client.post("/api/pipeline/mockups/run", json={})
+    assert mockups_resp.status_code == 200, mockups_resp.text
+    assert mockups_resp.json()["mockups_written"] > 0
+
+    build_resp = client.post("/api/pipeline/listings/build", json={})
+    assert build_resp.status_code == 200, build_resp.text
+    report = build_resp.json()
+    assert report["pushed"] == 1
+
+    queue = client.get("/api/pipeline/gate3/queue").json()
+    assert len(queue) == 1
+    return queue[0]["draft_id"]
+
+
+def test_gate3_queue_edit_publish_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHOPSTEWARD_DB", str(tmp_path / "listings.db"))
+    client = TestClient(create_app())
+    draft_id = _build_one_pushed_draft_via_api(client, tmp_path, monkeypatch)
+
+    queue = client.get("/api/pipeline/gate3/queue").json()
+    card = queue[0]
+    assert card["state"] == "pushed"
+    assert card["economics"]["price"] == card["price"]
+    assert len(card["images"]) >= 1
+
+    image_resp = client.get(
+        f"/api/pipeline/gate3/draft/{draft_id}/image", params={"path": card["images"][0]["path"]}
+    )
+    assert image_resp.status_code == 200
+
+    below_floor_resp = client.post(
+        "/api/pipeline/gate3/edit", json={"draft_id": draft_id, "price": 1.00}
+    )
+    assert below_floor_resp.status_code == 400
+
+    edit_resp = client.post(
+        "/api/pipeline/gate3/edit", json={"draft_id": draft_id, "title": "Custom Title"}
+    )
+    assert edit_resp.status_code == 200, edit_resp.text
+    assert edit_resp.json()["title"] == "Custom Title"
+
+    publish_resp = client.post("/api/pipeline/gate3/publish", json={"draft_id": draft_id})
+    assert publish_resp.status_code == 200, publish_resp.text
+    assert publish_resp.json()["state"] == "published"
+
+    # published drafts drop out of the queue
+    assert client.get("/api/pipeline/gate3/queue").json() == []
+
+    # publishing again is rejected (no longer publishable)
+    republish_resp = client.post("/api/pipeline/gate3/publish", json={"draft_id": draft_id})
+    assert republish_resp.status_code == 400
+
+
+def test_gate3_edit_unknown_draft_400(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHOPSTEWARD_DB", str(tmp_path / "listings.db"))
+    client = TestClient(create_app())
+    resp = client.post("/api/pipeline/gate3/edit", json={"draft_id": "nope", "title": "x"})
+    assert resp.status_code == 400
+
+
+def test_gate3_image_traversal_403(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHOPSTEWARD_DB", str(tmp_path / "listings.db"))
+    client = TestClient(create_app())
+    resp = client.get("/api/pipeline/gate3/draft/some-draft/image", params={"path": "/etc/passwd"})
+    assert resp.status_code == 403
+
+
+def test_gate3_retry_after_push_failure(tmp_path, monkeypatch):
+    """Uses the API's own shared Fake adapter cache (keyed by db_path) to
+    inject one create_draft_listing failure, then exercises POST
+    /gate3/retry against the resulting push_failed draft."""
+    monkeypatch.setenv("SHOPSTEWARD_DB", str(tmp_path / "listings.db"))
+    from shopsteward.adapters.etsy.fake import FakeEtsyWriteAdapter
+    from shopsteward.adapters.etsy.interface import EtsyWriteError
+    from shopsteward.pipeline.listings import api as listings_api
+    from shopsteward.settings import db_path
+
+    class _FailOnceAdapter(FakeEtsyWriteAdapter):
+        def __init__(self):
+            super().__init__()
+            self.fail_next = True
+
+        def create_draft_listing(self, spec):
+            if self.fail_next:
+                self.fail_next = False
+                raise EtsyWriteError(500, "simulated failure")
+            return super().create_draft_listing(spec)
+
+    listings_api._fake_adapters[str(db_path())] = _FailOnceAdapter()
+
+    client = TestClient(create_app())
+    monkeypatch.setenv("SHOPSTEWARD_TEMPLATES_DIR", str(tmp_path / "no_such_operator_dir"))
+    monkeypatch.setenv("SHOPSTEWARD_MOCKUPS_DIR", str(tmp_path / "mockups_out"))
+    landing_dir = tmp_path / "landing"
+    landing_dir.mkdir()
+    _make_jpeg(landing_dir / "hero.jpg", size=(3600, 2400))
+    monkeypatch.setenv("SHOPSTEWARD_LANDING_DIR", str(landing_dir))
+
+    client.post("/api/pipeline/landing/scan", json={})
+    client.post("/api/pipeline/mockups/run", json={})
+    build_resp = client.post("/api/pipeline/listings/build", json={})
+    assert build_resp.json()["push_failed"] == 1
+
+    queue = client.get("/api/pipeline/gate3/queue").json()
+    assert len(queue) == 1
+    draft_id = queue[0]["draft_id"]
+    assert queue[0]["state"] == "push_failed"
+
+    retry_resp = client.post("/api/pipeline/gate3/retry", json={"draft_id": draft_id})
+    assert retry_resp.status_code == 200, retry_resp.text
+    assert retry_resp.json()["state"] == "pushed"
+
+    no_retry_resp = client.post("/api/pipeline/gate3/retry", json={"draft_id": draft_id})
+    assert no_retry_resp.status_code == 400

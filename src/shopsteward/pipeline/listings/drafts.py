@@ -25,6 +25,7 @@ import hashlib
 import json
 import sqlite3
 
+from shopsteward.adapters.etsy.interface import EtsyWriteAdapter
 from shopsteward.core.events import Event, append
 from shopsteward.pipeline import tuning
 from shopsteward.pipeline.config import TUNING_PROFILE_PATH
@@ -129,7 +130,14 @@ def build_drafts(
     force: bool = False,
     live_copy: bool = False,
     live_etsy_write: bool = False,
+    etsy_adapter: EtsyWriteAdapter | None = None,
 ) -> BuildReport:
+    """etsy_adapter lets a caller (the API layer) inject the same
+    EtsyWriteAdapter instance Gate 3 will later edit/publish against --
+    without it, this always builds a fresh one via build_etsy_write_adapter,
+    which is correct for the CLI (one process per invocation) but would make
+    an offline Fake-mode push invisible to a later Gate 3 call in a
+    long-running server process (two separate in-memory dicts)."""
     listing_config.seed(conn, user_id)
     tuning.seed(conn, user_id, TUNING_PROFILE_PATH)
     rebuild_pipeline(conn)
@@ -245,7 +253,8 @@ def build_drafts(
 
     rebuild_listings(conn)
 
-    push_report = push_drafts(conn, user_id, cfg, build_etsy_write_adapter(live=live_etsy_write))
+    adapter = etsy_adapter or build_etsy_write_adapter(live=live_etsy_write)
+    push_report = push_drafts(conn, user_id, cfg, adapter)
     result.pushed = push_report.pushed
     result.push_failed = push_report.push_failed
 

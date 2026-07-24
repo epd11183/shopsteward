@@ -111,6 +111,14 @@ class FakeEtsyWriteAdapter:
         self.calls.append(("update_listing", {"listing_id": listing_id, "fields": updates}))
         return self._to_listing(listing_id, row)
 
+    def update_listing_price(self, listing_id: int, price: float) -> None:
+        # Mirrors the live adapter's updateListingInventory round-trip
+        # (PRD §13 decision 39/41): a post-create price change is a separate
+        # call from update_listing.
+        row = self._require(listing_id)
+        row["price"] = price
+        self.calls.append(("update_listing_price", {"listing_id": listing_id, "price": price}))
+
     def publish_listing(self, listing_id: int) -> EtsyListing:
         row = self._require(listing_id)
         if not row["images"]:

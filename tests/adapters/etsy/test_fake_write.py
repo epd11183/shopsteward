@@ -107,6 +107,22 @@ def test_delete_listing_removes_and_then_rejects_writes() -> None:
         adapter.update_listing(ref.listing_id, EtsyListingUpdate(title="x"))
 
 
+def test_update_listing_price_sets_price_and_is_visible() -> None:
+    adapter = FakeEtsyWriteAdapter()
+    ref = adapter.create_draft_listing(_spec())
+
+    adapter.update_listing_price(ref.listing_id, 9.50)
+
+    assert adapter.listings[ref.listing_id]["price"] == 9.50
+
+
+def test_update_listing_price_unknown_listing_raises() -> None:
+    adapter = FakeEtsyWriteAdapter()
+    with pytest.raises(EtsyWriteError) as exc_info:
+        adapter.update_listing_price(9999, 9.50)
+    assert exc_info.value.status_code == 404
+
+
 def test_calls_log_records_every_invocation() -> None:
     adapter = FakeEtsyWriteAdapter()
     ref = adapter.create_draft_listing(_spec())

@@ -213,6 +213,77 @@ def test_publish_listing_patches_state_active(tmp_path) -> None:
 
 
 @respx.mock
+def test_update_listing_price_round_trips_inventory_json(tmp_path) -> None:
+    # GET returns price as a Money object {amount,divisor,currency_code} --
+    # updateListingInventory's PUT body expects a plain decimal there
+    # instead (reviewer finding, M5a slice 4 fix-up).
+    get_route = respx.get(f"{BASE}/listings/555/inventory").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "products": [
+                    {
+                        "product_id": 1,
+                        "sku": "",
+                        "offerings": [
+                            {
+                                "offering_id": 11,
+                                "quantity": 999,
+                                "is_enabled": True,
+                                "price": {"amount": 1200, "divisor": 100, "currency_code": "USD"},
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+    put_route = respx.put(f"{BASE}/listings/555/inventory").mock(
+        return_value=httpx.Response(200, json={"products": []})
+    )
+    adapter = _write_adapter(tmp_path)
+
+    adapter.update_listing_price(555, 9.50)
+
+    assert get_route.called
+    sent = put_route.calls.last.request
+    assert sent.headers["content-type"] == "application/json"
+    import json as _json
+
+    body = _json.loads(sent.content)
+    offering = body["products"][0]["offerings"][0]
+    assert offering["price"] == 9.50  # decimal, not a Money object
+    assert offering["offering_id"] == 11  # rest of the structure round-trips verbatim
+    assert offering["quantity"] == 999
+
+
+@respx.mock
+def test_update_listing_price_get_failure_raises(tmp_path) -> None:
+    respx.get(f"{BASE}/listings/555/inventory").mock(
+        return_value=httpx.Response(404, json={"error": "no such listing"})
+    )
+    adapter = _write_adapter(tmp_path)
+
+    with pytest.raises(EtsyWriteError) as exc_info:
+        adapter.update_listing_price(555, 9.50)
+    assert exc_info.value.status_code == 404
+
+
+@respx.mock
+def test_update_listing_price_put_failure_raises(tmp_path) -> None:
+    respx.get(f"{BASE}/listings/555/inventory").mock(
+        return_value=httpx.Response(200, json={"products": []})
+    )
+    respx.put(f"{BASE}/listings/555/inventory").mock(
+        return_value=httpx.Response(400, json={"error": "bad price"})
+    )
+    adapter = _write_adapter(tmp_path)
+
+    with pytest.raises(EtsyWriteError, match="bad price"):
+        adapter.update_listing_price(555, 9.50)
+
+
+@respx.mock
 def test_delete_listing_sends_delete(tmp_path) -> None:
     route = respx.delete(f"{BASE}/shops/100001/listings/555").mock(return_value=httpx.Response(204))
     adapter = _write_adapter(tmp_path)
