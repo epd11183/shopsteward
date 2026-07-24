@@ -1,5 +1,3 @@
-import hashlib
-
 import pytest
 from PIL import Image
 
@@ -18,7 +16,7 @@ from shopsteward.pipeline.listings.drafts import build_drafts
 from shopsteward.pipeline.listings.projections import rebuild_listings
 from shopsteward.pipeline.listings.push import push_drafts
 
-from .helpers import USER_ID, seed_landing_file_with_mockup_set
+from .helpers import USER_ID, seed_fully_built_draft, seed_landing_file_with_mockup_set
 
 
 @pytest.fixture()
@@ -59,11 +57,13 @@ def test_push_happy_path_event_sequence_and_payloads(conn, tmp_path):
         e for e in read_all(conn, "listingdraft.file_attached") if e.user_id == USER_ID
     ]
     assert len(pushed) == 1
-    assert len(images_attached) == 1
+    # one listingdraft.images_attached event PER image (reviewer fix-up,
+    # M5a slice 4) -- not one event for the whole batch.
+    assert len(images_attached) == 2
     assert len(file_attached) == 1
 
     draft_id = pushed[0].payload["draft_id"]
-    assert images_attached[0].payload["draft_id"] == draft_id
+    assert all(e.payload["draft_id"] == draft_id for e in images_attached)
     assert file_attached[0].payload["draft_id"] == draft_id
 
     push_payload = pushed[0].payload
@@ -72,7 +72,8 @@ def test_push_happy_path_event_sequence_and_payloads(conn, tmp_path):
     assert push_payload["state"] == "draft"
     assert push_payload["etsy_listing_id"] == 1000
 
-    images = images_attached[0].payload["images"]
+    images = [img for e in images_attached for img in e.payload["images"]]
+    assert len(images) == 2
     assert images[0]["rank"] == 1
     assert images[0]["intent"] == "single"
     assert {img["intent"] for img in images} == {"single", "digital_whatyougot"}
@@ -131,107 +132,9 @@ def test_force_rebuild_does_not_repush(conn, tmp_path):
 def _seed_fully_built_draft(
     conn, tmp_path, *, file_id: str, photo_id: str, title: str, set_key: str
 ) -> str:
-    photo_path = tmp_path / f"{photo_id}.jpg"
-    Image.new("RGB", (100, 100), (1, 2, 3)).save(photo_path, "JPEG")
-    append(
-        conn,
-        Event(
-            user_id=USER_ID,
-            type="landing.file_observed",
-            payload={
-                "file_id": file_id,
-                "path": str(photo_path),
-                "base_name": None,
-                "format": "JPEG",
-                "width": 100,
-                "height": 100,
-                "color_space": "sRGB",
-                "photo_id": photo_id,
-            },
-        ),
+    return seed_fully_built_draft(
+        conn, tmp_path, file_id=file_id, photo_id=photo_id, title=title, set_key=set_key
     )
-    from shopsteward.pipeline.projections import rebuild_pipeline
-
-    rebuild_pipeline(conn)
-
-    listing_config.seed(conn, USER_ID)
-    rebuild_listings(conn)
-    cfg = _cfg(conn)
-    cfg_hash = listing_config.config_hash(cfg)
-    draft_id = hashlib.sha256(f"{file_id}|{cfg_hash}|{set_key}".encode()).hexdigest()
-
-    append(
-        conn,
-        Event(
-            user_id=USER_ID,
-            type="listingdraft.created",
-            payload={
-                "draft_id": draft_id,
-                "landing_file_id": file_id,
-                "photo_id": photo_id,
-                "set_key": set_key,
-                "provider": "etsy_digital",
-                "format": "digital_download",
-                "sku_source": "etsy",
-                "listing_type": "download",
-                "config_hash": cfg_hash,
-            },
-        ),
-    )
-    mockup_path = tmp_path / "mockups" / photo_id / "single.jpg"
-    mockup_path.parent.mkdir(parents=True, exist_ok=True)
-    Image.new("RGB", (50, 50), (4, 5, 6)).save(mockup_path, "JPEG")
-    append(
-        conn,
-        Event(
-            user_id=USER_ID,
-            type="listingdraft.images_selected",
-            payload={
-                "draft_id": draft_id,
-                "images": [{"path": str(mockup_path), "intent": "single", "rank": 1}],
-                "sellable_file": {
-                    "source": "landing_original",
-                    "sha256": hashlib.sha256(photo_path.read_bytes()).hexdigest(),
-                    "bytes": photo_path.stat().st_size,
-                },
-            },
-        ),
-    )
-    append(
-        conn,
-        Event(
-            user_id=USER_ID,
-            type="listingdraft.copy_generated",
-            payload={
-                "draft_id": draft_id,
-                "title": title,
-                "tags": ["wall art"],
-                "description": "A digital download.",
-                "materials": None,
-                "model": "fixture",
-                "provider": "fixture",
-                "disclosure_appended": False,
-            },
-        ),
-    )
-    append(
-        conn,
-        Event(
-            user_id=USER_ID,
-            type="listingdraft.priced",
-            payload={
-                "draft_id": draft_id,
-                "format": "digital_download",
-                "base_price": 12.00,
-                "margin_floor": 6.00,
-                "price": 12.00,
-                "currency": "USD",
-                "auto": True,
-            },
-        ),
-    )
-    rebuild_listings(conn)
-    return draft_id
 
 
 class _FailFirstCreateAdapter:

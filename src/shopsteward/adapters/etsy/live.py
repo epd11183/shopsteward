@@ -134,6 +134,20 @@ class LiveEtsyWriteAdapter:
         )
         return EtsyListing.model_validate(body)
 
+    def update_listing_price(self, listing_id: int, price: float) -> None:
+        # Etsy's real updateListing has no price field -- a post-create price
+        # change goes through updateListingInventory instead (JSON, not
+        # form-urlencoded). GET returns each offering's price as a Money
+        # object {amount,divisor,currency_code}; PUT expects a plain decimal
+        # number there, so this round-trips the product/offering structure
+        # verbatim and only replaces that one field.
+        inventory = self._request("GET", f"/listings/{listing_id}/inventory")
+        products = inventory.get("products", [])
+        for product in products:
+            for offering in product.get("offerings", []):
+                offering["price"] = price
+        self._request("PUT", f"/listings/{listing_id}/inventory", json={"products": products})
+
     def publish_listing(self, listing_id: int) -> EtsyListing:
         # The sole caller anywhere in this codebase is the Gate 3 endpoint
         # (M5a slice 4, PRD §13 decision 41). state is the only field this

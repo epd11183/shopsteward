@@ -75,7 +75,11 @@ src/shopsteward/pipeline/listings/projections.py  proj_listing_config, proj_list
 src/shopsteward/pipeline/listings/api.py       APIRouter /api/pipeline (listings + gate3 routes); mounted by api.py.
 src/shopsteward/pipeline/listings/cli.py       shopsteward listings build|status. No gate3 CLI (UI is the
                                                decision surface, mirroring Gate 1).
-src/shopsteward/adapters/etsy/interface.py     + EtsyWriteAdapter Protocol (4).
+src/shopsteward/adapters/etsy/interface.py     + EtsyWriteAdapter Protocol (create/update/upload x2/publish +
+                                               update_listing_price via PUT /listings/{id}/inventory -- Etsy's
+                                               updateListing has NO price field; post-create price changes go
+                                               through updateListingInventory offerings (amended post-slice-4
+                                               review, verified vs the official OpenAPI spec)).
 src/shopsteward/adapters/etsy/live.py          LiveEtsyAdapter grows the write methods (wired to EtsyTokenAuth).
 src/shopsteward/adapters/etsy/fake.py          + FakeEtsyWriteAdapter (in-memory twin, tests + offline default).
 src/shopsteward/adapters/copy/interface.py     CopyAdapter Protocol + CopyVerdict/CopyResult/CopyUsage/CopyParseError.
@@ -107,9 +111,10 @@ existing ledger (M3) -- copy adds purpose:"listing_copy".
 | `listingdraft.images_selected` | `{draft_id, images:[{path, intent, rank}], sellable_file:{source:"landing_original"\|"derived_jpeg", sha256, bytes}}` |
 | `llm.call` | `{provider, model, purpose:"listing_copy", draft_id, input_tokens, output_tokens, est_cost_usd}` -- LIVE copy only |
 | `listingdraft.pushed_to_etsy` | `{draft_id, etsy_listing_id, listing_type:"download", quantity, state:"draft"}` |
-| `listingdraft.images_attached` | `{draft_id, etsy_listing_id, images:[{etsy_image_id, rank, intent}]}` |
+| `listingdraft.images_attached` | `{draft_id, etsy_listing_id, images:[{etsy_image_id, rank, intent}]}` -- emitted PER IMAGE (single-element array) so a resumed push can skip already-attached ranks; projection merges by rank (amended post-slice-4 review) |
 | `listingdraft.file_attached` | `{draft_id, etsy_listing_id, etsy_file_id, source, sha256}` |
 | `listingdraft.push_failed` | `{draft_id, etsy_listing_id?, stage:"create"\|"image"\|"file"\|"update", error:{code,message}}` |
+| `listingdraft.push_resumed` | `{draft_id, etsy_listing_id, resumed_stage}` -- Gate 3 retry completed a partial push; clears push_failed state without re-emitting pushed_to_etsy (amended post-slice-4 review) |
 | `listingdraft.edited` | `{draft_id, etsy_listing_id, fields:{title?,tags?,description?}, price?}` -- Gate 3 operator edit; floor-checked |
 | `gate3.approved` | `{draft_id, etsy_listing_id, final_price, currency}` -- operator tapped publish |
 | `gate3.published` | `{draft_id, etsy_listing_id, state:"active", published_at}` |

@@ -4,8 +4,15 @@ import Ingest from "./pages/Ingest";
 import Gate1 from "./pages/Gate1";
 import Templates from "./pages/Templates";
 import Mockups from "./pages/Mockups";
+import Gate3 from "./pages/Gate3";
 
-type Tab = "analytics" | "ingest" | "gate1" | "templates" | "mockups";
+type Tab =
+  | "analytics"
+  | "ingest"
+  | "gate1"
+  | "templates"
+  | "mockups"
+  | "gate3";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("analytics");
@@ -40,6 +47,11 @@ export default function App() {
               active={tab === "mockups"}
               onClick={() => setTab("mockups")}
             />
+            <TabButton
+              label="Gate 3"
+              active={tab === "gate3"}
+              onClick={() => setTab("gate3")}
+            />
           </nav>
         </div>
       </header>
@@ -51,8 +63,10 @@ export default function App() {
         <Gate1 />
       ) : tab === "templates" ? (
         <Templates />
-      ) : (
+      ) : tab === "mockups" ? (
         <Mockups />
+      ) : (
+        <Gate3 />
       )}
     </>
   );

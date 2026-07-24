@@ -11,7 +11,10 @@ draft -- one failure never aborts the batch. Idempotent: eligibility is
 `etsy_listing_id IS NULL`, so a draft whose create_draft_listing already
 succeeded (etsy_listing_id recorded) but a later stage failed is left alone
 -- retrying create would risk a duplicate Etsy listing. That partial-failure
-case is Gate 3's retry queue (M5a slice 4), not this stage's job.
+case is Gate 3's retry queue (M5a slice 4): _push_one is composed from
+_create_stage/_images_stage/_file_stage/_update_stage, which gate3.retry_push
+reuses directly to resume from whichever stage last failed instead of
+re-running the whole thing.
 """
 
 import json
@@ -70,6 +73,155 @@ def _landing_path(conn: sqlite3.Connection, user_id: int, landing_file_id: str) 
     return row["path"]
 
 
+def _create_stage(
+    conn: sqlite3.Connection,
+    user_id: int,
+    adapter: EtsyWriteAdapter,
+    cfg: ListingConfig,
+    draft_id: str,
+    row: sqlite3.Row,
+    tags: list[str],
+) -> int:
+    spec = EtsyDraftSpec(
+        quantity=cfg.pricing.digital_quantity,
+        title=row["title"],
+        description=row["description"] or "",
+        price=row["price"],
+        who_made=cfg.etsy.who_made,
+        when_made=cfg.etsy.when_made,
+        taxonomy_id=cfg.etsy.taxonomy_id,
+        is_supply=cfg.etsy.is_supply,
+        tags=tags,
+        should_auto_renew=cfg.etsy.should_auto_renew,
+    )
+    ref = adapter.create_draft_listing(spec)
+    listing_id = ref.listing_id
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="listingdraft.pushed_to_etsy",
+            payload={
+                "draft_id": draft_id,
+                "etsy_listing_id": listing_id,
+                "listing_type": "download",
+                "quantity": cfg.pricing.digital_quantity,
+                "state": "draft",
+            },
+        ),
+    )
+    return listing_id
+
+
+def _images_stage(
+    conn: sqlite3.Connection,
+    user_id: int,
+    adapter: EtsyWriteAdapter,
+    draft_id: str,
+    listing_id: int,
+    images_json: str | None,
+    *,
+    skip_ranks: set[int] = frozenset(),
+) -> None:
+    """Emits one listingdraft.images_attached event per image, immediately
+    after that image's upload succeeds -- not one event for the whole batch
+    at the end. A mid-loop failure would otherwise leave no record of which
+    images already made it to Etsy, and a retry would re-upload every image
+    (duplicates on the live draft). skip_ranks lets a retry pass in ranks a
+    prior attempt already attached (gate3.retry_push derives this from prior
+    images_attached events) so it only uploads what's still missing."""
+    images = sorted(json.loads(images_json or "[]"), key=lambda i: i["rank"])
+    for img in images:
+        if img["rank"] in skip_ranks:
+            continue
+        image_bytes = Path(img["path"]).read_bytes()
+        img_ref = adapter.upload_listing_image(listing_id, image_bytes, rank=img["rank"])
+        append(
+            conn,
+            Event(
+                user_id=user_id,
+                type="listingdraft.images_attached",
+                payload={
+                    "draft_id": draft_id,
+                    "etsy_listing_id": listing_id,
+                    "images": [
+                        {
+                            "etsy_image_id": img_ref.listing_image_id,
+                            "rank": img["rank"],
+                            "intent": img["intent"],
+                        }
+                    ],
+                },
+            ),
+        )
+
+
+def _file_stage(
+    conn: sqlite3.Connection,
+    user_id: int,
+    adapter: EtsyWriteAdapter,
+    draft_id: str,
+    listing_id: int,
+    landing_path: str,
+    sellable_max_bytes: int,
+) -> None:
+    file_bytes, sellable = sellable_file_bytes(landing_path, sellable_max_bytes)
+    file_ref = adapter.upload_listing_file(
+        listing_id, file_bytes, name=Path(landing_path).name, rank=1
+    )
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="listingdraft.file_attached",
+            payload={
+                "draft_id": draft_id,
+                "etsy_listing_id": listing_id,
+                "etsy_file_id": file_ref.listing_file_id,
+                "source": sellable.source,
+                "sha256": sellable.sha256,
+            },
+        ),
+    )
+
+
+def _update_stage(
+    adapter: EtsyWriteAdapter, listing_id: int, row: sqlite3.Row, tags: list[str]
+) -> None:
+    # Price was already set at create_draft_listing time -- Etsy's real
+    # updateListing has no price field.
+    adapter.update_listing(
+        listing_id,
+        EtsyListingUpdate(title=row["title"], description=row["description"], tags=tags),
+    )
+
+
+def _emit_push_failed(
+    conn: sqlite3.Connection,
+    user_id: int,
+    draft_id: str,
+    listing_id: int | None,
+    stage: str,
+    exc: Exception,
+) -> None:
+    # OSError: a bad/missing local image or sellable file is a per-draft
+    # failure too -- one broken path must not abort the batch.
+    code = exc.status_code if isinstance(exc, EtsyWriteError) else 0
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="listingdraft.push_failed",
+            payload={
+                "draft_id": draft_id,
+                "etsy_listing_id": listing_id,
+                "stage": stage,
+                "error": {"code": code, "message": str(exc)[:300]},
+            },
+        ),
+    )
+
+
 def _push_one(
     conn: sqlite3.Connection,
     user_id: int,
@@ -84,102 +236,21 @@ def _push_one(
     listing_id: int | None = None
     stage = "create"
     try:
-        spec = EtsyDraftSpec(
-            quantity=cfg.pricing.digital_quantity,
-            title=row["title"],
-            description=row["description"] or "",
-            price=row["price"],
-            who_made=cfg.etsy.who_made,
-            when_made=cfg.etsy.when_made,
-            taxonomy_id=cfg.etsy.taxonomy_id,
-            is_supply=cfg.etsy.is_supply,
-            tags=tags,
-            should_auto_renew=cfg.etsy.should_auto_renew,
-        )
-        ref = adapter.create_draft_listing(spec)
-        listing_id = ref.listing_id
-        append(
-            conn,
-            Event(
-                user_id=user_id,
-                type="listingdraft.pushed_to_etsy",
-                payload={
-                    "draft_id": draft_id,
-                    "etsy_listing_id": listing_id,
-                    "listing_type": "download",
-                    "quantity": cfg.pricing.digital_quantity,
-                    "state": "draft",
-                },
-            ),
-        )
+        listing_id = _create_stage(conn, user_id, adapter, cfg, draft_id, row, tags)
 
         stage = "image"
-        images = sorted(json.loads(row["images_json"] or "[]"), key=lambda i: i["rank"])
-        attached = []
-        for img in images:
-            image_bytes = Path(img["path"]).read_bytes()
-            img_ref = adapter.upload_listing_image(listing_id, image_bytes, rank=img["rank"])
-            attached.append(
-                {
-                    "etsy_image_id": img_ref.listing_image_id,
-                    "rank": img["rank"],
-                    "intent": img["intent"],
-                }
-            )
-        append(
-            conn,
-            Event(
-                user_id=user_id,
-                type="listingdraft.images_attached",
-                payload={"draft_id": draft_id, "etsy_listing_id": listing_id, "images": attached},
-            ),
-        )
+        _images_stage(conn, user_id, adapter, draft_id, listing_id, row["images_json"])
 
         stage = "file"
-        file_bytes, sellable = sellable_file_bytes(landing_path, cfg.etsy.sellable_max_bytes)
-        file_ref = adapter.upload_listing_file(
-            listing_id, file_bytes, name=Path(landing_path).name, rank=1
-        )
-        append(
-            conn,
-            Event(
-                user_id=user_id,
-                type="listingdraft.file_attached",
-                payload={
-                    "draft_id": draft_id,
-                    "etsy_listing_id": listing_id,
-                    "etsy_file_id": file_ref.listing_file_id,
-                    "source": sellable.source,
-                    "sha256": sellable.sha256,
-                },
-            ),
+        _file_stage(
+            conn, user_id, adapter, draft_id, listing_id, landing_path, cfg.etsy.sellable_max_bytes
         )
 
         stage = "update"
-        # Price was already set at create_draft_listing time -- Etsy's real
-        # updateListing has no price field.
-        adapter.update_listing(
-            listing_id,
-            EtsyListingUpdate(title=row["title"], description=row["description"], tags=tags),
-        )
+        _update_stage(adapter, listing_id, row, tags)
         return True
     except (EtsyWriteError, OSError) as exc:
-        # OSError: a bad/missing local image or sellable file is a per-draft
-        # failure too -- one broken path must not abort the batch.
-        code = exc.status_code if isinstance(exc, EtsyWriteError) else 0
-        append(
-            conn,
-            Event(
-                user_id=user_id,
-                type="listingdraft.push_failed",
-                payload={
-                    "draft_id": draft_id,
-                    "etsy_listing_id": listing_id,
-                    "stage": stage,
-                    "error": {"code": code, "message": str(exc)[:300]},
-                },
-            ),
-        )
+        _emit_push_failed(conn, user_id, draft_id, listing_id, stage, exc)
         return False
 
 
