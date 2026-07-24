@@ -21,6 +21,8 @@ def main() -> None:
     operator's real .env). Existing env vars win over .env values."""
     load_dotenv()
     app()
+
+
 app.add_typer(edit_app, name="edit")
 app.add_typer(score_app, name="score")
 app.add_typer(pipeline_app, name="pipeline")
