@@ -32,11 +32,15 @@ def test_rebuild_listings_is_a_true_drop_and_rebuild(conn, tmp_path):
         path=str(path),
         set_key="set-1",
         intents=["single", "digital_whatyougot"],
+        mockups_dir=tmp_path / "mockups",
     )
     build_drafts(conn, USER_ID)
 
     row = conn.execute("SELECT * FROM proj_listing_drafts WHERE user_id=?", (USER_ID,)).fetchone()
-    assert row["state"] == "built"
+    # build folds push automatically (design §1 dataflow); Fake adapter
+    # always succeeds, so a fully-built draft ends this run in state=pushed.
+    assert row["state"] == "pushed"
+    assert row["etsy_listing_id"] is not None
     assert row["landing_file_id"] == "f" * 64
     assert row["provider"] == "etsy_digital"
     assert row["file_source"] == "landing_original"
@@ -68,6 +72,7 @@ def test_gate3_published_folds_state_and_published_at(conn, tmp_path):
         path=str(path),
         set_key="set-g",
         intents=["single"],
+        mockups_dir=tmp_path / "mockups",
     )
     build_drafts(conn, USER_ID)
     draft_id = conn.execute(

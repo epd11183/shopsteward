@@ -50,3 +50,27 @@ def live_copy_error() -> str:
         "SHOPSTEWARD_LIVE_COPY=1 and OPENROUTER_API_KEY in the environment, "
         "then re-run with --live-copy."
     )
+
+
+def live_etsy_write_open() -> bool:
+    """True iff SHOPSTEWARD_LIVE_ETSY_WRITE=1, ETSY_API_KEY is set, and Etsy
+    tokens are on disk with the listings_w scope (PRD §13 decision 41). The
+    key check lives HERE so the CLI refuses up front instead of crashing
+    mid-build after copy/price events were already emitted."""
+    if os.environ.get("SHOPSTEWARD_LIVE_ETSY_WRITE") != "1":
+        return False
+    if not os.environ.get("ETSY_API_KEY"):
+        return False
+
+    from shopsteward.adapters.etsy.auth import EtsyTokenStore
+
+    tokens = EtsyTokenStore().load()
+    return tokens is not None and "listings_w" in tokens.scopes
+
+
+def live_etsy_write_error() -> str:
+    return (
+        "Live Etsy draft push is gated on operator approval (PRD §8.4): set "
+        "SHOPSTEWARD_LIVE_ETSY_WRITE=1 and ETSY_API_KEY, run `shopsteward etsy "
+        "auth` with the listings_w scope, then re-run with --live-etsy-write."
+    )

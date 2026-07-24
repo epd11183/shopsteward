@@ -29,6 +29,7 @@ def _seed_one(conn, tmp_path, *, file_id="f" * 64, photo_id="photo-1"):
         path=str(path),
         set_key=f"set-{file_id}",
         intents=["framed_poster", "single", "digital_whatyougot"],
+        mockups_dir=tmp_path / "mockups",
     )
     return path
 
@@ -199,7 +200,7 @@ def _draft_id_for(conn, landing_file_id: str, set_key: str) -> str:
     return hashlib.sha256(f"{landing_file_id}|{cfg_hash}|{set_key}".encode()).hexdigest()
 
 
-def _seed_slice1_only_draft(conn, *, file_id: str, set_key: str, photo_id: str) -> str:
+def _seed_slice1_only_draft(conn, tmp_path, *, file_id: str, set_key: str, photo_id: str) -> str:
     """Appends only listingdraft.created + .images_selected (no copy/priced),
     the way a draft built before slice 2 shipped would look -- exercises
     fill-forward without ever deleting an event row."""
@@ -225,6 +226,9 @@ def _seed_slice1_only_draft(conn, *, file_id: str, set_key: str, photo_id: str) 
             },
         ),
     )
+    mockup_path = tmp_path / "mockups" / photo_id / "single.jpg"
+    mockup_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (50, 50), (1, 1, 1)).save(mockup_path, "JPEG")
     append(
         conn,
         Event(
@@ -232,7 +236,7 @@ def _seed_slice1_only_draft(conn, *, file_id: str, set_key: str, photo_id: str) 
             type="listingdraft.images_selected",
             payload={
                 "draft_id": draft_id,
-                "images": [{"path": "/mockups/single.jpg", "intent": "single", "rank": 1}],
+                "images": [{"path": str(mockup_path), "intent": "single", "rank": 1}],
                 "sellable_file": {"source": "landing_original", "sha256": "abc", "bytes": 1},
             },
         ),
@@ -244,7 +248,7 @@ def _seed_slice1_only_draft(conn, *, file_id: str, set_key: str, photo_id: str) 
 def test_fill_forward_fills_missing_copy_and_price_without_new_created_event(conn, tmp_path):
     _seed_one(conn, tmp_path, file_id="e" * 64, photo_id="photo-e")
     draft_id = _seed_slice1_only_draft(
-        conn, file_id="e" * 64, set_key=f"set-{'e' * 64}", photo_id="photo-e"
+        conn, tmp_path, file_id="e" * 64, set_key=f"set-{'e' * 64}", photo_id="photo-e"
     )
     row = conn.execute(
         "SELECT title, price FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
@@ -287,7 +291,7 @@ def test_fill_forward_fills_missing_copy_and_price_without_new_created_event(con
 def test_fill_forward_second_run_is_a_no_op(conn, tmp_path):
     _seed_one(conn, tmp_path, file_id="d" * 64, photo_id="photo-d")
     draft_id = _seed_slice1_only_draft(
-        conn, file_id="d" * 64, set_key=f"set-{'d' * 64}", photo_id="photo-d"
+        conn, tmp_path, file_id="d" * 64, set_key=f"set-{'d' * 64}", photo_id="photo-d"
     )
 
     build_drafts(conn, USER_ID)  # fills forward
@@ -330,7 +334,7 @@ def test_published_draft_is_never_rebuilt_even_with_force(conn, tmp_path):
 def test_fill_forward_copy_only_missing_leaves_price_alone(conn, tmp_path):
     _seed_one(conn, tmp_path, file_id="f" * 64, photo_id="photo-f")
     draft_id = _seed_slice1_only_draft(
-        conn, file_id="f" * 64, set_key=f"set-{'f' * 64}", photo_id="photo-f"
+        conn, tmp_path, file_id="f" * 64, set_key=f"set-{'f' * 64}", photo_id="photo-f"
     )
     append(
         conn,
@@ -369,7 +373,7 @@ def test_fill_forward_copy_only_missing_leaves_price_alone(conn, tmp_path):
 def test_fill_forward_price_only_missing_leaves_copy_alone(conn, tmp_path):
     _seed_one(conn, tmp_path, file_id="a1" * 32, photo_id="photo-g")
     draft_id = _seed_slice1_only_draft(
-        conn, file_id="a1" * 32, set_key=f"set-{'a1' * 32}", photo_id="photo-g"
+        conn, tmp_path, file_id="a1" * 32, set_key=f"set-{'a1' * 32}", photo_id="photo-g"
     )
     append(
         conn,

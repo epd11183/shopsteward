@@ -38,7 +38,7 @@ _CFG_BASE = {
     "image_cap": 10,
     "etsy": {
         "who_made": "i_did",
-        "when_made": "2020_2025",
+        "when_made": "2020_2026",
         "is_supply": False,
         "taxonomy_id": 0,
         "should_auto_renew": True,

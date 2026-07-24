@@ -33,15 +33,12 @@ def order_listing_images(mockups: list[dict], config: ListingConfig) -> list[Lis
     ]
 
 
-def resolve_sellable_file(path: str, sellable_max_bytes: int) -> SellableFile:
-    """Sellable file = the landing original, unless it's a TIFF or exceeds
-    sellable_max_bytes -- then a deterministic max-quality sRGB JPEG
-    (Pillow re-encode, no resize, no AI) is produced instead."""
+def _load_sellable(path: str, sellable_max_bytes: int) -> tuple[bytes, SellableFile]:
     raw = Path(path).read_bytes()
     is_tiff = Path(path).suffix.lower() in _TIFF_SUFFIXES
 
     if not is_tiff and len(raw) <= sellable_max_bytes:
-        return SellableFile(
+        return raw, SellableFile(
             source="landing_original", sha256=hashlib.sha256(raw).hexdigest(), bytes=len(raw)
         )
 
@@ -49,6 +46,22 @@ def resolve_sellable_file(path: str, sellable_max_bytes: int) -> SellableFile:
         buf = io.BytesIO()
         img.convert("RGB").save(buf, "JPEG", quality=100)
         derived = buf.getvalue()
-    return SellableFile(
+    return derived, SellableFile(
         source="derived_jpeg", sha256=hashlib.sha256(derived).hexdigest(), bytes=len(derived)
     )
+
+
+def resolve_sellable_file(path: str, sellable_max_bytes: int) -> SellableFile:
+    """Sellable file = the landing original, unless it's a TIFF or exceeds
+    sellable_max_bytes -- then a deterministic max-quality sRGB JPEG
+    (Pillow re-encode, no resize, no AI) is produced instead."""
+    _, meta = _load_sellable(path, sellable_max_bytes)
+    return meta
+
+
+def sellable_file_bytes(path: str, sellable_max_bytes: int) -> tuple[bytes, SellableFile]:
+    """Same resolution as resolve_sellable_file, but also returns the bytes
+    to upload -- used by the push stage, which needs the actual file, not
+    just its metadata. Deterministic and side-effect-free, so the push stage
+    can recompute it on demand (never persists a derived JPEG)."""
+    return _load_sellable(path, sellable_max_bytes)

@@ -222,7 +222,7 @@ llm.call; live copy refused past the shared vision.monthly_soft_cap_usd $10/mo
                   "gallery_wall", "digital_whatyougot"],
   "image_cap": 10,
   "etsy": {
-    "who_made": "i_did", "when_made": "2020_2025", "is_supply": false,
+    "who_made": "i_did", "when_made": "2020_2026", "is_supply": false,
     "taxonomy_id": 0, "should_auto_renew": true, "sellable_max_bytes": 20000000 } }
 ```
 

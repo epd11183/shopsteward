@@ -54,9 +54,20 @@ def rebuild_listings(conn: sqlite3.Connection) -> None:
             )
 
         elif e.type == "listingdraft.created":
+            # A --force rebuild re-emits this event for an existing draft_id
+            # (design §3: only state=published blocks a force rebuild, not
+            # pushed) -- ON CONFLICT refreshes only the "created" fields and
+            # never resets etsy_listing_id/state/copy/price/images, or a
+            # force rebuild of an already-pushed draft would look unpushed
+            # again and get double-pushed.
             conn.execute(
-                "INSERT OR REPLACE INTO proj_listing_drafts VALUES "
-                "(?,?,?,?,?,?,?,?,?,?,NULL,NULL,'[]',NULL,NULL,NULL,NULL,'[]',NULL,'built',?,NULL)",
+                "INSERT INTO proj_listing_drafts VALUES "
+                "(?,?,?,?,?,?,?,?,?,?,NULL,NULL,'[]',NULL,NULL,NULL,NULL,'[]',NULL,'built',?,NULL) "
+                "ON CONFLICT(user_id, draft_id) DO UPDATE SET "
+                "landing_file_id=excluded.landing_file_id, photo_id=excluded.photo_id, "
+                "set_key=excluded.set_key, provider=excluded.provider, format=excluded.format, "
+                "sku_source=excluded.sku_source, listing_type=excluded.listing_type, "
+                "config_hash=excluded.config_hash",
                 (
                     e.user_id,
                     p["draft_id"],
@@ -97,6 +108,28 @@ def rebuild_listings(conn: sqlite3.Connection) -> None:
                 "WHERE user_id=? AND draft_id=?",
                 (p["price"], p["currency"], p["margin_floor"], e.user_id, p["draft_id"]),
             )
+
+        elif e.type == "listingdraft.pushed_to_etsy":
+            conn.execute(
+                "UPDATE proj_listing_drafts SET etsy_listing_id=?, state='pushed' "
+                "WHERE user_id=? AND draft_id=?",
+                (str(p["etsy_listing_id"]), e.user_id, p["draft_id"]),
+            )
+
+        elif e.type == "listingdraft.push_failed":
+            etsy_listing_id = p.get("etsy_listing_id")
+            if etsy_listing_id is not None:
+                conn.execute(
+                    "UPDATE proj_listing_drafts SET etsy_listing_id=?, state='push_failed' "
+                    "WHERE user_id=? AND draft_id=?",
+                    (str(etsy_listing_id), e.user_id, p["draft_id"]),
+                )
+            else:
+                conn.execute(
+                    "UPDATE proj_listing_drafts SET state='push_failed' "
+                    "WHERE user_id=? AND draft_id=?",
+                    (e.user_id, p["draft_id"]),
+                )
 
         elif e.type == "gate3.published":
             conn.execute(

@@ -15,6 +15,10 @@ existing created/images_selected events are never re-emitted. A draft that
 already carries both copy and price ("fully built") is skipped unless
 --force. --force always re-runs the full build (copy/price/images; never a
 second push). A published draft is never rebuilt, force or not.
+
+After the build loop, every fully-built-but-unpushed draft is pushed to Etsy
+(pipeline.listings.push, Fake adapter by default) -- build is one unattended
+pipeline (design §1 dataflow), not two operator-triggered steps.
 """
 
 import hashlib
@@ -30,6 +34,7 @@ from shopsteward.pipeline.listings.images import order_listing_images, resolve_s
 from shopsteward.pipeline.listings.models import BuildReport, ListingConfig, ListingImage
 from shopsteward.pipeline.listings.pricing import apply_price, enforce_floor
 from shopsteward.pipeline.listings.projections import rebuild_listings
+from shopsteward.pipeline.listings.push import build_etsy_write_adapter, push_drafts
 from shopsteward.pipeline.projections import rebuild_pipeline
 
 
@@ -123,6 +128,7 @@ def build_drafts(
     photo_id: str | None = None,
     force: bool = False,
     live_copy: bool = False,
+    live_etsy_write: bool = False,
 ) -> BuildReport:
     listing_config.seed(conn, user_id)
     tuning.seed(conn, user_id, TUNING_PROFILE_PATH)
@@ -236,6 +242,12 @@ def build_drafts(
         _price_draft(conn, user_id, draft_id, "digital_download", cfg)
 
         result.drafts_built += 1
+
+    rebuild_listings(conn)
+
+    push_report = push_drafts(conn, user_id, cfg, build_etsy_write_adapter(live=live_etsy_write))
+    result.pushed = push_report.pushed
+    result.push_failed = push_report.push_failed
 
     rebuild_listings(conn)
     return result

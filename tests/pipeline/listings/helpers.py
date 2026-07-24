@@ -2,6 +2,9 @@
 not a conftest.py fixture module (mockups/helpers.py precedent)."""
 
 import sqlite3
+from pathlib import Path
+
+from PIL import Image
 
 from shopsteward.core.events import Event, append
 from shopsteward.mockups.projections import rebuild_mockups
@@ -18,12 +21,15 @@ def seed_landing_file_with_mockup_set(
     path: str,
     set_key: str,
     intents: list[str],
+    mockups_dir: Path,
     user_id: int = USER_ID,
 ) -> None:
     """Appends a valid landing.file_observed + a completed mockup set (one
     mockup.generated per intent, in the given order, then
     mockupset.completed) and rebuilds the pipeline/mockups projections the
-    listings build stage reads via raw SQL."""
+    listings build stage reads via raw SQL. Writes a real tiny JPEG at each
+    mockup path (under mockups_dir) -- the push stage (M5a slice 3) reads
+    these bytes off disk, so a placeholder path is no longer enough."""
     append(
         conn,
         Event(
@@ -42,6 +48,9 @@ def seed_landing_file_with_mockup_set(
         ),
     )
     for i, intent in enumerate(intents):
+        mockup_path = Path(mockups_dir) / photo_id / f"{intent}_{i}.jpg"
+        mockup_path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (50, 50), (i, i, i)).save(mockup_path, "JPEG")
         append(
             conn,
             Event(
@@ -53,7 +62,7 @@ def seed_landing_file_with_mockup_set(
                     "set_key": set_key,
                     "intent": intent,
                     "template_id": None,
-                    "path": f"/mockups/{photo_id}/{intent}_{i}.jpg",
+                    "path": str(mockup_path),
                     "params": {},
                 },
             ),
