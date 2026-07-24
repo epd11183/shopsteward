@@ -12,8 +12,8 @@ etsy_app = typer.Typer(no_args_is_help=True, help="Etsy OAuth token management."
 
 _DEFAULT_SCOPES_STR = " ".join(DEFAULT_SCOPES)
 
-# Read-only for now; write scopes arrive with M5 re-consent (PRD §13 decision 35).
-_ALLOWED_SCOPES = {"listings_r", "transactions_r", "shops_r"}
+# listings_w added for M5a (PRD §13 decision 41); everything else stays denied.
+_ALLOWED_SCOPES = {"listings_r", "listings_w", "transactions_r", "shops_r"}
 
 
 def _format_delta(seconds: float) -> str:
@@ -64,8 +64,8 @@ def auth(
     unknown_scopes = [s for s in resolved_scopes if s not in _ALLOWED_SCOPES]
     if unknown_scopes:
         typer.secho(
-            f"Unsupported scope(s) {', '.join(unknown_scopes)}: "
-            "write scopes arrive with M5 re-consent.",
+            f"Unsupported scope(s) {', '.join(unknown_scopes)}: only the "
+            "operator-approved set is allowed (PRD decision 41).",
             fg="red",
         )
         raise typer.Exit(1)
