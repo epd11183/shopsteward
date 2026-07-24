@@ -34,6 +34,15 @@ REDIRECT_PATH = "/oauth/redirect"
 _SCHEMA = "shopsteward.etsytokens/1"
 
 
+def api_key_header(api_key: str) -> str:
+    """Value for the x-api-key header. Etsy v3 requires
+    `keystring:shared_secret` (colon-joined) on every application request;
+    OAuth `client_id` fields keep the bare keystring. Falls back to the bare
+    keystring if ETSY_SHARED_SECRET is unset so old-style keys keep working."""
+    secret = os.environ.get("ETSY_SHARED_SECRET")
+    return f"{api_key}:{secret}" if secret else api_key
+
+
 class EtsyTokens(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -326,7 +335,7 @@ def _resolve_shop_id(
 
     resp = client.get(
         SHOPS_URL.format(user_id=etsy_user_id),
-        headers={"x-api-key": api_key, "authorization": f"Bearer {access_token}"},
+        headers={"x-api-key": api_key_header(api_key), "authorization": f"Bearer {access_token}"},
     )
     if resp.status_code != 200:
         return None

@@ -3,6 +3,7 @@ refuses live sync until the operator approves the smoke test (PRD §8.4)."""
 
 import httpx
 
+from shopsteward.adapters.etsy.auth import api_key_header
 from shopsteward.adapters.etsy.models import EtsyListing, EtsyReceipt, EtsyShop
 
 BASE = "https://openapi.etsy.com/v3/application"
@@ -12,7 +13,10 @@ class LiveEtsyAdapter:
     def __init__(self, api_key: str, shop_id: int, access_token: str):
         self._shop_id = shop_id
         self._client = httpx.Client(
-            headers={"x-api-key": api_key, "authorization": f"Bearer {access_token}"},
+            headers={
+                "x-api-key": api_key_header(api_key),
+                "authorization": f"Bearer {access_token}",
+            },
             timeout=30.0,
         )
 

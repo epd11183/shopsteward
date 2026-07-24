@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
-shopsteward = "shopsteward.cli:app"
+shopsteward = "shopsteward.cli:main"
 
 [build-system]
 requires = ["hatchling"]

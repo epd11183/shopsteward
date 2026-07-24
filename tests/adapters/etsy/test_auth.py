@@ -427,3 +427,42 @@ def test_etsy_auth_rejects_write_scopes(monkeypatch: pytest.MonkeyPatch) -> None
     result = runner.invoke(app, ["etsy", "auth", "--scopes", "listings_r listings_w"])
     assert result.exit_code == 1
     assert "write scopes arrive with M5 re-consent" in result.output
+
+
+def test_api_key_header_joins_shared_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    from shopsteward.adapters.etsy.auth import api_key_header
+
+    monkeypatch.setenv("ETSY_SHARED_SECRET", "s3cr3t")
+    assert api_key_header("keystr") == "keystr:s3cr3t"
+
+    monkeypatch.delenv("ETSY_SHARED_SECRET")
+    assert api_key_header("keystr") == "keystr"
+
+
+def test_shop_discovery_sends_joined_api_key_header(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ETSY_SHOP_ID", raising=False)
+    monkeypatch.setenv("ETSY_SHARED_SECRET", "s3cr3t")
+    store = EtsyTokenStore(tmp_path / "tokens.json")
+    discovery_headers: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/shops" in str(request.url):
+            discovery_headers.append(request.headers["x-api-key"])
+            return httpx.Response(200, json={"shop_id": 77})
+        return httpx.Response(
+            200,
+            json={"access_token": "9999.tok", "refresh_token": "r", "expires_in": 3600},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    def fake_open_browser(url: str) -> None:
+        _drive_redirect(url)
+
+    tokens = run_auth_flow(
+        "keystr", port=0, timeout_s=5, client=client, open_browser=fake_open_browser, store=store
+    )
+    assert tokens.shop_id == 77
+    assert discovery_headers == ["keystr:s3cr3t"]
