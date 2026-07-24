@@ -1,12 +1,28 @@
 """Pydantic v2 boundary models for the listings module.
 
-Slice 1 (draft-build stage) only exercises ListingConfig, ListingImage,
-SellableFile, ListingDraft and BuildReport. CopyInputs/PricingRules/
-Economics/Gate3Card belong to later M5a slices (copy, pricing, Gate 3) --
+Slice 1 (draft-build stage) exercises ListingConfig, ListingImage,
+SellableFile, ListingDraft and BuildReport. Slice 2 (copy + pricing) adds
+PricingRules and Economics here, and re-exports CopyInputs from
+adapters.copy.interface (VisionVerdict precedent -- see that module's
+docstring for why CopyInputs is owned by the adapter, not here).
+ListingDraftSpec/Gate3Card belong to later M5a slices (push, Gate 3) --
 added when those slices land, not speculatively here.
 """
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from shopsteward.adapters.copy.interface import CopyInputs
+
+__all__ = [
+    "BuildReport",
+    "CopyInputs",
+    "Economics",
+    "ListingConfig",
+    "ListingDraft",
+    "ListingImage",
+    "PricingRules",
+    "SellableFile",
+]
 
 
 class _ListingConfigCopy(BaseModel):
@@ -32,7 +48,7 @@ class _ListingConfigEtsyFees(BaseModel):
     payment_flat: float
 
 
-class _ListingConfigPricing(BaseModel):
+class PricingRules(BaseModel):
     currency: str
     digital_quantity: int
     formats: dict[str, _ListingConfigPricingFormat]
@@ -56,7 +72,7 @@ class ListingConfig(BaseModel):
     # JSON key stays "copy" (design §6); attribute renamed so it doesn't
     # shadow BaseModel.copy().
     copy_: _ListingConfigCopy = Field(alias="copy")
-    pricing: _ListingConfigPricing
+    pricing: PricingRules
     image_order: list[str]
     image_cap: int
     etsy: _ListingConfigEtsy
@@ -103,3 +119,9 @@ class BuildReport(BaseModel):
     copy_calls: int = 0
     skipped_idempotent: int = 0
     push_failed: int = 0
+
+
+class Economics(BaseModel):
+    price: float
+    etsy_fees: float
+    net: float

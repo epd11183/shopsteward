@@ -8,9 +8,10 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 from shopsteward.adapters.vision.interface import VisionAdapter
-from shopsteward.core.events import Event, append, read_all
+from shopsteward.core.events import Event, append
 from shopsteward.editing.projections import rebuild_editing
 from shopsteward.pipeline import tuning
+from shopsteward.pipeline.llm_ledger import monthly_spend
 from shopsteward.pipeline.models import ScoringRunResult
 from shopsteward.pipeline.projections import rebuild_pipeline
 from shopsteward.pipeline.scorers import ScoreContext, get_registered
@@ -44,7 +45,7 @@ def run_scoring(
 
     for row in candidates:
         if live:
-            spend = _monthly_spend(conn, user_id, month_prefix)
+            spend = monthly_spend(conn, user_id, month_prefix)
             if spend >= soft_cap:
                 cap_hit = True
                 logger.warning(
@@ -164,17 +165,6 @@ def _candidates(conn: sqlite3.Connection, user_id: int, limit: int | None) -> li
         query += " LIMIT ?"
         params = (*params, limit)
     return conn.execute(query, params).fetchall()
-
-
-def _monthly_spend(conn: sqlite3.Connection, user_id: int, month_prefix: str) -> float:
-    total = 0.0
-    for e in read_all(conn, "llm.call"):
-        if e.user_id != user_id or not (e.created_at or "").startswith(month_prefix):
-            continue
-        cost = e.payload.get("est_cost_usd")
-        if cost is not None:
-            total += cost
-    return total
 
 
 def _run_scorers(

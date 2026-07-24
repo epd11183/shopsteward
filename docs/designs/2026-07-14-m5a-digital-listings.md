@@ -126,11 +126,18 @@ Projections (rebuild_listings, drop/rebuild, user_id everywhere):
   state.
 
 Idempotency: draft_id = sha256(landing_file_id | config_hash | set_key)
-(set_key = the M4 mockup set). Skip a landing file whose draft_id is already
-published; --force rebuilds copy/price/images (never re-publishes). Push is
-skipped when the draft already carries an etsy_listing_id (re-push =
-update_listing, not a second create). Ownership rule holds: listings never
-writes proj_photos, proj_landing_files, or proj_mockups.
+(set_key = the M4 mockup set). Reconciled skip predicate (amended post-slice-2
+review 2026-07-14): a landing file with no existing draft gets a full build
+(created, images, copy, price). An existing draft missing copy and/or price
+events gets exactly those stages filled in on rerun (event-sourced
+fill-forward) -- the existing created/images_selected events are never
+re-emitted. An existing draft that already carries both copy and price
+("fully built") is skipped unless --force. --force always re-runs the full
+build (copy/price/images; never a second push). A draft in state=published is
+never rebuilt, force or not. Push is skipped when the draft already carries
+an etsy_listing_id (re-push = update_listing, not a second create). Ownership
+rule holds: listings never writes proj_photos, proj_landing_files, or
+proj_mockups.
 
 ## 4. Adapter interface additions
 

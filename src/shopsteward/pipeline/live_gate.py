@@ -34,3 +34,19 @@ def live_vision_error(provider: str) -> str:
         f"SHOPSTEWARD_LIVE_VISION=1 and {key_env} in the environment, "
         "then re-run with --live-vision."
     )
+
+
+def live_copy_open() -> bool:
+    """True iff SHOPSTEWARD_LIVE_COPY=1 and OPENROUTER_API_KEY are both set
+    (M5a copy is OpenRouter-only, PRD §13 decision 38)."""
+    return os.environ.get("SHOPSTEWARD_LIVE_COPY") == "1" and bool(
+        os.environ.get("OPENROUTER_API_KEY")
+    )
+
+
+def live_copy_error() -> str:
+    return (
+        "Live listing-copy generation is gated on operator approval (PRD §8.4): set "
+        "SHOPSTEWARD_LIVE_COPY=1 and OPENROUTER_API_KEY in the environment, "
+        "then re-run with --live-copy."
+    )

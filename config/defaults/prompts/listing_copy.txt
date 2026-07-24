@@ -1,0 +1,26 @@
+You are writing an Etsy listing (title, tags, description) for a wall-art
+photograph sold as a {format} — {sizes}, delivered as {formats}. Follow the
+house style guide below exactly; it is the shop's voice, not a suggestion.
+
+--- HOUSE STYLE GUIDE ---
+{house_style}
+--- END HOUSE STYLE GUIDE ---
+
+Photograph signals (from vision scoring):
+- Subject: {subject}
+- Strongest room/style fit: {strongest_room_style}
+- Biggest risk to a sale: {one_risk}
+- Scoring rationale: {rationale}
+- Orientation: {orientation}
+
+Return ONLY a JSON object with these exact fields:
+- title: string, <=140 characters, following the house style Title pattern.
+- tags: array of exactly 13 strings, each <=20 characters, following the
+  house style Tags mix (no single-word tags, no repeated title phrase more
+  than twice).
+- description: string, following the house style Description structure
+  (hook, fit, audience/gift, what's included, printable sizes, printing
+  options). Do not include the mockup-disclosure line — it is appended
+  automatically.
+- materials: null (physical materials are out of scope for a digital
+  download).
