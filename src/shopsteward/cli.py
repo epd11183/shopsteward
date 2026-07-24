@@ -5,11 +5,15 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from dotenv import load_dotenv
 
 from shopsteward.editing.cli import edit_app
 from shopsteward.etsy_cli import etsy_app
 from shopsteward.mockups.cli import mockups_app
 from shopsteward.pipeline.cli import pipeline_app, score_app
+
+# Existing env vars win over .env values (dotenv never overrides).
+load_dotenv()
 
 app = typer.Typer(no_args_is_help=True, help="ShopSteward — photography workflow tool.")
 app.add_typer(edit_app, name="edit")
