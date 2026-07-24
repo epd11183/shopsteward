@@ -523,6 +523,35 @@ LLM routing amendment (2026-07-12, operator-approved):
     rule) and A/B tested against a quality-first default before adoption.
     httpx-only remains the rule (decision 22) — no OpenRouter SDK.
 
+M5a design (2026-07-14, operator-approved; normative spec at
+docs/designs/2026-07-14-m5a-digital-listings.md):
+
+37. M5 splits: M5a = digital-direct Etsy listings (create-as-DRAFT via the
+    Etsy API); M5b = POD (Gelato/Printful) enrichment, deferred. The listing
+    data model carries provider + sku_source (M5a = etsy_digital / etsy) so
+    the POD-first enrichment path slots into M5b without migration. M5a builds
+    nothing POD-specific.
+38. Listing copy = one structured-JSON call per draft (title/tags/description,
+    strict schema like the vision adapter) via OpenRouter (decision 36
+    transport), default model anthropic/claude-sonnet-5, DB-configured
+    (model id + prompt template + house style-guide text in config/DB, never
+    hardcoded), A/B-able vs deepseek/deepseek-chat. Cost logged to the llm.call
+    ledger under the shared $10/mo soft cap (now covers vision + copy).
+39. Pricing = DB-seeded per-format base price + margin floor, auto-applied to
+    drafts. Gate 3 shows the price breakdown and economics (price - Etsy fees)
+    and allows override; an override below the floor is rejected server-side.
+40. Gate 3 = default-accept: a drafted listing set per hero is publishable with
+    ONE tap; title/tags/description/price/images are editable but never
+    required. Bundle proposer is OUT of scope for M5a (catalog too small).
+41. Etsy write safety: adapters may only create/update DRAFT listings; the sole
+    publish path is the Gate 3 endpoint; live Etsy writes are triple-gated
+    (--live-etsy-write + SHOPSTEWARD_LIVE_ETSY_WRITE=1 + tokens present, and
+    live copy triple-gated on OPENROUTER_API_KEY); publishing shows computed
+    economics before the tap; the AI-disclosure line (mockups.json
+    listing_copy.ai_disclosure_line) is appended to every generated description
+    that includes room mockups; write re-consent adds ONLY the listings_w scope
+    (operator re-runs etsy auth; auth.py DEFAULT_SCOPES widened for M5).
+
 ## 14. Appendix: Deferred to v2+
 
 Unchanged from PRD v2.

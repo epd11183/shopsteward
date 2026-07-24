@@ -422,11 +422,13 @@ def test_etsy_auth_missing_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "ETSY_API_KEY" in result.output
 
 
-def test_etsy_auth_rejects_write_scopes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_etsy_auth_rejects_unapproved_scopes(monkeypatch: pytest.MonkeyPatch) -> None:
+    # listings_w is allowed since M5a (decision 41); anything beyond the
+    # approved set (e.g. shop write or email) is still refused.
     monkeypatch.setenv("ETSY_API_KEY", "key")
-    result = runner.invoke(app, ["etsy", "auth", "--scopes", "listings_r listings_w"])
+    result = runner.invoke(app, ["etsy", "auth", "--scopes", "listings_r shops_w"])
     assert result.exit_code == 1
-    assert "write scopes arrive with M5 re-consent" in result.output
+    assert "shops_w" in result.output
 
 
 def test_api_key_header_joins_shared_secret(monkeypatch: pytest.MonkeyPatch) -> None:
