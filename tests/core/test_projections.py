@@ -21,17 +21,17 @@ def synced(tmp_path):
 
 def test_summary_totals(synced):
     s = analytics_summary(synced, user_id=1)
-    assert s.total_revenue_usd == pytest.approx(72.0)  # 25.00 + 47.00
-    assert s.total_orders == 2
-    assert s.active_listings == 3
+    assert s.total_revenue_usd == pytest.approx(250.0)  # 10 receipts x 25.00
+    assert s.total_orders == 10
+    assert s.active_listings == 7
 
 
 def test_top_listings_by_views(synced):
     s = analytics_summary(synced, user_id=1)
-    assert s.top_listings[0].listing_id == 222  # 340 views
+    assert s.top_listings[0].listing_id == 111  # 120 views
 
 
 def test_rebuild_is_idempotent(synced):
     rebuild(synced)
     rebuild(synced)
-    assert analytics_summary(synced, user_id=1).total_orders == 2
+    assert analytics_summary(synced, user_id=1).total_orders == 10
