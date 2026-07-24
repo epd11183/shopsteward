@@ -213,10 +213,11 @@ def test_publish_listing_patches_state_active(tmp_path) -> None:
 
 
 @respx.mock
-def test_update_listing_price_round_trips_inventory_json(tmp_path) -> None:
-    # GET returns price as a Money object {amount,divisor,currency_code} --
-    # updateListingInventory's PUT body expects a plain decimal there
-    # instead (reviewer finding, M5a slice 4 fix-up).
+def test_update_listing_price_whitelists_inventory_put_body(tmp_path) -> None:
+    # GET returns price as a Money object plus read-only keys (product_id,
+    # is_deleted, offering_id) that the real PUT rejects with HTTP 400
+    # "Array contains invalid keys" -- verified live in the §8.4 write
+    # smoke. The PUT body must whitelist writable fields only.
     get_route = respx.get(f"{BASE}/listings/555/inventory").mock(
         return_value=httpx.Response(
             200,
@@ -224,10 +225,13 @@ def test_update_listing_price_round_trips_inventory_json(tmp_path) -> None:
                 "products": [
                     {
                         "product_id": 1,
+                        "is_deleted": False,
                         "sku": "",
+                        "property_values": [],
                         "offerings": [
                             {
                                 "offering_id": 11,
+                                "is_deleted": False,
                                 "quantity": 999,
                                 "is_enabled": True,
                                 "price": {"amount": 1200, "divisor": 100, "currency_code": "USD"},
@@ -251,10 +255,17 @@ def test_update_listing_price_round_trips_inventory_json(tmp_path) -> None:
     import json as _json
 
     body = _json.loads(sent.content)
-    offering = body["products"][0]["offerings"][0]
+    product = body["products"][0]
+    offering = product["offerings"][0]
     assert offering["price"] == 9.50  # decimal, not a Money object
-    assert offering["offering_id"] == 11  # rest of the structure round-trips verbatim
     assert offering["quantity"] == 999
+    assert offering["is_enabled"] is True
+    # read-only keys the real API rejects must be stripped
+    assert "product_id" not in product
+    assert "is_deleted" not in product
+    assert "offering_id" not in offering
+    assert "is_deleted" not in offering
+    assert "sku" not in product  # empty sku omitted entirely
 
 
 @respx.mock

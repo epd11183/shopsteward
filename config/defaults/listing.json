@@ -10,30 +10,46 @@
     "prompt_path": "prompts/listing_copy.txt",
     "house_style_path": "prompts/house_style.md",
     "est_cost_per_mtok": {
-      "anthropic/claude-sonnet-5": { "in": 2.00, "out": 10.00 },
-      "deepseek/deepseek-chat": { "in": 0.27, "out": 1.10 }
+      "anthropic/claude-sonnet-5": {
+        "in": 2.0,
+        "out": 10.0
+      },
+      "deepseek/deepseek-chat": {
+        "in": 0.27,
+        "out": 1.1
+      }
     }
   },
   "pricing": {
     "currency": "USD",
     "digital_quantity": 999,
     "formats": {
-      "digital_download": { "base_price": 12.00, "margin_floor": 6.00 }
+      "digital_download": {
+        "base_price": 12.0,
+        "margin_floor": 6.0
+      }
     },
     "etsy_fees": {
-      "listing_fee": 0.20,
+      "listing_fee": 0.2,
       "transaction_pct": 0.065,
       "payment_pct": 0.03,
       "payment_flat": 0.25
     }
   },
-  "image_order": ["single", "framed_poster", "canvas_edge", "acrylic", "gallery_wall", "digital_whatyougot"],
+  "image_order": [
+    "single",
+    "framed_poster",
+    "canvas_edge",
+    "acrylic",
+    "gallery_wall",
+    "digital_whatyougot"
+  ],
   "image_cap": 10,
   "etsy": {
     "who_made": "i_did",
     "when_made": "2020_2026",
     "is_supply": false,
-    "taxonomy_id": 0,
+    "taxonomy_id": 2078,
     "should_auto_renew": true,
     "sellable_max_bytes": 20000000
   }

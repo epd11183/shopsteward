@@ -137,15 +137,37 @@ class LiveEtsyWriteAdapter:
     def update_listing_price(self, listing_id: int, price: float) -> None:
         # Etsy's real updateListing has no price field -- a post-create price
         # change goes through updateListingInventory instead (JSON, not
-        # form-urlencoded). GET returns each offering's price as a Money
-        # object {amount,divisor,currency_code}; PUT expects a plain decimal
-        # number there, so this round-trips the product/offering structure
-        # verbatim and only replaces that one field.
+        # form-urlencoded). The GET response carries read-only keys the PUT
+        # rejects with HTTP 400 "Array contains invalid keys" (product_id,
+        # is_deleted, offering_id, Money-shaped price...), verified against
+        # the live API in the §8.4 write smoke -- so this WHITELISTS the
+        # writable fields instead of round-tripping verbatim.
         inventory = self._request("GET", f"/listings/{listing_id}/inventory")
-        products = inventory.get("products", [])
-        for product in products:
-            for offering in product.get("offerings", []):
-                offering["price"] = price
+        products = []
+        for product in inventory.get("products", []):
+            offerings = [
+                {
+                    "price": price,
+                    "quantity": o.get("quantity"),
+                    "is_enabled": o.get("is_enabled", True),
+                }
+                for o in product.get("offerings", [])
+            ]
+            out = {
+                "property_values": [
+                    {
+                        k: v
+                        for k, v in pv.items()
+                        if k in ("property_id", "value_ids", "scale_id", "property_name", "values")
+                        and v is not None
+                    }
+                    for pv in product.get("property_values", [])
+                ],
+                "offerings": offerings,
+            }
+            if product.get("sku"):
+                out["sku"] = product["sku"]
+            products.append(out)
         self._request("PUT", f"/listings/{listing_id}/inventory", json={"products": products})
 
     def publish_listing(self, listing_id: int) -> EtsyListing:
