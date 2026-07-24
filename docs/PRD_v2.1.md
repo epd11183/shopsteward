@@ -494,7 +494,9 @@ Etsy auth design (2026-07-04, from Open API v3 docs verification):
     consent flow via a localhost redirect (callback
     `http://localhost:8322/oauth/redirect`) and auto-discovers the shop id;
     scopes are read-only (`listings_r transactions_r shops_r`) until M5
-    re-consents for write. Only `ETSY_API_KEY` stays in `.env`. Hard rule:
+    re-consents for write. Only `ETSY_API_KEY` and `ETSY_SHARED_SECRET`
+    stay in `.env` (amended 2026-07-14: Etsy v3 now requires
+    `keystring:shared_secret` in x-api-key on every request). Hard rule:
     **tokens never enter the event log** (append-only = undeletable).
     Operational notes: keystring inactive until Etsy approves registration;
     personal access suffices for own-shop use (no commercial access);

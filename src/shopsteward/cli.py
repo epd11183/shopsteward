@@ -12,10 +12,15 @@ from shopsteward.etsy_cli import etsy_app
 from shopsteward.mockups.cli import mockups_app
 from shopsteward.pipeline.cli import pipeline_app, score_app
 
-# Existing env vars win over .env values (dotenv never overrides).
-load_dotenv()
-
 app = typer.Typer(no_args_is_help=True, help="ShopSteward — photography workflow tool.")
+
+
+def main() -> None:
+    """Console-script entry: load .env here (not at import, and not in the
+    typer app itself — tests import/invoke `app` and must never inherit the
+    operator's real .env). Existing env vars win over .env values."""
+    load_dotenv()
+    app()
 app.add_typer(edit_app, name="edit")
 app.add_typer(score_app, name="score")
 app.add_typer(pipeline_app, name="pipeline")

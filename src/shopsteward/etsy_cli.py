@@ -53,6 +53,12 @@ def auth(
     if not api_key:
         typer.secho("ETSY_API_KEY is not set in the environment.", fg="red")
         raise typer.Exit(1)
+    if not os.environ.get("ETSY_SHARED_SECRET"):
+        typer.secho(
+            "ETSY_SHARED_SECRET is not set — Etsy v3 requires keystring:shared_secret "
+            "in x-api-key; shop discovery and API reads will fail without it.",
+            fg="yellow",
+        )
 
     resolved_scopes = tuple(scopes.split())
     unknown_scopes = [s for s in resolved_scopes if s not in _ALLOWED_SCOPES]

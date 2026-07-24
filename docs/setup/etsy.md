@@ -55,9 +55,16 @@ Your `.env` holds only:
 
 ```
 ETSY_API_KEY=<keystring>
+ETSY_SHARED_SECRET=<shared secret>
 # optional override; normally auto-discovered by `etsy auth`:
 # ETSY_SHOP_ID=<numeric shop id>
 ```
+
+Etsy v3 requires `x-api-key: <keystring>:<shared_secret>` (colon-joined) on
+every application request (verified 2026-07-14 against
+developers.etsy.com/documentation/essentials/authentication — this changed
+from keystring-only). OAuth `client_id` fields still use the bare keystring;
+the code joins the header automatically from the two env vars.
 
 ## Smoke test (requires operator approval, PRD §8.4)
 
