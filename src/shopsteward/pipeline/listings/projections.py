@@ -5,9 +5,14 @@ proj_listing_drafts. Drop-and-rebuild, own schema, own rebuild entrypoint
 Ownership rule: listings never writes proj_photos, proj_landing_files, or
 proj_mockups (owned by editing/pipeline/mockups respectively).
 
-Slice 1 folds only listingconfig.seeded/.updated + listingdraft.created +
-.images_selected -- copy/pricing/push/Gate 3 events are folded in later
-M5a slices when those events start being emitted.
+Slice 1 folded listingconfig.seeded/.updated + listingdraft.created +
+.images_selected. Slice 2 adds listingdraft.copy_generated (title, tags_json,
+description) + listingdraft.priced (price, currency, margin_floor) + a
+minimal gate3.published -> state='published' fold (the reconciled skip
+predicate, design §3, needs a real published state to check against) --
+push/Gate 3's remaining events (pushed_to_etsy, images_attached,
+file_attached, edited, push_failed, publish_failed) are folded in the
+push/Gate 3 slice when those events start being emitted.
 """
 
 import json
@@ -77,6 +82,27 @@ def rebuild_listings(conn: sqlite3.Connection) -> None:
                     e.user_id,
                     p["draft_id"],
                 ),
+            )
+
+        elif e.type == "listingdraft.copy_generated":
+            conn.execute(
+                "UPDATE proj_listing_drafts SET title=?, tags_json=?, description=? "
+                "WHERE user_id=? AND draft_id=?",
+                (p["title"], json.dumps(p["tags"]), p["description"], e.user_id, p["draft_id"]),
+            )
+
+        elif e.type == "listingdraft.priced":
+            conn.execute(
+                "UPDATE proj_listing_drafts SET price=?, currency=?, margin_floor=? "
+                "WHERE user_id=? AND draft_id=?",
+                (p["price"], p["currency"], p["margin_floor"], e.user_id, p["draft_id"]),
+            )
+
+        elif e.type == "gate3.published":
+            conn.execute(
+                "UPDATE proj_listing_drafts SET state='published', published_at=? "
+                "WHERE user_id=? AND draft_id=?",
+                (p.get("published_at"), e.user_id, p["draft_id"]),
             )
 
     conn.commit()

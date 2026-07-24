@@ -13,19 +13,29 @@ listings_app = typer.Typer(no_args_is_help=True, help="Digital-direct Etsy listi
 def build(
     photo_id: Annotated[str | None, typer.Option("--photo-id", help="Limit to one photo")] = None,
     force: Annotated[bool, typer.Option("--force", help="Rebuild even if idempotent")] = False,
+    live_copy: Annotated[
+        bool, typer.Option("--live-copy", help="Call the real OpenRouter copy API")
+    ] = False,
 ) -> None:
     """Build local listing drafts for eligible landing files with a
     completed mockup set (run `shopsteward mockups run` first)."""
     from shopsteward.core.db import connect, migrate
     from shopsteward.pipeline.listings.drafts import build_drafts
+    from shopsteward.pipeline.live_gate import live_copy_error, live_copy_open
     from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    if live_copy and not live_copy_open():
+        typer.secho(live_copy_error(), fg="red")
+        raise typer.Exit(code=1)
 
     db = db_path()
     db.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(db)
     try:
         migrate(conn)
-        result = build_drafts(conn, DEFAULT_USER_ID, photo_id=photo_id, force=force)
+        result = build_drafts(
+            conn, DEFAULT_USER_ID, photo_id=photo_id, force=force, live_copy=live_copy
+        )
         typer.echo(f"listings build: {result.model_dump()}")
     finally:
         conn.close()

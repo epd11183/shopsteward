@@ -45,3 +45,14 @@ def test_listings_build_then_status(tmp_path, monkeypatch):
     assert status_result.exit_code == 0
     assert "Listing drafts: 1" in status_result.output
     assert "built: 1" in status_result.output
+
+
+def test_listings_build_live_copy_without_env_is_refused(tmp_path, monkeypatch):
+    db = tmp_path / "t.db"
+    monkeypatch.setenv("SHOPSTEWARD_DB", str(db))
+    monkeypatch.delenv("SHOPSTEWARD_LIVE_COPY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    result = runner.invoke(app, ["listings", "build", "--live-copy"])
+    assert result.exit_code == 1
+    assert "SHOPSTEWARD_LIVE_COPY" in result.output
