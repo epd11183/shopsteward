@@ -1,0 +1,40 @@
+{
+  "schema": "shopsteward.listing/1",
+  "name": "default",
+  "copy": {
+    "provider": "openrouter",
+    "model": "anthropic/claude-sonnet-5",
+    "ab_alternate": "deepseek/deepseek-chat",
+    "temperature": 0.4,
+    "append_disclosure": true,
+    "prompt_path": "prompts/listing_copy.txt",
+    "house_style_path": "prompts/house_style.md",
+    "est_cost_per_mtok": {
+      "anthropic/claude-sonnet-5": { "in": 2.00, "out": 10.00 },
+      "deepseek/deepseek-chat": { "in": 0.27, "out": 1.10 }
+    }
+  },
+  "pricing": {
+    "currency": "USD",
+    "digital_quantity": 999,
+    "formats": {
+      "digital_download": { "base_price": 12.00, "margin_floor": 6.00 }
+    },
+    "etsy_fees": {
+      "listing_fee": 0.20,
+      "transaction_pct": 0.065,
+      "payment_pct": 0.03,
+      "payment_flat": 0.25
+    }
+  },
+  "image_order": ["single", "framed_poster", "canvas_edge", "acrylic", "gallery_wall", "digital_whatyougot"],
+  "image_cap": 10,
+  "etsy": {
+    "who_made": "i_did",
+    "when_made": "2020_2025",
+    "is_supply": false,
+    "taxonomy_id": 0,
+    "should_auto_renew": true,
+    "sellable_max_bytes": 20000000
+  }
+}
