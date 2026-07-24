@@ -118,10 +118,11 @@ existing ledger (M3) -- copy adds purpose:"listing_copy".
 Projections (rebuild_listings, drop/rebuild, user_id everywhere):
 - proj_listing_config(user_id, name PK, config_json) last-write-wins.
 - proj_listing_drafts(user_id, draft_id PK, landing_file_id, photo_id, provider,
-  format, sku_source, etsy_listing_id NULL, listing_type, title, tags_json,
-  description, price, currency, margin_floor, images_json, file_source,
-  state built|pushed|published|push_failed|publish_failed, created_at,
-  published_at NULL). .edited/.priced fold updates; gate3.published advances
+  format, sku_source, set_key, config_hash, etsy_listing_id NULL, listing_type,
+  title, tags_json, description, price, currency, margin_floor, images_json,
+  file_source, state built|pushed|published|push_failed|publish_failed,
+  created_at, published_at NULL). set_key + config_hash carry idempotency
+  lineage (amended post-slice-1 review 2026-07-14). .edited/.priced fold updates; gate3.published advances
   state.
 
 Idempotency: draft_id = sha256(landing_file_id | config_hash | set_key)
