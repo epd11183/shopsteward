@@ -56,6 +56,19 @@ phrase verbatim more than twice.
    the configured AI-disclosure line verbatim (mockups.json
    listing_copy.ai_disclosure_line). Never omit.
 
+## Etsy search rules (distilled from Etsy's own search guide, Aug 2025)
+
+- Descriptions are search-indexed: the primary keyword phrases must appear
+  naturally within the hook paragraph, not only in title/tags.
+- Exact-match phrasing ranks above related phrasing — write the phrases a
+  buyer would actually type, verbatim, in title and tags.
+- Tags must not duplicate the listing's category or attribute terms
+  standalone (categories/attributes already act as tags); fold such words
+  into longer phrases instead ("faux fur accent rug", not "faux fur").
+- Tag test: if nobody would type it into a search box, it is not a tag.
+- Cover the three axes across the 13 tags: what it is, how it's
+  made/looks, who/where it's for.
+
 ## Hard rules
 
 - Never claim awards, locations, or capture details not provided in the

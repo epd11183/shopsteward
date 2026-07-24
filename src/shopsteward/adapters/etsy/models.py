@@ -51,3 +51,55 @@ class EtsyReceipt(BaseModel):
     @property
     def total_usd(self) -> float:
         return self.grandtotal.as_float
+
+
+# --- write-path models (M5a, PRD §13 decision 41) --------------------------
+
+
+class EtsyDraftSpec(BaseModel):
+    """Input to create_draft_listing (POST .../listings, form-urlencoded --
+    Etsy's OpenAPI spec, not JSON). Digital listings only: type="download",
+    no shipping profile. `price` is a plain decimal per the real request
+    schema (the Money{amount,divisor,currency_code} shape only appears in
+    *responses*, e.g. EtsyListing.price). taxonomy_id is doc-derived and
+    "verified at fixture-recording" per the design; who_made/when_made are
+    confirmed-valid enum members (Etsy OpenAPI spec)."""
+
+    quantity: int
+    title: str
+    description: str
+    price: float
+    who_made: str
+    when_made: str
+    taxonomy_id: int
+    type: str = "download"
+    is_supply: bool = False
+    tags: list[str] = Field(default_factory=list)
+    should_auto_renew: bool = True
+
+
+class EtsyListingRef(BaseModel):
+    listing_id: int
+    state: str
+
+
+class EtsyImageRef(BaseModel):
+    listing_image_id: int
+    rank: int
+
+
+class EtsyFileRef(BaseModel):
+    listing_file_id: int
+    rank: int | None = None
+
+
+class EtsyListingUpdate(BaseModel):
+    """Draft-field updates only (PATCH .../listings/{id}, form-urlencoded).
+    Etsy's real updateListing schema has no `price` field -- price is only
+    set at create_draft_listing time; a later price change is a M5a slice-4
+    concern (not modeled here). state is never a field here either -- the
+    only way to flip state=active is publish_listing (PRD §13 decision 41)."""
+
+    title: str | None = None
+    description: str | None = None
+    tags: list[str] | None = None

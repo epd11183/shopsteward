@@ -3,10 +3,31 @@ refuses live sync until the operator approves the smoke test (PRD §8.4)."""
 
 import httpx
 
-from shopsteward.adapters.etsy.auth import api_key_header
-from shopsteward.adapters.etsy.models import EtsyListing, EtsyReceipt, EtsyShop
+from shopsteward.adapters.etsy.auth import EtsyTokenAuth, EtsyTokenStore, api_key_header
+from shopsteward.adapters.etsy.interface import EtsyWriteError
+from shopsteward.adapters.etsy.models import (
+    EtsyDraftSpec,
+    EtsyFileRef,
+    EtsyImageRef,
+    EtsyListing,
+    EtsyListingRef,
+    EtsyListingUpdate,
+    EtsyReceipt,
+    EtsyShop,
+)
 
 BASE = "https://openapi.etsy.com/v3/application"
+
+
+def _safe_error(resp: httpx.Response) -> str | None:
+    try:
+        body = resp.json()
+    except ValueError:
+        return None
+    if isinstance(body, dict):
+        error = body.get("error")
+        return error if isinstance(error, str) else None
+    return None
 
 
 class LiveEtsyAdapter:
@@ -46,3 +67,83 @@ class LiveEtsyAdapter:
         params: dict[str, int] = {"min_created": min_created} if min_created is not None else {}
         rows = self._paginate(f"/shops/{self._shop_id}/receipts", **params)
         return [EtsyReceipt.model_validate(r) for r in rows]
+
+
+class LiveEtsyWriteAdapter:
+    """Live Etsy Open API v3 write client (PRD §13 decision 41). A separate
+    class from LiveEtsyAdapter -- the read path (M1) and its fixtures stay
+    untouched, and the write path is wired to EtsyTokenAuth (auto-refreshing)
+    rather than a bare access token. NOT wired into any default path; live
+    use is triple-gated by pipeline.live_gate.live_etsy_write_open()."""
+
+    def __init__(self, api_key: str, shop_id: int, token_store: EtsyTokenStore):
+        self._shop_id = shop_id
+        self._client = httpx.Client(
+            auth=EtsyTokenAuth(token_store, api_key),
+            headers={"x-api-key": api_key_header(api_key)},
+            timeout=30.0,
+        )
+
+    def _request(self, method: str, path: str, **kwargs: object) -> dict:
+        resp = self._client.request(method, f"{BASE}{path}", **kwargs)
+        if resp.status_code >= 400:
+            raise EtsyWriteError(resp.status_code, _safe_error(resp))
+        return resp.json()
+
+    def create_draft_listing(self, spec: EtsyDraftSpec) -> EtsyListingRef:
+        # createDraftListing is application/x-www-form-urlencoded, not JSON
+        # (Etsy OpenAPI spec) -- there is no `state` request field at all,
+        # the endpoint inherently creates drafts. httpx encodes list values
+        # (tags) as repeated keys and bools as lowercase "true"/"false".
+        body = self._request("POST", f"/shops/{self._shop_id}/listings", data=spec.model_dump())
+        ref = EtsyListingRef(listing_id=body["listing_id"], state=body.get("state", "draft"))
+        if ref.state != "draft":
+            # Never trust that blindly -- write-safety invariant (PRD §13
+            # decision 41).
+            raise EtsyWriteError(
+                500, f"createDraftListing returned state={ref.state!r}, expected draft"
+            )
+        return ref
+
+    def upload_listing_image(self, listing_id: int, image: bytes, *, rank: int) -> EtsyImageRef:
+        body = self._request(
+            "POST",
+            f"/shops/{self._shop_id}/listings/{listing_id}/images",
+            data={"rank": rank},
+            files={"image": ("image.jpg", image, "image/jpeg")},
+        )
+        return EtsyImageRef(listing_image_id=body["listing_image_id"], rank=body.get("rank", rank))
+
+    def upload_listing_file(
+        self, listing_id: int, file: bytes, *, name: str, rank: int
+    ) -> EtsyFileRef:
+        body = self._request(
+            "POST",
+            f"/shops/{self._shop_id}/listings/{listing_id}/files",
+            data={"name": name, "rank": rank},
+            files={"file": (name, file, "application/octet-stream")},
+        )
+        return EtsyFileRef(listing_file_id=body["listing_file_id"], rank=body.get("rank"))
+
+    def update_listing(self, listing_id: int, fields: EtsyListingUpdate) -> EtsyListing:
+        # updateListing is also form-urlencoded (Etsy OpenAPI spec), not JSON.
+        body = self._request(
+            "PATCH",
+            f"/shops/{self._shop_id}/listings/{listing_id}",
+            data=fields.model_dump(exclude_none=True),
+        )
+        return EtsyListing.model_validate(body)
+
+    def publish_listing(self, listing_id: int) -> EtsyListing:
+        # The sole caller anywhere in this codebase is the Gate 3 endpoint
+        # (M5a slice 4, PRD §13 decision 41). state is the only field this
+        # endpoint accepts for publishing (enum: active|inactive).
+        body = self._request(
+            "PATCH", f"/shops/{self._shop_id}/listings/{listing_id}", data={"state": "active"}
+        )
+        return EtsyListing.model_validate(body)
+
+    def delete_listing(self, listing_id: int) -> None:
+        resp = self._client.delete(f"{BASE}/shops/{self._shop_id}/listings/{listing_id}")
+        if resp.status_code >= 400:
+            raise EtsyWriteError(resp.status_code, _safe_error(resp))
