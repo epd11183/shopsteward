@@ -52,6 +52,31 @@ def live_copy_error() -> str:
     )
 
 
+def live_etsy_read_open() -> bool:
+    """True iff SHOPSTEWARD_LIVE_ETSY_READ=1, ETSY_API_KEY is set, and Etsy
+    tokens are on disk with the listings_r scope (read analogue of
+    live_etsy_write_open, PRD §8.4 -- M1 live sync). Does not check
+    shop_id -- that mirrors live_etsy_write_open's contract and is validated
+    at adapter-construction time instead."""
+    if os.environ.get("SHOPSTEWARD_LIVE_ETSY_READ") != "1":
+        return False
+    if not os.environ.get("ETSY_API_KEY"):
+        return False
+
+    from shopsteward.adapters.etsy.auth import EtsyTokenStore
+
+    tokens = EtsyTokenStore().load()
+    return tokens is not None and "listings_r" in tokens.scopes
+
+
+def live_etsy_read_error() -> str:
+    return (
+        "Live Etsy read sync is gated on operator approval (PRD §8.4): set "
+        "SHOPSTEWARD_LIVE_ETSY_READ=1 and ETSY_API_KEY, run `shopsteward etsy "
+        "auth` with the listings_r scope, then re-run with --live."
+    )
+
+
 def live_etsy_write_open() -> bool:
     """True iff SHOPSTEWARD_LIVE_ETSY_WRITE=1, ETSY_API_KEY is set, and Etsy
     tokens are on disk with the listings_w scope (PRD §13 decision 41). The

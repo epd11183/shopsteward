@@ -6,6 +6,8 @@ from shopsteward.adapters.etsy.auth import EtsyTokens, EtsyTokenStore
 from shopsteward.pipeline.live_gate import (
     live_copy_error,
     live_copy_open,
+    live_etsy_read_error,
+    live_etsy_read_open,
     live_etsy_write_error,
     live_etsy_write_open,
     live_vision_error,
@@ -140,3 +142,52 @@ def test_live_etsy_write_error_names_env_var_and_scope() -> None:
     message = live_etsy_write_error()
     assert "SHOPSTEWARD_LIVE_ETSY_WRITE" in message
     assert "listings_w" in message
+
+
+def _clear_etsy_read(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("SHOPSTEWARD_LIVE_ETSY_READ", raising=False)
+    monkeypatch.delenv("ETSY_API_KEY", raising=False)
+    monkeypatch.setenv("SHOPSTEWARD_ETSY_TOKENS", str(tmp_path / "tokens.json"))
+
+
+def test_live_etsy_read_closed_when_flag_unset(monkeypatch, tmp_path) -> None:
+    _clear_etsy_read(monkeypatch, tmp_path)
+    monkeypatch.setenv("ETSY_API_KEY", "keystr")
+    EtsyTokenStore(tmp_path / "tokens.json").save(_tokens())
+    assert live_etsy_read_open() is False
+
+
+def test_live_etsy_read_closed_when_no_tokens(monkeypatch, tmp_path) -> None:
+    _clear_etsy_read(monkeypatch, tmp_path)
+    monkeypatch.setenv("SHOPSTEWARD_LIVE_ETSY_READ", "1")
+    monkeypatch.setenv("ETSY_API_KEY", "keystr")
+    assert live_etsy_read_open() is False
+
+
+def test_live_etsy_read_closed_when_scope_missing(monkeypatch, tmp_path) -> None:
+    _clear_etsy_read(monkeypatch, tmp_path)
+    monkeypatch.setenv("SHOPSTEWARD_LIVE_ETSY_READ", "1")
+    monkeypatch.setenv("ETSY_API_KEY", "keystr")
+    EtsyTokenStore(tmp_path / "tokens.json").save(_tokens(scopes=["listings_w"]))
+    assert live_etsy_read_open() is False
+
+
+def test_live_etsy_read_closed_when_api_key_missing(monkeypatch, tmp_path) -> None:
+    _clear_etsy_read(monkeypatch, tmp_path)
+    monkeypatch.setenv("SHOPSTEWARD_LIVE_ETSY_READ", "1")
+    EtsyTokenStore(tmp_path / "tokens.json").save(_tokens(scopes=["listings_r"]))
+    assert live_etsy_read_open() is False
+
+
+def test_live_etsy_read_open_when_flag_key_and_scope_present(monkeypatch, tmp_path) -> None:
+    _clear_etsy_read(monkeypatch, tmp_path)
+    monkeypatch.setenv("SHOPSTEWARD_LIVE_ETSY_READ", "1")
+    monkeypatch.setenv("ETSY_API_KEY", "keystr")
+    EtsyTokenStore(tmp_path / "tokens.json").save(_tokens(scopes=["listings_r"]))
+    assert live_etsy_read_open() is True
+
+
+def test_live_etsy_read_error_names_env_var_and_scope() -> None:
+    message = live_etsy_read_error()
+    assert "SHOPSTEWARD_LIVE_ETSY_READ" in message
+    assert "listings_r" in message

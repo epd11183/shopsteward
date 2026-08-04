@@ -2,10 +2,13 @@
 
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 from dotenv import load_dotenv
+
+if TYPE_CHECKING:
+    from shopsteward.adapters.etsy.live import LiveEtsyAdapter
 
 from shopsteward.editing.cli import edit_app
 from shopsteward.etsy_cli import etsy_app
@@ -166,29 +169,80 @@ def ingest(
         conn.close()
 
 
+def _build_live_etsy_adapter() -> "LiveEtsyAdapter":
+    """Construct LiveEtsyAdapter from ETSY_API_KEY + on-disk tokens
+    (build_etsy_write_adapter precedent, pipeline/listings/push.py). Only
+    called after live_etsy_read_open() has already confirmed the
+    flag/env/scope -- this fills in the one thing that check doesn't cover:
+    shop_id."""
+    import os
+
+    from shopsteward.adapters.etsy.auth import EtsyTokenStore
+    from shopsteward.adapters.etsy.live import LiveEtsyAdapter
+
+    api_key = os.environ.get("ETSY_API_KEY")
+    if not api_key:
+        raise RuntimeError("ETSY_API_KEY is not set; live Etsy reads need it.")
+    store = EtsyTokenStore()
+    tokens = store.load()
+    if tokens is None or tokens.shop_id is None:
+        raise RuntimeError("No Etsy tokens/shop on disk; run `shopsteward etsy auth` first.")
+    access_token = store.get_access_token(api_key)
+    return LiveEtsyAdapter(api_key=api_key, shop_id=tokens.shop_id, access_token=access_token)
+
+
 @app.command()
 def sync(
     fixtures: Annotated[
         Path | None, typer.Option(help="Fixture dir (default source until live approved)")
     ] = None,
+    live: Annotated[
+        bool,
+        typer.Option(
+            "--live",
+            help="Pull from the real Etsy API, read-only (mutually exclusive with --fixtures)",
+        ),
+    ] = False,
 ) -> None:
-    """Pull Etsy data into the event store and rebuild projections."""
+    """Pull Etsy data into the event store and rebuild projections.
+
+    Read-only: get_shop, list_listings, list_receipts -- nothing is ever
+    written back to Etsy from this command. --live requires operator
+    approval per the triple gate (pipeline.live_gate.live_etsy_read_open)."""
     from shopsteward.adapters.etsy.fake import FixtureEtsyAdapter
     from shopsteward.core.db import connect, migrate
     from shopsteward.core.projections import rebuild
     from shopsteward.core.sync import sync_etsy
+    from shopsteward.pipeline.live_gate import live_etsy_read_error, live_etsy_read_open
     from shopsteward.settings import DEFAULT_USER_ID, db_path
 
-    if fixtures is None:
+    if fixtures is not None and live:
+        typer.secho("Pass --fixtures or --live, not both.", fg="red")
+        raise typer.Exit(1)
+    if fixtures is None and not live:
         typer.secho(
-            "Live Etsy sync is gated on operator approval (PRD §8.4); pass --fixtures.",
+            "Live Etsy sync is gated on operator approval (PRD §8.4); pass --fixtures or --live.",
             fg="red",
         )
         raise typer.Exit(1)
+    if live and not live_etsy_read_open():
+        typer.secho(live_etsy_read_error(), fg="red")
+        raise typer.Exit(1)
+
+    adapter = _build_live_etsy_adapter() if live else FixtureEtsyAdapter(fixtures)
+
     db = db_path()
     db.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(db)
     migrate(conn)
-    result = sync_etsy(conn, FixtureEtsyAdapter(fixtures), user_id=DEFAULT_USER_ID)
+    result = sync_etsy(conn, adapter, user_id=DEFAULT_USER_ID)
     rebuild(conn)
+    if live:
+        typer.secho(
+            "LIVE Etsy pull (read-only) -- fetched from the real API, not fixtures.", fg="yellow"
+        )
     typer.echo(f"synced: {result.model_dump()}")
+    typer.echo(
+        f"events appended: {result.shops + result.listings + result.receipts} "
+        f"(shop={result.shops}, listings={result.listings}, receipts={result.receipts})"
+    )
