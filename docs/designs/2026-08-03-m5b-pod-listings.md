@@ -89,6 +89,40 @@ vendor of the three whose API cannot create an Etsy listing.
 - `PodVariantSpec.placement` and `PodCatalogVariant.placement` — Printful-only
   fields, confirmed dead by review
 
+**PRINTFUL: CLOSED BY ENUMERATION 2026-08-04. Do not research this a third time.**
+Printful's own official Postman collection
+(`developers.printful.com/docs/postman/printful_postman_collection.json`) lists
+**89 endpoints across v1 and v2 and contains ZERO product-creation endpoints.**
+Every write is fulfillment: `/orders`, `/v2/orders`, `/order-items`, `/files`,
+`/mockup-generator/create-task`, `/shipping/rates`, `/webhooks`,
+`/approval-sheets`. Product templates expose **only DELETE**. The
+`POST /store/products` the prose docs describe does not appear in the collection
+at all, and the docs restrict it to a "Manual orders / API platform" store whose
+products "do not appear in external stores like Etsy" regardless.
+
+**Printful's API is an order-fulfilment API, not a catalogue API.** That single
+sentence explains every dead end: no product creation, no template creation, no
+listing creation, and no push to a connected store.
+
+Consequence for the three canvas options (the operator's only proven physical
+product, 77% of revenue from 2 of 7 orders):
+
+- **A — rebuild canvas in Gelato.** Runs on the merged M5b machinery, zero new
+  architecture, ~15 min of operator time. **Recommended.** Open question is
+  whether Gelato's canvas matches the Printful canvas that actually sold.
+- **B — Printful manual + adopt.** Operator designs and pushes in the dashboard
+  (2–3 min/listing); ShopSteward adopts the Etsy draft and enriches it. Costs
+  the adopt slice that was cut in §0a.
+- **C — ShopSteward owns fulfilment.** *Simpler than first assessed:* it needs
+  no Printful product at all, because `POST /orders` accepts catalogue variant
+  ids and a print-file URL directly. We create the Etsy listing (M5a), then post
+  an order per sale. Fully automated, supplier-agnostic, and it removes the
+  platform-connection dependency entirely — but it makes us the order router
+  (detect sale, map variant, create order, return tracking, catch the
+  buyer-paid-nothing-shipped case). A milestone of work and a new risk class to
+  protect a supplier choice on two sales. Revisit if canvas volume makes
+  supplier choice a margin decision.
+
 **Second provider: open, and Printful is not the candidate.** Printify exposes
 `POST /v1/shops/{shop_id}/products.json` plus a publish endpoint with a
 documented 200-per-30-minutes publish rate limit — but it *also* exposes
