@@ -10,8 +10,17 @@ from shopsteward.pipeline.live_gate import (
     live_etsy_read_open,
     live_etsy_write_error,
     live_etsy_write_open,
+    live_printfile_error,
+    live_printfile_open,
     live_vision_error,
     live_vision_open,
+)
+
+_R2_VARS = (
+    "CLOUDFLARE_R2_KEY",
+    "CLOUDFLARE_R2_SECRET",
+    "CLOUDFLARE_R2_ENDPOINT",
+    "CLOUDFLARE_R2_BUCKET",
 )
 
 PROVIDER_KEYS = {"openrouter": "OPENROUTER_API_KEY", "gemini": "GEMINI_API_KEY"}
@@ -191,3 +200,51 @@ def test_live_etsy_read_error_names_env_var_and_scope() -> None:
     message = live_etsy_read_error()
     assert "SHOPSTEWARD_LIVE_ETSY_READ" in message
     assert "listings_r" in message
+
+
+def _clear_printfile(monkeypatch) -> None:
+    monkeypatch.delenv("SHOPSTEWARD_LIVE_PRINTFILE", raising=False)
+    for var in _R2_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_live_printfile_closed_when_flag_unset(monkeypatch) -> None:
+    _clear_printfile(monkeypatch)
+    for var in _R2_VARS:
+        monkeypatch.setenv(var, "x")
+    assert live_printfile_open() is False
+
+
+@pytest.mark.parametrize("missing_var", _R2_VARS)
+def test_live_printfile_closed_when_any_credential_missing(monkeypatch, missing_var) -> None:
+    _clear_printfile(monkeypatch)
+    monkeypatch.setenv("SHOPSTEWARD_LIVE_PRINTFILE", "1")
+    for var in _R2_VARS:
+        if var != missing_var:
+            monkeypatch.setenv(var, "x")
+    assert live_printfile_open() is False
+
+
+def test_live_printfile_open_when_flag_and_all_credentials_set(monkeypatch) -> None:
+    _clear_printfile(monkeypatch)
+    monkeypatch.setenv("SHOPSTEWARD_LIVE_PRINTFILE", "1")
+    for var in _R2_VARS:
+        monkeypatch.setenv(var, "x")
+    assert live_printfile_open() is True
+
+
+def test_live_printfile_never_opens_on_the_management_token_alone(monkeypatch) -> None:
+    # design §17 Q1a: CLOUDFLARE_R2_TOKEN is not a substitute for the four
+    # object credentials -- setting only it must never open the gate.
+    _clear_printfile(monkeypatch)
+    monkeypatch.setenv("SHOPSTEWARD_LIVE_PRINTFILE", "1")
+    monkeypatch.setenv("CLOUDFLARE_R2_TOKEN", "management-credential")
+    assert live_printfile_open() is False
+
+
+def test_live_printfile_error_names_all_four_env_vars() -> None:
+    message = live_printfile_error()
+    assert "SHOPSTEWARD_LIVE_PRINTFILE" in message
+    for var in _R2_VARS:
+        assert var in message
+    assert "CLOUDFLARE_R2_TOKEN" not in message

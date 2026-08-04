@@ -71,7 +71,8 @@
               "placeholder": "IMG_2485.jpg",
               "fit_method": "slice",
               "base_cost": 43.53,
-              "shipping_est": 0.0
+              "shipping_est": 0.0,
+              "retail_override": 149.0
             },
             {
               "format": "acrylic_20x30",
@@ -83,7 +84,8 @@
               "placeholder": "IMG_2485.jpg",
               "fit_method": "slice",
               "base_cost": 62.28,
-              "shipping_est": 0.0
+              "shipping_est": 0.0,
+              "retail_override": 179.0
             },
             {
               "format": "acrylic_24x36",
@@ -95,7 +97,8 @@
               "placeholder": "IMG_2485.jpg",
               "fit_method": "slice",
               "base_cost": 71.09,
-              "shipping_est": 0.0
+              "shipping_est": 0.0,
+              "retail_override": 229.0
             }
           ]
         },
@@ -112,7 +115,8 @@
               "placeholder": "A60A7073.jpg",
               "fit_method": "slice",
               "base_cost": 14.15,
-              "shipping_est": 0.0
+              "shipping_est": 0.0,
+              "retail_override": 39.0
             },
             {
               "format": "poster_16x24",
@@ -124,7 +128,8 @@
               "placeholder": "A60A7073.jpg",
               "fit_method": "slice",
               "base_cost": 15.59,
-              "shipping_est": 0.0
+              "shipping_est": 0.0,
+              "retail_override": 59.0
             }
           ]
         },
@@ -141,7 +146,8 @@
               "placeholder": "<OPERATOR>",
               "fit_method": "slice",
               "base_cost": 25.39,
-              "shipping_est": 0.0
+              "shipping_est": 0.0,
+              "retail_override": 89.0
             },
             {
               "format": "canvas_16x24_hor",
@@ -153,7 +159,8 @@
               "placeholder": "<OPERATOR>",
               "fit_method": "slice",
               "base_cost": 28.69,
-              "shipping_est": 0.0
+              "shipping_est": 0.0,
+              "retail_override": 109.0
             },
             {
               "format": "canvas_20x30_hor",
@@ -165,7 +172,8 @@
               "placeholder": "<OPERATOR>",
               "fit_method": "slice",
               "base_cost": 51.79,
-              "shipping_est": 0.0
+              "shipping_est": 0.0,
+              "retail_override": 169.0
             }
           ]
         },
@@ -182,7 +190,8 @@
               "placeholder": "<OPERATOR>",
               "fit_method": "slice",
               "base_cost": 25.39,
-              "shipping_est": 0.0
+              "shipping_est": 0.0,
+              "retail_override": 89.0
             },
             {
               "format": "canvas_16x24_ver",
@@ -194,7 +203,8 @@
               "placeholder": "<OPERATOR>",
               "fit_method": "slice",
               "base_cost": 28.69,
-              "shipping_est": 0.0
+              "shipping_est": 0.0,
+              "retail_override": 109.0
             },
             {
               "format": "canvas_20x30_ver",
@@ -206,7 +216,8 @@
               "placeholder": "<OPERATOR>",
               "fit_method": "slice",
               "base_cost": 51.79,
-              "shipping_est": 0.0
+              "shipping_est": 0.0,
+              "retail_override": 169.0
             }
           ]
         }

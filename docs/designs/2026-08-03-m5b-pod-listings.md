@@ -252,8 +252,23 @@ plus `push_failed` (from `pod_failed`), `publish_failed`, and one new value
 `pod_unverified`. Gate 3's existing `state IN ('pushed','push_failed',
 'publish_failed')` queue therefore picks POD drafts up unchanged.
 
-**Idempotency.** `draft_id = sha256(landing_file_id | pod_config_hash | provider
-| product_type)` — a distinct id space from digital drafts. Skip predicate:
+**Idempotency.** `draft_id = sha256(photo_key | pod_config_hash | provider |
+product_type)` where `photo_key = photo_id` when the landing file matched a
+known photo, else `landing_file_id` for an unmatched manual drop (decision 33).
+
+> **CORRECTED 2026-08-04 — this previously read `landing_file_id` and that was a
+> duplicate-listing defect in the SPEC, found during slice 2.** `scan_landing`
+> writes **one row per FILE**, and the Gate 2 export preset produces BOTH an
+> AdobeRGB TIFF master and an sRGB JPEG (M2b §17 Q13). One photograph therefore
+> lands as two rows sharing `photo_id` and `base_name` with different
+> `file_id`s — yielding two `draft_id`s, two provider products, and **two live
+> Etsy listings of the same photograph at $89–229 each**. Keying on `photo_id`
+> collapses them to one draft; `print_file.prefer` then selects which of the
+> sibling files supplies the print master. The digital path (M5a) shares the
+> same iteration and should be checked, but its blast radius is a duplicate
+> digital listing rather than a duplicate physical product.
+
+Skip predicate:
 
 - `provider_product_id IS NOT NULL` → never call `create_product` again, ever. A
   second create means a duplicate provider product *and* a duplicate Etsy listing.

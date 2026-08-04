@@ -129,6 +129,11 @@ class Economics(BaseModel):
     price: float
     etsy_fees: float
     net: float
+    # M5b addition (design §5): net / price, so a POD variant's margin
+    # against its floor is visible without recomputing it at every call
+    # site. Digital call sites get it for free too -- unit_cost defaults to
+    # 0.0 there, so it's just net/price, harmless to display.
+    margin_pct: float = 0.0
 
 
 _MAX_TAGS = 13

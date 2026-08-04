@@ -15,13 +15,27 @@ Orientation participates in matching (design §5 step 1, review fix-up B):
 aspect class, and every catalog variant declares which orientation(s) its
 template actually accepts, because a same-ratio landscape and portrait
 photo are NOT interchangeable once a `fit_method:"slice"` provider
-centre-crops the mismatch."""
+centre-crops the mismatch.
+
+Slice 2 (PRICING DECISION 2026-08-04, design §5): `PodCatalogVariant.
+retail_override` lets the operator pin a variant's retail price directly,
+bypassing the cost*markup solve entirely -- `enforce_floor` (pod/pricing.py)
+still asserts an override clears both margin floors, so a below-floor
+override fails loudly at build time rather than silently shipping a
+discount. `PodVariant` (the selection-output twin) carries the same field
+through so pod/build.py never has to re-open the catalog to find it.
+`PodDroppedVariant.format` (also new) records a per-VARIANT drop (a size
+dropped by DPI or price inside an otherwise-surviving product type) instead
+of only ever reporting the whole product type as one drop -- the
+carry-forward fix design §13 slice 2 flagged (a portrait 30x40 failing DPI
+while 16x20 shipped was previously invisible)."""
 
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
+    "PodBuildReport",
     "PodCatalogVariant",
     "PodConfig",
     "PodDropReason",
@@ -73,6 +87,12 @@ class PodCatalogVariant(BaseModel):
     fit_method: str | None = None
     base_cost: float
     shipping_est: float
+    # PRICING DECISION 2026-08-04 (design §5): when set, this IS the retail
+    # price -- the cost*markup/floor solve (pod/pricing.py::retail_price) is
+    # bypassed entirely. enforce_floor still runs against it, so a value the
+    # operator sets below either margin floor is a config error, not a
+    # silent discount.
+    retail_override: float | None = None
 
 
 class PodProductCatalog(BaseModel):
@@ -154,20 +174,44 @@ class PodVariant(BaseModel):
     template_id: str | None
     base_cost: float
     shipping_est: float
+    # Carried through from PodCatalogVariant so pod/build.py's pricing pass
+    # doesn't have to re-open the catalog to find it (design §5, PRICING
+    # DECISION 2026-08-04).
+    retail_override: float | None = None
 
 
 class PodDroppedVariant(BaseModel):
     """product_type is None only for a photo-wide drop (no candidate product
     type was ever considered -- an aspect miss, or an aspect class with an
     empty/missing formats_by_aspect entry); otherwise it names the dropped
-    candidate product type. "above_max_price" is slice 2's (pricing) --
-    defined here so the event payload's reason enum (design §3) is stable,
-    but select_variants() never produces it. "orientation" (aspect class
-    matched, but no same-aspect variant accepts this photo's orientation),
-    "no_route" (no routing rule matched this product_type+region) and
-    "no_variant" (a rule matched, but no routed provider stocks a
-    same-aspect-and-orientation variant) imply different operator repairs,
-    so they are reported separately."""
+    candidate product type. "orientation" (aspect class matched, but no
+    same-aspect variant accepts this photo's orientation), "no_route" (no
+    routing rule matched this product_type+region) and "no_variant" (a rule
+    matched, but no routed provider stocks a same-aspect-and-orientation
+    variant) imply different operator repairs, so they are reported
+    separately.
+
+    `format` (slice 2, carry-forward fix design §13 slice 2 flagged) names
+    the SPECIFIC size dropped inside an otherwise-surviving product type --
+    e.g. a 30x40 that failed DPI, or a size priced above max_price
+    ("above_max_price", reachable for the first time once pod/build.py
+    actually prices a variant), while its siblings still shipped. It stays
+    None for a whole-product-type drop (every reason below "dpi" in
+    _REASON_PRECEDENCE can only ever be whole-product-type, since there was
+    no specific variant to point at)."""
 
     product_type: str | None
+    format: str | None = None
     reason: PodDropReason
+
+
+class PodBuildReport(BaseModel):
+    """`shopsteward pod build`'s report (BuildReport, listings/models.py,
+    twin). Slice 2 stops at print_file_hosted -- no create/link/enrich
+    counters until slice 3/4."""
+
+    drafts_built: int = 0
+    variants_priced: int = 0
+    print_files_hosted: int = 0
+    pod_skipped: int = 0
+    skipped_idempotent: int = 0

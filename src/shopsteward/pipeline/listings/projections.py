@@ -33,6 +33,21 @@ different event namespace (podconfig.*) into a different table
 proj_listing_drafts. A pod-aware caller (pod/build.py, slice 2+) must
 invoke rebuild_listings() and rebuild_pod_config() explicitly, side by
 side -- there is no combined entrypoint.
+
+M5b slice 2 (design §3) extends proj_listing_drafts IN PLACE rather than
+adding a pod-specific table: pod_config_hash, provider_product_id,
+pod_status, variants_json, unit_cost, print_file_sha256, print_file_key.
+POD drafts reuse the SAME listingdraft.* namespace (decision 37/44) --
+listingdraft.created carries pod_config_hash only when it's a POD draft
+(NULL for digital); listingdraft.priced is reused+extended: a payload
+carrying "variants" is the POD shape (unit_cost/variants_json), anything
+else is M5a's digital shape (price/margin_floor), same event type, two
+payload shapes distinguished by key presence -- exactly like this file's
+existing "reused, extended" precedent for other event types. variants_json
+is fold-MERGED by `format` across .variants_selected -> .priced (mirrors
+images_attached's merge-by-rank), so a variant's aspect/dpi (selection
+stage) and its base_cost/retail_price/net/margin_pct (pricing stage) end up
+in the same row instead of the second event's write clobbering the first's.
 """
 
 import json
@@ -56,6 +71,9 @@ CREATE TABLE proj_listing_drafts (
     price REAL, currency TEXT, margin_floor REAL,
     images_json TEXT NOT NULL DEFAULT '[]', file_source TEXT,
     state TEXT NOT NULL, created_at TEXT, published_at TEXT,
+    pod_config_hash TEXT, provider_product_id TEXT, pod_status TEXT,
+    variants_json TEXT NOT NULL DEFAULT '[]', unit_cost REAL,
+    print_file_sha256 TEXT, print_file_key TEXT,
     PRIMARY KEY (user_id, draft_id)
 );
 """
@@ -79,15 +97,18 @@ def rebuild_listings(conn: sqlite3.Connection) -> None:
             # pushed) -- ON CONFLICT refreshes only the "created" fields and
             # never resets etsy_listing_id/state/copy/price/images, or a
             # force rebuild of an already-pushed draft would look unpushed
-            # again and get double-pushed.
+            # again and get double-pushed. pod_config_hash is NULL for a
+            # digital draft (M5a never sets it) and the POD config's hash
+            # for a physical one (M5b, design §3).
             conn.execute(
                 "INSERT INTO proj_listing_drafts VALUES "
-                "(?,?,?,?,?,?,?,?,?,?,NULL,NULL,'[]',NULL,NULL,NULL,NULL,'[]',NULL,'built',?,NULL) "
+                "(?,?,?,?,?,?,?,?,?,?,NULL,NULL,'[]',NULL,NULL,NULL,NULL,'[]',NULL,'built',?,NULL,"
+                "?,NULL,NULL,'[]',NULL,NULL,NULL) "
                 "ON CONFLICT(user_id, draft_id) DO UPDATE SET "
                 "landing_file_id=excluded.landing_file_id, photo_id=excluded.photo_id, "
                 "set_key=excluded.set_key, provider=excluded.provider, format=excluded.format, "
                 "sku_source=excluded.sku_source, listing_type=excluded.listing_type, "
-                "config_hash=excluded.config_hash",
+                "config_hash=excluded.config_hash, pod_config_hash=excluded.pod_config_hash",
                 (
                     e.user_id,
                     p["draft_id"],
@@ -100,7 +121,14 @@ def rebuild_listings(conn: sqlite3.Connection) -> None:
                     p["listing_type"],
                     p["config_hash"],
                     e.created_at,
+                    p.get("pod_config_hash"),
                 ),
+            )
+
+        elif e.type == "listingdraft.variants_selected":
+            conn.execute(
+                "UPDATE proj_listing_drafts SET variants_json=? WHERE user_id=? AND draft_id=?",
+                (json.dumps(p["variants"]), e.user_id, p["draft_id"]),
             )
 
         elif e.type == "listingdraft.images_selected":
@@ -123,10 +151,52 @@ def rebuild_listings(conn: sqlite3.Connection) -> None:
             )
 
         elif e.type == "listingdraft.priced":
+            if "variants" in p:
+                # POD shape (design §3): merge each priced variant's extra
+                # fields (base_cost/shipping_est/retail_price/net/margin_pct)
+                # into the SAME by-format dict variants_selected already
+                # wrote (aspect/size/variant_key/dpi) -- images_attached's
+                # merge-by-rank precedent -- instead of clobbering it.
+                row = conn.execute(
+                    "SELECT variants_json FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
+                    (e.user_id, p["draft_id"]),
+                ).fetchone()
+                by_format = (
+                    {v["format"]: v for v in json.loads(row["variants_json"] or "[]")}
+                    if row is not None
+                    else {}
+                )
+                for v in p["variants"]:
+                    by_format.setdefault(v["format"], {"format": v["format"]}).update(v)
+                conn.execute(
+                    "UPDATE proj_listing_drafts SET unit_cost=?, variants_json=?, currency=? "
+                    "WHERE user_id=? AND draft_id=?",
+                    (
+                        p["unit_cost"],
+                        json.dumps(list(by_format.values())),
+                        p["currency"],
+                        e.user_id,
+                        p["draft_id"],
+                    ),
+                )
+            else:
+                conn.execute(
+                    "UPDATE proj_listing_drafts SET price=?, currency=?, margin_floor=? "
+                    "WHERE user_id=? AND draft_id=?",
+                    (p["price"], p["currency"], p["margin_floor"], e.user_id, p["draft_id"]),
+                )
+
+        elif e.type == "listingdraft.print_file_prepared":
             conn.execute(
-                "UPDATE proj_listing_drafts SET price=?, currency=?, margin_floor=? "
+                "UPDATE proj_listing_drafts SET print_file_sha256=? WHERE user_id=? AND draft_id=?",
+                (p["sha256"], e.user_id, p["draft_id"]),
+            )
+
+        elif e.type == "listingdraft.print_file_hosted":
+            conn.execute(
+                "UPDATE proj_listing_drafts SET print_file_key=?, print_file_sha256=? "
                 "WHERE user_id=? AND draft_id=?",
-                (p["price"], p["currency"], p["margin_floor"], e.user_id, p["draft_id"]),
+                (p["file_key"], p["sha256"], e.user_id, p["draft_id"]),
             )
 
         elif e.type == "listingdraft.pushed_to_etsy":
