@@ -50,6 +50,8 @@ forbidden_modules = [
   "shopsteward.adapters.instagram",
   "shopsteward.adapters.vision",
   "shopsteward.adapters.copy",
+  "shopsteward.adapters.pod",
+  "shopsteward.adapters.printfile",
   "shopsteward.pipeline",
 ]
 
@@ -58,7 +60,8 @@ name = "pipeline is imported by no lower layer"
 type = "forbidden"
 source_modules = ["shopsteward.core", "shopsteward.editing",
                   "shopsteward.adapters.lightroom", "shopsteward.adapters.vision",
-                  "shopsteward.adapters.copy"]
+                  "shopsteward.adapters.copy", "shopsteward.adapters.pod",
+                  "shopsteward.adapters.printfile"]
 forbidden_modules = ["shopsteward.pipeline"]
 
 [[tool.importlinter.contracts]]

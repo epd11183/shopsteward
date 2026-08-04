@@ -25,6 +25,14 @@ listingdraft.images_attached is emitted once PER image (reviewer fix-up,
 M5a slice 4): the fold merges each event's image (by rank) into the
 existing images_json instead of assuming one event covers the whole set,
 so a resumed/retried push's later events don't clobber earlier ones.
+
+M5b note: pod/projections.py's rebuild_pod_config() is a SEPARATE
+entrypoint, not called from here and not calling here. It folds a
+different event namespace (podconfig.*) into a different table
+(proj_pod_config) and has no dependency on proj_listing_config/
+proj_listing_drafts. A pod-aware caller (pod/build.py, slice 2+) must
+invoke rebuild_listings() and rebuild_pod_config() explicitly, side by
+side -- there is no combined entrypoint.
 """
 
 import json

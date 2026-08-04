@@ -1,0 +1,72 @@
+{
+  "schema": "shopsteward.pod/1",
+  "name": "default",
+  "enabled": true,
+  "region": "US",
+  "currency": "USD",
+  "print_file": {
+    "prefer": "tiff_master",
+    "max_bytes": 100000000,
+    "min_dpi": 150,
+    "aspect_tolerance": 0.02,
+    "host_ttl_seconds": 86400
+  },
+  "aspects": { "4:5": 1.25, "2:3": 1.5, "1:1": 1.0 },
+  "formats_by_aspect": {
+    "4:5": ["framed_poster", "poster"],
+    "2:3": ["framed_poster", "poster", "canvas"],
+    "1:1": ["poster", "canvas"]
+  },
+  "routing": [
+    { "product_type": "framed_poster", "region": "US", "providers": ["gelato"] },
+    { "product_type": "poster", "region": "US", "providers": ["gelato"] },
+    { "product_type": "canvas", "region": "US", "providers": ["gelato"] }
+  ],
+  "catalog": {
+    "gelato": {
+      "store_id_env": "GELATO_STORE_ID",
+      "products": {
+        "framed_poster": {
+          "template_id": "<OPERATOR>",
+          "variants": [
+            {
+              "format": "framed_poster_16x20",
+              "size": "16x20in",
+              "aspect": "4:5",
+              "orientation": "landscape",
+              "long_edge_inches": 20,
+              "variant_key": "<OPERATOR>",
+              "placeholder": "ImageFront",
+              "fit_method": "slice",
+              "base_cost": 0.00,
+              "shipping_est": 0.00
+            }
+          ]
+        }
+      }
+    }
+  },
+  "costs_verified_on": "1970-01-01",
+  "cost_staleness_days": 90,
+  "pricing": {
+    "markup": 2.6,
+    "price_ending": 0.00,
+    "margin_floor_abs": 8.00,
+    "margin_floor_pct": 0.25,
+    "max_price": 250.00,
+    "shipping_included": true
+  },
+  "copy": {
+    "title_suffix": {
+      "framed_poster": " — Framed Fine Art Print",
+      "poster": " — Fine Art Print",
+      "canvas": " — Gallery Canvas"
+    },
+    "description_block": {
+      "framed_poster": "Printed and framed on demand…"
+    }
+  },
+  "images": { "max_ours": 5, "hard_cap": 10, "trim_provider_images": true },
+  "link_timeout_seconds": 180,
+  "link_poll_interval_seconds": 10
+}
