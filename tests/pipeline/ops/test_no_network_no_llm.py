@@ -1,0 +1,67 @@
+"""Structural + behavioural proof that M8a slice 1 makes zero network calls
+and zero llm.call events (task instructions; design §7's "the brief is SQL
+and a template, not a language model").
+
+Static: none of pipeline/ops's own source files import httpx, requests, or
+any adapters package -- there is no transport to call out over in the first
+place, so there is nothing to fake in a test.
+
+Behavioural: after seeding a synthetic shop and generating the full brief,
+the event log contains only the event types this slice is allowed to
+produce (etsy.*.observed from the fixture seed + opsconfig.seeded) -- no
+llm.call, no action.*, no capability.*."""
+
+import ast
+from pathlib import Path
+
+import pytest
+
+from shopsteward.core.db import connect, migrate
+from shopsteward.core.events import read_all
+from shopsteward.core.projections import rebuild as rebuild_core
+from shopsteward.pipeline.ops import brief as brief_module
+from shopsteward.pipeline.ops import config as ops_config
+from shopsteward.pipeline.ops.projections import rebuild_ops
+from tests.pipeline.ops.helpers import AS_OF, USER_ID, seed_two_year_shop
+
+_OPS_DIR = Path(brief_module.__file__).parent
+_FORBIDDEN_MODULES = ("httpx", "requests", "shopsteward.adapters")
+
+
+def _imported_modules(py_file: Path) -> set[str]:
+    tree = ast.parse(py_file.read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names.add(node.module)
+    return names
+
+
+@pytest.mark.parametrize(
+    "py_file", sorted(p for p in _OPS_DIR.glob("*.py") if p.name != "__pycache__")
+)
+def test_ops_module_imports_no_network_or_adapter_transport(py_file):
+    imported = _imported_modules(py_file)
+    for forbidden in _FORBIDDEN_MODULES:
+        assert not any(m == forbidden or m.startswith(forbidden + ".") for m in imported), (
+            f"{py_file.name} imports {forbidden!r} -- slice 1 must make zero network calls"
+        )
+
+
+def test_generating_the_brief_appends_no_llm_or_network_adjacent_events(tmp_path):
+    conn = connect(tmp_path / "t.db")
+    migrate(conn)
+    seed_two_year_shop(conn)
+    ops_config.seed(conn, USER_ID)
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cfg = ops_config.get_ops_config(conn, USER_ID)
+
+    brief_module.generate_brief(conn, USER_ID, cfg, as_of=AS_OF)
+
+    types = {e.type for e in read_all(conn)}
+    assert "llm.call" not in types
+    assert not any(t.startswith("action.") or t.startswith("capability.") for t in types)
+    assert types <= {"etsy.listing.observed", "etsy.sale.observed", "opsconfig.seeded"}
