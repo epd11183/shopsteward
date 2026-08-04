@@ -13,28 +13,34 @@ from shopsteward.adapters.etsy.models import EtsyDraftSpec, EtsyListingUpdate
 BASE = "https://openapi.etsy.com/v3/application"
 
 
+def _listing_row(listing_id: int, state: str) -> dict:
+    return {
+        "listing_id": listing_id,
+        "title": "T",
+        "state": state,
+        "quantity": 1,
+        "price": {"amount": 100, "divisor": 100, "currency_code": "USD"},
+    }
+
+
 @respx.mock
-def test_list_listings_paginates_and_parses() -> None:
-    respx.get(f"{BASE}/shops/100001/listings/active").mock(
+def test_list_listings_fetches_active_and_expired_and_parses() -> None:
+    # getListingsByShop (not findAllListingsActiveByShop) so expired
+    # listings -- invisible to the old active-only endpoint -- come back too.
+    respx.get(f"{BASE}/shops/100001/listings", params={"state": "active"}).mock(
         return_value=httpx.Response(
-            200,
-            json={
-                "count": 1,
-                "results": [
-                    {
-                        "listing_id": 111,
-                        "title": "T",
-                        "state": "active",
-                        "quantity": 1,
-                        "price": {"amount": 100, "divisor": 100, "currency_code": "USD"},
-                    }
-                ],
-            },
+            200, json={"count": 1, "results": [_listing_row(111, "active")]}
+        )
+    )
+    respx.get(f"{BASE}/shops/100001/listings", params={"state": "expired"}).mock(
+        return_value=httpx.Response(
+            200, json={"count": 1, "results": [_listing_row(222, "expired")]}
         )
     )
     adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
     listings = adapter.list_listings()
-    assert listings[0].listing_id == 111
+    assert {listing.listing_id for listing in listings} == {111, 222}
+    assert {listing.state for listing in listings} == {"active", "expired"}
     sent = respx.calls.last.request
     assert sent.headers["x-api-key"] == "k"
     assert sent.headers["authorization"] == "Bearer tok"
@@ -44,18 +50,14 @@ def test_list_listings_paginates_and_parses() -> None:
 def test_pagination_follows_count() -> None:
     def pager(request: httpx.Request) -> httpx.Response:
         offset = int(dict(request.url.params)["offset"])
-        row = {
-            "listing_id": offset + 1,
-            "title": "T",
-            "state": "active",
-            "quantity": 1,
-            "price": {"amount": 100, "divisor": 100, "currency_code": "USD"},
-        }
+        state = dict(request.url.params)["state"]
+        row = _listing_row(offset + 1, state)
         return httpx.Response(200, json={"count": 150, "results": [row]})
 
-    respx.get(f"{BASE}/shops/100001/listings/active").mock(side_effect=pager)
+    respx.get(f"{BASE}/shops/100001/listings").mock(side_effect=pager)
     adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
-    assert len(adapter.list_listings()) == 2  # count=150 -> offsets 0 and 100
+    # count=150 -> offsets 0 and 100, times 2 states (active, expired)
+    assert len(adapter.list_listings()) == 4
 
 
 # --- LiveEtsyWriteAdapter ---------------------------------------------------

@@ -1,5 +1,8 @@
-"""Live Etsy Open API v3 client. NOT wired into any default path — the CLI
-refuses live sync until the operator approves the smoke test (PRD §8.4)."""
+"""Live Etsy Open API v3 client. Read-only (get_shop/list_listings/
+list_receipts) is wired into `shopsteward sync --live`, triple-gated by
+pipeline.live_gate.live_etsy_read_open() (PRD §8.4, M1). LiveEtsyWriteAdapter
+below stays separately gated (live_etsy_write_open(), M5a) -- this class has
+no write methods at all, so the read path can never reach one."""
 
 import httpx
 
@@ -17,6 +20,7 @@ from shopsteward.adapters.etsy.models import (
 )
 
 BASE = "https://openapi.etsy.com/v3/application"
+_LISTING_STATES = ("active", "expired")
 
 
 def _safe_error(resp: httpx.Response) -> str | None:
@@ -60,7 +64,14 @@ class LiveEtsyAdapter:
         return EtsyShop.model_validate(self._get(f"/shops/{self._shop_id}"))
 
     def list_listings(self) -> list[EtsyListing]:
-        rows = self._paginate(f"/shops/{self._shop_id}/listings/active")
+        # getListingsByShop (not findAllListingsActiveByShop) so expired
+        # listings aren't invisible to a "what's dying" analysis -- same
+        # listings_r scope, just a `state` filter on the general listings
+        # endpoint instead of the active-only one. draft/sold_out are not
+        # fetched here; add states to _LISTING_STATES if that's ever needed.
+        rows: list[dict] = []
+        for state in _LISTING_STATES:
+            rows.extend(self._paginate(f"/shops/{self._shop_id}/listings", state=state))
         return [EtsyListing.model_validate(r) for r in rows]
 
     def list_receipts(self, min_created: int | None = None) -> list[EtsyReceipt]:
