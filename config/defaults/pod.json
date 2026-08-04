@@ -11,62 +11,135 @@
     "aspect_tolerance": 0.02,
     "host_ttl_seconds": 86400
   },
-  "aspects": { "4:5": 1.25, "2:3": 1.5, "1:1": 1.0 },
+  "aspects": {
+    "4:5": 1.25,
+    "2:3": 1.5,
+    "1:1": 1.0
+  },
   "formats_by_aspect": {
-    "4:5": ["framed_poster", "poster"],
-    "2:3": ["framed_poster", "poster", "canvas"],
-    "1:1": ["poster", "canvas"]
+    "2:3": [
+      "acrylic",
+      "poster"
+    ]
   },
   "routing": [
-    { "product_type": "framed_poster", "region": "US", "providers": ["gelato"] },
-    { "product_type": "poster", "region": "US", "providers": ["gelato"] },
-    { "product_type": "canvas", "region": "US", "providers": ["gelato"] }
+    {
+      "product_type": "acrylic",
+      "region": "US",
+      "providers": [
+        "gelato"
+      ]
+    },
+    {
+      "product_type": "poster",
+      "region": "US",
+      "providers": [
+        "gelato"
+      ]
+    }
   ],
   "catalog": {
     "gelato": {
       "store_id_env": "GELATO_STORE_ID",
       "products": {
-        "framed_poster": {
-          "template_id": "<OPERATOR>",
+        "acrylic": {
+          "template_id": "8052b1a7-8bbd-454d-8edc-5ca7341980db",
           "variants": [
             {
-              "format": "framed_poster_16x20",
-              "size": "16x20in",
-              "aspect": "4:5",
+              "format": "acrylic_16x24",
+              "size": "40x60 cm / 16x24\" - Horizontal",
+              "aspect": "2:3",
               "orientation": "landscape",
-              "long_edge_inches": 20,
-              "variant_key": "<OPERATOR>",
-              "placeholder": "ImageFront",
+              "long_edge_inches": 24,
+              "variant_key": "15433704-ab8b-4c08-a602-92fac45c0b08",
+              "placeholder": "IMG_2485.jpg",
               "fit_method": "slice",
-              "base_cost": 0.00,
-              "shipping_est": 0.00
+              "base_cost": 43.53,
+              "shipping_est": 0.0
+            },
+            {
+              "format": "acrylic_20x30",
+              "size": "50x75 cm / 20x30\" - Horizontal",
+              "aspect": "2:3",
+              "orientation": "landscape",
+              "long_edge_inches": 30,
+              "variant_key": "b2ffd9e5-c455-459d-bf4c-3a15b14e5e5a",
+              "placeholder": "IMG_2485.jpg",
+              "fit_method": "slice",
+              "base_cost": 62.28,
+              "shipping_est": 0.0
+            },
+            {
+              "format": "acrylic_24x36",
+              "size": "60x90 cm / 24x36\" - Horizontal",
+              "aspect": "2:3",
+              "orientation": "landscape",
+              "long_edge_inches": 36,
+              "variant_key": "32293098-c923-4392-ad9b-8bac2c3fceb6",
+              "placeholder": "IMG_2485.jpg",
+              "fit_method": "slice",
+              "base_cost": 71.09,
+              "shipping_est": 0.0
+            }
+          ]
+        },
+        "poster": {
+          "template_id": "58bafe28-7590-4bff-9817-3fb2cee0a316",
+          "variants": [
+            {
+              "format": "poster_12x18",
+              "size": "30x45 cm / 12x18\" - Horizontal",
+              "aspect": "2:3",
+              "orientation": "landscape",
+              "long_edge_inches": 18,
+              "variant_key": "7ca63ae6-3a66-42e2-9a66-23e143bbf381",
+              "placeholder": "A60A7073.jpg",
+              "fit_method": "slice",
+              "base_cost": 14.15,
+              "shipping_est": 0.0
+            },
+            {
+              "format": "poster_16x24",
+              "size": "40x60 cm / 16x24\" - Horizontal",
+              "aspect": "2:3",
+              "orientation": "landscape",
+              "long_edge_inches": 24,
+              "variant_key": "ee3ed280-7729-495e-b8ab-fb03a360754a",
+              "placeholder": "A60A7073.jpg",
+              "fit_method": "slice",
+              "base_cost": 15.59,
+              "shipping_est": 0.0
             }
           ]
         }
       }
     }
   },
-  "costs_verified_on": "1970-01-01",
+  "costs_verified_on": "2026-08-04",
   "cost_staleness_days": 90,
   "pricing": {
-    "markup": 2.6,
-    "price_ending": 0.00,
-    "margin_floor_abs": 8.00,
+    "markup": 3.0,
+    "price_ending": 0.0,
+    "margin_floor_abs": 8.0,
     "margin_floor_pct": 0.25,
-    "max_price": 250.00,
+    "max_price": 300.0,
     "shipping_included": true
   },
   "copy": {
     "title_suffix": {
-      "framed_poster": " — Framed Fine Art Print",
-      "poster": " — Fine Art Print",
-      "canvas": " — Gallery Canvas"
+      "acrylic": " Acrylic Print",
+      "poster": " Fine Art Poster"
     },
     "description_block": {
-      "framed_poster": "Printed and framed on demand…"
+      "acrylic": "Printed on 4mm acrylic with a glossy, glass-like finish and straight-cut corners. Hanging kit included. Made to order.",
+      "poster": "Printed on 200gsm (80lb) enhanced uncoated fine art paper. Made to order and shipped in protective packaging."
     }
   },
-  "images": { "max_ours": 5, "hard_cap": 10, "trim_provider_images": true },
+  "images": {
+    "max_ours": 5,
+    "hard_cap": 10,
+    "trim_provider_images": true
+  },
   "link_timeout_seconds": 180,
   "link_poll_interval_seconds": 10
 }

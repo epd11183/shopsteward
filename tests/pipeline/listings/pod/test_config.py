@@ -54,10 +54,25 @@ def test_get_pod_config_round_trips_after_rebuild(conn):
     rebuild_pod_config(conn)
     cfg = pod_config.get_pod_config(conn, USER_ID)
     assert cfg.name == "default"
-    assert cfg.pricing.markup == 2.6
-    assert cfg.catalog["gelato"].products["framed_poster"].variants[0].format == (
-        "framed_poster_16x20"
-    )
+    # Compare against the file rather than a literal: markup is operator tuning
+    # that changes with real supplier costs. The property under test is
+    # round-trip fidelity, not the value.
+    assert cfg.pricing.markup == pod_config.load_pod_config().pricing.markup
+    # Nested catalog structure survives the event -> projection -> model round
+    # trip. Compare shapes against the file, not hard-coded product names, so an
+    # operator catalog edit does not break an unrelated round-trip test.
+    from_file = pod_config.load_pod_config()
+    assert cfg.catalog.keys() == from_file.catalog.keys()
+    for provider, catalog_ in from_file.catalog.items():
+        assert cfg.catalog[provider].products.keys() == catalog_.products.keys()
+        for product_type, product in catalog_.products.items():
+            round_tripped = cfg.catalog[provider].products[product_type]
+            assert [v.format for v in round_tripped.variants] == [
+                v.format for v in product.variants
+            ]
+            assert [v.orientation for v in round_tripped.variants] == [
+                v.orientation for v in product.variants
+            ]
 
 
 def test_get_pod_config_missing_raises_keyerror(conn):

@@ -408,6 +408,38 @@ sites are unchanged (`unit_cost` defaults to 0). Gate 3 shows per-variant
 `{price, etsy_fees, unit_cost, net, margin_pct}` and a hero roll-up of the
 worst-margin variant.
 
+**PRICING DECISION 2026-08-04 (operator delegated pricing; slice 2 implements).**
+Cost-plus markup is the automatic **guard**, not the price setter. Add
+`retail_override: float | None` to `PodCatalogVariant`; when present it is the
+retail price, and `enforce_floor` still asserts it clears both margin floors
+(an override below the floor is a config error, not a silent discount). When
+absent, the closed-form markup/floor solve above applies unchanged.
+
+Shipped values and why:
+
+| Variant | Cost | Price | Rationale |
+|---|---|---|---|
+| acrylic_16x24 | 43.53 | **149** | operator's existing live price |
+| acrylic_20x30 | 62.28 | **179** | ditto |
+| acrylic_24x36 | 71.09 | **229** | ditto |
+| poster_12x18 | 14.15 | **39** | value ladder, not cost-plus |
+| poster_16x24 | 15.59 | **59** | ditto |
+
+*Acrylics:* ~100 live listings already carry these prices. Computed markup 3.0
+would set new listings at 131/187/213, so two customers would see different
+prices for the same product depending which listing they found. Shop-wide price
+consistency beats a marginally better price chosen without conversion data.
+
+*Posters — the reason the model needed the escape hatch:* Gelato's poster cost
+rises only **$1.44** (14.15 → 15.59) for **78% more print area**. Any markup
+produces near-identical prices ($42 vs $47), so the larger print always dominates
+and the small one never sells. Cost-plus assumes cost tracks perceived value;
+for this supplier's paper products it does not. Margins at the chosen prices:
+53% and 63% after Etsy fees.
+
+Revisit when M8a's brief supplies real conversion data — these are judgements,
+not measurements.
+
 **Stale costs eat margin silently.** `pod.json` carries `costs_verified_on` and
 `cost_staleness_days` (90); when the config date is older, `listingdraft.priced`
 records `cost_stale:true` and the Gate 3 card shows a warning chip. Three lines
@@ -820,7 +852,8 @@ path; none blocks slices 1–5 offline.
 | **9** | May enrichment **delete** provider-generated Etsy images to make room for our M4 mockups when the listing is at Etsy's 10-image cap? (`images.trim_provider_images`) | yes / no |
 | **10** | Does `deleteListingImage` need the Etsy `listings_d` scope (which M5a's `delete_listing` also implies)? Already consented, or is another `shopsteward etsy auth` round authorised? | already have / re-consent OK / no |
 | **11** | *Resolved from docs — Printful would be v1 sync-products; v2 has no product management. No action.* | — |
-| **12** | Do you already have Gelato **templates** created in the dashboard, or should the adapter use the non-template product-create path? | templates / non-template |
+| **12** | *RESOLVED 2026-08-04 by a read-only API probe: **templates**, `create-from-template` is viable. Three corrections to this design came out of it, all of which would have failed live:* (a) **template variant ids are a different namespace from store-product variant ids** — the template's own `variants[].id` is what `templateVariantId` wants, and the two sets do not overlap; (b) **`placeholder` is NOT `"ImageFront"`** — Gelato names placeholders after the image file used when the template was built (e.g. `IMG_2485.jpg`), so it is per-template operator data, not a constant; (c) template variants carry **`fitMethod: null`**, so `slice` is ours to send, not something the template supplies. §6's block is illustrative; the shipped `config/defaults/pod.json` carries the real values. | — |
+| **12a** | **NEW BLOCKER, poster tier only:** the operator's Fine Art Poster template has **two** image placeholders (`A60A7073.jpg`, `A60A7102.jpg`) and a photo-specific title. `PodCatalogVariant` models ONE placeholder per variant, so filling only the first would leave the template's original photograph composited into every automated poster. Recommended: build a new single-image poster template (the acrylic template is already that shape). Rejected: supporting multi-placeholder templates — a list plus a fill policy, for no benefit on a single-photo product. **Hold the poster tier out of any live run until resolved; acrylic is unaffected.** | rebuild / support-multi |
 | **13** | Which landing artifact is the POD print file — the AdobeRGB TIFF master (re-encoded deterministically to max-quality sRGB JPEG) or the sRGB JPEG derivative? | tiff_master / jpeg |
 | **14** | Is the Etsy shop's **production-partner declaration** in place (Etsy POD policy requirement)? | yes / no |
 | **15** | Confirm: POD retail price is **not editable at Gate 3** in v1 (change `pod.json` markup and rebuild instead)? | yes / no |

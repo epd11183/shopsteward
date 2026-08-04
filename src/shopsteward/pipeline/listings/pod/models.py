@@ -145,6 +145,11 @@ class PodVariant(BaseModel):
     fit_method: str | None
     size: str
     aspect: str
+    # Carried forward so listingdraft.variants_selected records WHICH orientation
+    # was chosen, not just the ratio class. Orientation-blind selection shipped a
+    # portrait hero to a landscape SKU; recording it keeps the fix auditable from
+    # the event log alone.
+    orientation: PodOrientation | Literal["any"]
     dpi: float
     template_id: str | None
     base_cost: float

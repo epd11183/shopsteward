@@ -189,6 +189,7 @@ def _select_for_product_type(
                     fit_method=variant.fit_method,
                     size=variant.size,
                     aspect=aspect,
+                    orientation=variant.orientation,
                     dpi=dpi,
                     template_id=product.template_id,
                     base_cost=variant.base_cost,
