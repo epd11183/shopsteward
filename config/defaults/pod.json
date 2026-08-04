@@ -19,7 +19,9 @@
   "formats_by_aspect": {
     "2:3": [
       "acrylic",
-      "poster"
+      "poster",
+      "canvas",
+      "canvas_portrait"
     ]
   },
   "routing": [
@@ -32,6 +34,20 @@
     },
     {
       "product_type": "poster",
+      "region": "US",
+      "providers": [
+        "gelato"
+      ]
+    },
+    {
+      "product_type": "canvas",
+      "region": "US",
+      "providers": [
+        "gelato"
+      ]
+    },
+    {
+      "product_type": "canvas_portrait",
       "region": "US",
       "providers": [
         "gelato"
@@ -111,6 +127,88 @@
               "shipping_est": 0.0
             }
           ]
+        },
+        "canvas": {
+          "template_id": "<OPERATOR>",
+          "variants": [
+            {
+              "format": "canvas_12x18_hor",
+              "size": "12x18\" slim canvas - Horizontal",
+              "aspect": "2:3",
+              "orientation": "landscape",
+              "long_edge_inches": 18,
+              "variant_key": "<OPERATOR>",
+              "placeholder": "<OPERATOR>",
+              "fit_method": "slice",
+              "base_cost": 25.39,
+              "shipping_est": 0.0
+            },
+            {
+              "format": "canvas_16x24_hor",
+              "size": "16x24\" slim canvas - Horizontal",
+              "aspect": "2:3",
+              "orientation": "landscape",
+              "long_edge_inches": 24,
+              "variant_key": "<OPERATOR>",
+              "placeholder": "<OPERATOR>",
+              "fit_method": "slice",
+              "base_cost": 28.69,
+              "shipping_est": 0.0
+            },
+            {
+              "format": "canvas_20x30_hor",
+              "size": "20x30\" slim canvas - Horizontal",
+              "aspect": "2:3",
+              "orientation": "landscape",
+              "long_edge_inches": 30,
+              "variant_key": "<OPERATOR>",
+              "placeholder": "<OPERATOR>",
+              "fit_method": "slice",
+              "base_cost": 51.79,
+              "shipping_est": 0.0
+            }
+          ]
+        },
+        "canvas_portrait": {
+          "template_id": "<OPERATOR>",
+          "variants": [
+            {
+              "format": "canvas_12x18_ver",
+              "size": "12x18\" slim canvas - Vertical",
+              "aspect": "2:3",
+              "orientation": "portrait",
+              "long_edge_inches": 18,
+              "variant_key": "<OPERATOR>",
+              "placeholder": "<OPERATOR>",
+              "fit_method": "slice",
+              "base_cost": 25.39,
+              "shipping_est": 0.0
+            },
+            {
+              "format": "canvas_16x24_ver",
+              "size": "16x24\" slim canvas - Vertical",
+              "aspect": "2:3",
+              "orientation": "portrait",
+              "long_edge_inches": 24,
+              "variant_key": "<OPERATOR>",
+              "placeholder": "<OPERATOR>",
+              "fit_method": "slice",
+              "base_cost": 28.69,
+              "shipping_est": 0.0
+            },
+            {
+              "format": "canvas_20x30_ver",
+              "size": "20x30\" slim canvas - Vertical",
+              "aspect": "2:3",
+              "orientation": "portrait",
+              "long_edge_inches": 30,
+              "variant_key": "<OPERATOR>",
+              "placeholder": "<OPERATOR>",
+              "fit_method": "slice",
+              "base_cost": 51.79,
+              "shipping_est": 0.0
+            }
+          ]
         }
       }
     }
@@ -128,11 +226,15 @@
   "copy": {
     "title_suffix": {
       "acrylic": " Acrylic Print",
-      "poster": " Fine Art Poster"
+      "poster": " Fine Art Poster",
+      "canvas": " Canvas Print",
+      "canvas_portrait": " Canvas Print"
     },
     "description_block": {
       "acrylic": "Printed on 4mm acrylic with a glossy, glass-like finish and straight-cut corners. Hanging kit included. Made to order.",
-      "poster": "Printed on 200gsm (80lb) enhanced uncoated fine art paper. Made to order and shipped in protective packaging."
+      "poster": "Printed on 200gsm (80lb) enhanced uncoated fine art paper. Made to order and shipped in protective packaging.",
+      "canvas": "Printed on premium canvas stretched over a slim FSC-certified wood frame. Ready to hang, made to order.",
+      "canvas_portrait": "Printed on premium canvas stretched over a slim FSC-certified wood frame. Ready to hang, made to order."
     }
   },
   "images": {

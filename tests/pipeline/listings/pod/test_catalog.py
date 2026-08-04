@@ -463,22 +463,30 @@ def test_select_variants_shipped_pod_json_landscape_vs_portrait():
     and will change; the orientation guarantee must not.
     """
     cfg = pod_config.load_pod_config()
-    landscape_types = {
-        pt
-        for pt, product in cfg.catalog["gelato"].products.items()
-        for v in product.variants
-        if v.orientation == "landscape"
-    }
-    assert landscape_types, "shipped config has no landscape variants to exercise"
 
     # 3:2 landscape (a standard DSLR frame) -- the shipped variants' aspect
     kept_landscape, dropped_landscape = catalog.select_variants(6000, 4000, cfg)
-    assert kept_landscape, "a landscape hero must keep at least one variant"
-    assert all(v.orientation == "landscape" for v in kept_landscape)
-    assert not any(d.reason == "orientation" for d in dropped_landscape)
-
-    # The same frame rotated must not select the same SKU.
     kept_portrait, dropped_portrait = catalog.select_variants(4000, 6000, cfg)
-    assert kept_portrait == []
-    assert {d.reason for d in dropped_portrait} == {"orientation"}
-    assert {d.product_type for d in dropped_portrait} == landscape_types
+
+    assert kept_landscape, "a landscape hero must keep at least one variant"
+    assert kept_portrait, (
+        "a portrait hero must keep at least one variant (canvas is vertical-capable)"
+    )
+
+    # THE INVARIANT: a photo is never offered a variant of the wrong orientation.
+    # Asserted as a property rather than as "portrait keeps nothing" -- the latter
+    # was only ever true because the catalog happened to be landscape-only, and it
+    # broke the moment canvas (which Gelato offers in both) was added.
+    assert all(v.orientation in ("landscape", "any") for v in kept_landscape)
+    assert all(v.orientation in ("portrait", "any") for v in kept_portrait)
+
+    # A rotated frame must not select the same SKUs.
+    assert {v.format for v in kept_landscape} != {v.format for v in kept_portrait}
+
+    # Product types that exist only in the opposite orientation are dropped with a
+    # legible reason, never silently, and never centre-cropped into the wrong SKU.
+    for dropped in (dropped_landscape, dropped_portrait):
+        assert all(d.reason == "orientation" for d in dropped), (
+            "with a 2:3 photo against a 2:3 catalog, orientation is the only "
+            f"legitimate drop reason; got {[(d.product_type, d.reason) for d in dropped]}"
+        )
