@@ -455,14 +455,30 @@ def test_select_variants_any_orientation_matches_either():
 
 
 def test_select_variants_shipped_pod_json_landscape_vs_portrait():
-    cfg = pod_config.load_pod_config()
+    """The shipped catalog is landscape-only (the operator's Gelato templates are
+    all Horizontal), so a portrait hero must be DROPPED with reason 'orientation'
+    rather than silently routed to a landscape SKU and centre-cropped.
 
-    kept_landscape, dropped_landscape = catalog.select_variants(5000, 4000, cfg)
-    assert {v.format for v in kept_landscape} == {"framed_poster_16x20"}
+    Asserts the PROPERTY, not the product names -- the catalog is operator config
+    and will change; the orientation guarantee must not.
+    """
+    cfg = pod_config.load_pod_config()
+    landscape_types = {
+        pt
+        for pt, product in cfg.catalog["gelato"].products.items()
+        for v in product.variants
+        if v.orientation == "landscape"
+    }
+    assert landscape_types, "shipped config has no landscape variants to exercise"
+
+    # 3:2 landscape (a standard DSLR frame) -- the shipped variants' aspect
+    kept_landscape, dropped_landscape = catalog.select_variants(6000, 4000, cfg)
+    assert kept_landscape, "a landscape hero must keep at least one variant"
+    assert all(v.orientation == "landscape" for v in kept_landscape)
     assert not any(d.reason == "orientation" for d in dropped_landscape)
 
-    kept_portrait, dropped_portrait = catalog.select_variants(4000, 5000, cfg)
+    # The same frame rotated must not select the same SKU.
+    kept_portrait, dropped_portrait = catalog.select_variants(4000, 6000, cfg)
     assert kept_portrait == []
-    assert any(
-        d.product_type == "framed_poster" and d.reason == "orientation" for d in dropped_portrait
-    )
+    assert {d.reason for d in dropped_portrait} == {"orientation"}
+    assert {d.product_type for d in dropped_portrait} == landscape_types
