@@ -76,28 +76,8 @@ disagree, the PRD wins; flag the discrepancy.
   recorded, scrubbed fixtures until the operator approves a specific smoke
   test for a specific provider.
 
-## Repo layout
-
-```
-src/shopsteward/editing/    standalone editing module (no Etsy imports)
-src/shopsteward/pipeline/   Etsy pipeline: mockups, listings, IG, feedback
-src/shopsteward/core/       data model, event store, shared services
-src/shopsteward/adapters/   one module per external system
-plugins/epd-edit-bridge/    Lightroom Classic Lua plugin (own README)
-config/defaults/            shippable defaults: tuning profiles, templates,
-                            staging templates, prompts
-data/                       runtime data (DB, caches, exports) — gitignored,
-                            never read it
-docs/                       PRD and design docs; PRD_v2.1.md is current
-tests/                      pytest; adapters tested against fixtures
-.claude/agents/             sub-agent definitions
-```
-
 ## Commands
 
-- `uv sync` — install deps
-- `uv run pytest` — tests (must pass before any commit)
-- `uv run ruff check . && uv run ruff format .` — lint/format
 - `uv run shopsteward serve` — FastAPI backend + local UI
 - `uv run shopsteward ingest <path> --mode {hero,mass}` — folder-pointed
   ingestion
@@ -107,13 +87,12 @@ tests/                      pytest; adapters tested against fixtures
 ## Conventions
 
 - Python 3.12, FastAPI, Pydantic v2 models everywhere at boundaries.
-- Type hints required; `ruff` clean; no bare `except`.
+- Type hints required; `ruff` clean; no bare `except`. Tests must pass
+  before any commit.
 - Adapter fixtures: record real API responses once, scrub identifiers,
   commit the scrubbed fixture. Never commit a raw API response.
 - Frontend: React + Vite in `frontend/`, Tailwind, no component-library
   sprawl.
-- Lua plugin changes: keep the plugin inspectable — no obfuscation, one
-  undoable Lightroom history step per apply, confirmation prompts on writes.
 
 ## Hard guardrails
 
