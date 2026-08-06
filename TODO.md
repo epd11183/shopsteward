@@ -1,6 +1,6 @@
 # ShopSteward — pick-up-here
 
-*Last updated 2026-08-04. Written at the end of a long session; the value here is
+*Last updated 2026-08-05. Written at the end of a long session; the value here is
 the decisions and the landmines, not the task list.*
 
 ---
@@ -62,6 +62,13 @@ few weeks of accumulation.
 parameter shape came from Etsy's docs, not a live call — **your first `--live`
 run is its verification.** One-line revert if `state=expired` 400s.
 
+### 5. Check M5a's digital path for the same duplicate bug
+The only known place the per-file-iteration defect may still live. Slice 2 fixed
+it for physical products; the digital path was never checked. Cheaper to look now
+than to find it as two identical $7.99 downloads in your shop. Grep the digital
+draft builder for `landing_file_id` keying and compare against
+`pipeline/listings/pod/build.py:_photo_key`.
+
 ---
 
 ## State of the code
@@ -73,25 +80,37 @@ run is its verification.** One-line revert if `state=expired` 400s.
 | Gelato canvas, landscape + portrait | `main` | merged |
 | Live read-only Etsy sync | `main` | merged |
 | M8a slice 1 (shop brief) | `main` | merged |
-| **M5b slice 2** (pricing, R2 host, build) | `m5b/slice2-pricing-printfile` @ `5a2b660` | committed, **awaiting review — read the verdict before merging** |
+| M5b slice 2 (pricing, R2 host, build) | `main` | merged |
+| External tools survey | `main` | merged |
 
-`main` is **9 commits ahead of origin** and has never been pushed. 566 tests.
+**`main` is pushed** — `e3fbb4f`, `origin/main` in sync, 566 tests, `ruff` clean.
+The repo is public and **MIT licensed**, and is going open source properly.
 
-### First thing tomorrow: read the slice 2 review verdict
-A review was queued overnight. Slice 2 is committed but **not merged** — merge
-only after reading it.
+### The slice 2 defect, and why its tests are trustworthy
+**The defect was in the SPEC, not just the code.** `draft_id` keyed on
+`landing_file_id` while `scan_landing` writes **one row per file** — and your
+Gate 2 export produces *both* a TIFF master and an sRGB JPEG. One photograph
+became two drafts, two Gelato products, and **two live Etsy listings of the same
+image at $89–229 each.** Now keyed on `photo_id`, falling back to
+`landing_file_id` for unmatched manual drops. Design §3 corrected 2026-08-04.
 
-**The defect it fixes was in the SPEC, not just the code**, and it is the reason
-this slice is worth reviewing carefully. `draft_id` keyed on `landing_file_id`
-while `scan_landing` writes **one row per file** — and your Gate 2 export
-produces *both* a TIFF master and an sRGB JPEG. One photograph became two
-drafts, two Gelato products, and **two live Etsy listings of the same image at
-$89–229 each.** Now keyed on `photo_id`, falling back to `landing_file_id` for
-unmatched manual drops. Design §3 corrected, marked CORRECTED 2026-08-04.
+**The guard tests are mutation-verified.** A mutation was left in the working
+tree (`_photo_key` reverted to `file_id`) and the suite caught it —
+`test_photo_landed_as_tiff_and_jpeg_produces_one_draft_per_product_type` and
+`test_draft_id_is_stable_regardless_of_which_sibling_is_encountered_first` both
+failed, 6 drafts where 3 were expected. They fail for the right reason, not
+vacuously. **If you ever touch `_photo_key`, those two tests are the alarm.**
+
+⚠ **No review verdict was ever produced.** One was queued overnight on
+2026-08-04; it left no document. `review-receipts/` is protect-mcp audit output,
+not a review. Slice 2 was merged on your instruction with tests and lint green,
+**not on a reviewer's sign-off** — so it has had less scrutiny than the rest of
+`main`. Worth a read-through when convenient.
 
 ⚠ **M5a's digital path shares the same per-file iteration and has NOT been
 checked.** Its blast radius is a duplicate digital listing rather than a
-duplicate physical product, but it is the same bug.
+duplicate physical product, but it is the same bug — and now that slice 2 has
+shipped the fix on the physical side, this is the last place it lives.
 
 ---
 
