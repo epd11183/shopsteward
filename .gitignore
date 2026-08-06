@@ -20,9 +20,14 @@ epd_develop_report.json
 *.psd
 
 # Claude Code — personal overrides and local state stay local
+.claude/settings.json
+.claude/settings.json.bak-*
 .claude/settings.local.json
+.claude/hooks/
+.claude/skills/
 .claude/projects/
 .claude/logs/
+.mcp.json
 
 # Python
 __pycache__/

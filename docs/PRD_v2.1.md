@@ -280,7 +280,7 @@ Edit Bridge plugin.
 - `src/shopsteward/editing/` — standalone editing engine. Imports:
   `adapters/lightroom` (EPD Edit Bridge job dispatch), image tooling, tuning
   profiles it owns. Does not import from `adapters/etsy`, `adapters/printful`,
-  `adapters/gelato`, `adapters/instagram`, or the listing/marketing modules.
+  `adapters/gelato`, `adapters/meta`, or the listing/marketing modules.
 - `src/shopsteward/pipeline/` — Etsy pipeline (Stages 3–6). Consumes edited
   photos only via the landing-folder watcher.
 - `src/shopsteward/core/` — data model, event store, projections, shared

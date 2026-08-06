@@ -4,6 +4,7 @@ photo.score_failed."""
 
 import logging
 import sqlite3
+import time
 from dataclasses import replace
 from datetime import UTC, datetime
 
@@ -71,7 +72,9 @@ def run_scoring(
             vision=vision,
         )
 
+        photo_start = time.perf_counter()
         scores, details, scorer_failed = _run_scorers(conn, user_id, scorers, ctx, live=live)
+        scorers_elapsed = time.perf_counter() - photo_start
         if scorer_failed:
             failed += 1
             continue
@@ -79,6 +82,7 @@ def run_scoring(
         composite = _composite(scores, weights)
         escalated_flag = False
         commercial_scorer = next((s for s in scorers if s.name == "commercial"), None)
+        rescore_elapsed = 0.0
 
         if (
             commercial_scorer is not None
@@ -86,12 +90,14 @@ def run_scoring(
             and abs(composite - threshold) <= band
         ):
             rescore_ctx = replace(ctx, rescore=True)
+            rescore_start = time.perf_counter()
             try:
                 rescore_result = commercial_scorer.score(rescore_ctx)
             except Exception as exc:
                 _append_score_failed(conn, user_id, row["photo_id"], "commercial", exc)
                 failed += 1
                 continue
+            rescore_elapsed = time.perf_counter() - rescore_start
             if rescore_result is not None:
                 scores["commercial"] = rescore_result.score
                 details["commercial_rescore"] = rescore_result.detail
@@ -135,6 +141,17 @@ def run_scoring(
         scored += 1
         if escalated_flag:
             escalated += 1
+
+        total_elapsed = time.perf_counter() - photo_start
+        logger.info(
+            "scored %s in %.2fs (scorers=%.2fs rescore=%.2fs escalated=%s composite=%.1f)",
+            row["photo_id"],
+            total_elapsed,
+            scorers_elapsed,
+            rescore_elapsed,
+            escalated_flag,
+            composite,
+        )
 
         if composite >= threshold:
             append(

@@ -31,7 +31,7 @@ disagree, the PRD wins; flag the discrepancy.
   directly.
 - **Editing module boundary.** `src/shopsteward/editing/` is standalone. It
   must not import from `adapters/etsy`, `adapters/printful`,
-  `adapters/gelato`, `adapters/instagram`, or `pipeline/`. An import-linter
+  `adapters/gelato`, `adapters/meta`, or `pipeline/`. An import-linter
   rule enforces this in CI from M2 onward.
 - **Folder-pointed ingestion.** Discovery is invoked with
   `shopsteward ingest <path> --mode {hero,mass}`. The folder contains paired
