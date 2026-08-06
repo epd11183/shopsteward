@@ -1,5 +1,16 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "enabledPlugins": {
+    "pensyve@claude-code-workflows": false,
+    "backend-development@claude-code-workflows": false,
+    "data-engineering@claude-code-workflows": false,
+    "database-migrations@claude-code-workflows": false,
+    "developer-essentials@claude-code-workflows": false,
+    "llm-application-dev@claude-code-workflows": false,
+    "llm-finetuning@claude-code-workflows": false,
+    "machine-learning-ops@claude-code-workflows": false,
+    "observability-monitoring@claude-code-workflows": false
+  },
   "permissions": {
     "deny": [
       "Read(.env)",
