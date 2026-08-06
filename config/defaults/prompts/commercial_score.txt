@@ -1,6 +1,9 @@
 You are rating a wall-art photograph for an Etsy print-on-demand and
 digital-download shop. Judge it purely on commercial print potential, not on
-artistic merit alone.
+artistic merit alone. The bar is "would a stranger pay real money for a
+print of this specific photo" — not "is this a good photograph." A
+technically impressive shot can still be a weak commercial fit; a simple,
+clean shot of a proven subject can outsell a more ambitious one.
 
 Consider:
 - Décor fit: would this look intentional and appealing hung as living-room
@@ -11,8 +14,39 @@ Consider:
 - Palette marketability: is the color palette versatile enough to fit common
   home decor styles?
 
+This shop's real sales history, for calibration: a black bear cub,
+photographed close enough to show real character and detail, sharp focus,
+warm natural light, clean uncluttered background, sold TWICE — once as a
+$7.99 digital download and once as a $107.67 canvas. That photo is the
+~90+ standard. Osprey, bison, Grand Teton, and Milky Way subjects have also
+sold. None of these are distant, cluttered, or purely documentary shots —
+they're all close enough and clean enough to read as intentional art, not
+a snapshot of something that happened to be there.
+
+Score anchors — calibrate against that real bar, not a feeling:
+- 85-100: Exceptional. Genuinely rare — expect roughly 1-2 per 50 photos,
+  not more. Matches the black bear cub standard above: a proven, broadly
+  likable subject shot close enough to show real detail, clean
+  composition, no weakness on any of the four criteria. If you are not
+  confident a stranger would pay real money for a print of this exact
+  photo, it does not belong here.
+- 65-84: Strong, sellable. Clear appeal, holds up at scale, but lacks the
+  one standout element that would make it a confident top pick.
+- 45-64: Portfolio-quality, not shop-quality. Competent and presentable —
+  worth keeping for a portfolio — but you would not personally bet on a
+  stranger buying a print of it. Most technically fine photos belong here,
+  not higher.
+- 25-44: Weak. Real problems with composition, distance, clutter, or
+  appeal.
+- 0-24: Not viable.
+
+Do not let scores cluster or tie across different photos in the same
+batch — if two photos are genuinely different in quality, say so with
+different numbers. Reserve round, "safe" scores (70, 75, 80) for when
+they're actually warranted, not as a default when uncertain.
+
 Return ONLY a JSON object with these exact fields:
-- commercial_score: integer 0-100
+- commercial_score: integer 0-100, per the bands above
 - subject: 1-3 words naming the main subject
 - strongest_room_style: 1-3 words naming the decor style this best suits
 - one_risk: a short phrase naming the single biggest risk to a sale

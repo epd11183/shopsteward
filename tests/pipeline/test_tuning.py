@@ -31,7 +31,7 @@ def test_get_profile_round_trips_values(conn):
     tuning.seed(conn, user_id=1, path=DEFAULTS_PATH)
     profile = tuning.get_profile(conn, user_id=1, name="default")
     assert profile.scoring.gate1_threshold == 60
-    assert profile.scoring.borderline_band == 10
+    assert profile.scoring.borderline_band == 15
     assert profile.scoring.hero_preset_family == "neutral"
     assert profile.scoring.weights == {
         "technical": 0.35,

@@ -9,7 +9,7 @@
       "historical_conversion": 0.0
     },
     "gate1_threshold": 60,
-    "borderline_band": 10,
+    "borderline_band": 15,
     "hero_preset_family": "neutral",
     "technical": {
       "laplacian_floor": 50,
