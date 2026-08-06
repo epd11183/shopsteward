@@ -16,6 +16,7 @@ from shopsteward.mockups.cli import mockups_app
 from shopsteward.pipeline.cli import pipeline_app, score_app
 from shopsteward.pipeline.listings.cli import listings_app
 from shopsteward.pipeline.listings.pod.cli import pod_app
+from shopsteward.pipeline.ops.cli import ops_app
 
 app = typer.Typer(no_args_is_help=True, help="ShopSteward — photography workflow tool.")
 
@@ -35,6 +36,7 @@ app.add_typer(mockups_app, name="mockups")
 app.add_typer(etsy_app, name="etsy")
 app.add_typer(listings_app, name="listings")
 app.add_typer(pod_app, name="pod")
+app.add_typer(ops_app, name="ops")
 
 
 class IngestMode(StrEnum):

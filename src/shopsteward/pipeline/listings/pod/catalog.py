@@ -25,8 +25,19 @@ variant is dropped if its own declared orientation excludes the photo
 If no provider wins, the product type is dropped with exactly one reason,
 resolved from every failure encountered across the walk through a single
 explicit precedence order (_REASON_PRECEDENCE) rather than assignment-order
-shadowing -- slice 2 adds "above_max_price" to the same accumulation by
-adding a table entry, no branching changes needed.
+shadowing.
+
+Carry-forward fix (design §13 slice 2 note): when a provider DOES win a
+product type, the sizes that failed DPI along the way are no longer
+discarded -- each is reported individually as a PodDroppedVariant with
+`format` set to that specific size, so an operator can tell "30x40 failed
+DPI, 16x20 shipped" apart from "the whole product type shipped clean".
+Whole-product-type drops (every routed provider struck out) keep the
+original one-reason-via-precedence behaviour, `format=None`, unchanged.
+pricing above_max_price drops are NOT produced here -- catalog.py has no
+knowledge of price; pod/build.py applies that filter after pricing each
+kept PodVariant, reusing this exact same model (PodDroppedVariant) and the
+same per-variant-vs-whole-type split.
 """
 
 from shopsteward.pipeline.listings.pod.models import (
@@ -131,11 +142,12 @@ def select_variants(
     dropped: list[PodDroppedVariant] = []
 
     for product_type in config.formats_by_aspect.get(aspect, []):
-        variants, reason = _select_for_product_type(
+        variants, variant_drops, reason = _select_for_product_type(
             product_type, aspect, orientation, long_edge_px, config
         )
         if variants:
             kept.extend(variants)
+            dropped.extend(variant_drops)
         else:
             dropped.append(PodDroppedVariant(product_type=product_type, reason=reason))
 
@@ -151,7 +163,14 @@ def _select_for_product_type(
     orientation: PodOrientation,
     long_edge_px: int,
     config: PodConfig,
-) -> tuple[list[PodVariant], PodDropReason | None]:
+) -> tuple[list[PodVariant], list[PodDroppedVariant], PodDropReason | None]:
+    """Returns (kept, variant_drops, whole_type_reason). Exactly one of
+    `kept` / `whole_type_reason` is populated: a non-empty `kept` means some
+    provider won this product type, and `variant_drops` names whichever of
+    that SAME provider's same-aspect/orientation sizes failed DPI along the
+    way (carry-forward fix). An empty `kept` means every routed provider
+    struck out -- `variant_drops` is then always [] and `whole_type_reason`
+    carries the single precedence-resolved reason, exactly as before."""
     rule_exists = any(
         r.product_type == product_type and r.region == config.region for r in config.routing
     )
@@ -174,9 +193,15 @@ def _select_for_product_type(
             continue
 
         kept_here: list[PodVariant] = []
+        variant_drops: list[PodDroppedVariant] = []
         for variant in matching:
             dpi = effective_dpi(long_edge_px, variant.long_edge_inches)
             if dpi < config.print_file.min_dpi:
+                variant_drops.append(
+                    PodDroppedVariant(
+                        product_type=product_type, format=variant.format, reason="dpi"
+                    )
+                )
                 reasons.add("dpi")
                 continue
             kept_here.append(
@@ -194,16 +219,64 @@ def _select_for_product_type(
                     template_id=product.template_id,
                     base_cost=variant.base_cost,
                     shipping_est=variant.shipping_est,
+                    retail_override=variant.retail_override,
                 )
             )
         if kept_here:
-            return kept_here, None
+            # This provider won the product type overall -- the sizes it
+            # dropped along the way (variant_drops) are reported, not
+            # discarded (carry-forward fix).
+            return kept_here, variant_drops, None
 
     if rule_exists and not reasons:
         # the rule matched, but every provider it named was absent from the
         # catalog -- route() filtered them all out before the loop ran.
         reasons.add("no_variant")
-    return [], _resolve_reason(reasons)
+    return [], [], _resolve_reason(reasons)
+
+
+def apply_price_ceiling(
+    kept: list[PodVariant],
+    dropped: list[PodDroppedVariant],
+    prices: dict[str, float],
+    max_price: float,
+) -> tuple[list[PodVariant], list[PodDroppedVariant]]:
+    """Design §5 step 4's other half, applied after pricing (pod/build.py
+    calls this once every kept variant has a computed retail price --
+    catalog.py itself has no knowledge of price). Mirrors the DPI
+    carry-forward split exactly: a variant priced above `max_price` inside
+    an otherwise-surviving product type is recorded individually (`format`
+    set); a product type that loses every variant to this filter falls back
+    to one whole-product-type drop (`format=None`), consistent with every
+    other reason in this module. `prices` maps PodVariant.format -> the
+    price pod/pricing.py computed for it (retail_override or the markup/
+    floor solve, already resolved by the caller)."""
+    by_product_type: dict[str, list[PodVariant]] = {}
+    for variant in kept:
+        by_product_type.setdefault(variant.product_type, []).append(variant)
+
+    new_kept: list[PodVariant] = []
+    new_dropped: list[PodDroppedVariant] = list(dropped)
+    for product_type, variants in by_product_type.items():
+        survivors: list[PodVariant] = []
+        variant_drops: list[PodDroppedVariant] = []
+        for variant in variants:
+            if prices[variant.format] > max_price:
+                variant_drops.append(
+                    PodDroppedVariant(
+                        product_type=product_type, format=variant.format, reason="above_max_price"
+                    )
+                )
+            else:
+                survivors.append(variant)
+        if survivors:
+            new_kept.extend(survivors)
+            new_dropped.extend(variant_drops)
+        else:
+            new_dropped.append(
+                PodDroppedVariant(product_type=product_type, format=None, reason="above_max_price")
+            )
+    return new_kept, new_dropped
 
 
 def _resolve_reason(reasons: set[PodDropReason]) -> PodDropReason:

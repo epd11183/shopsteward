@@ -229,7 +229,12 @@ def test_select_variants_multiple_same_aspect_sizes_are_each_dpi_checked():
 
     kept, dropped = catalog.select_variants(4000, 5000, cfg)
 
-    assert dropped == []  # the product type succeeded overall (>=1 survivor)
+    # carry-forward fix (design §13 slice 2 note): the product type
+    # succeeded overall (>=1 survivor), but the dropped 30x40 is still
+    # reported individually rather than discarded.
+    assert dropped == [
+        PodDroppedVariant(product_type="framed_poster", format="framed_poster_30x40", reason="dpi")
+    ]
     assert {v.variant_key for v in kept} == {"v-16x20", "v-24x30"}
     assert all(v.provider == "gelato" for v in kept)
     # 5000px / 40in = 125dpi < 150 -- 30x40 must not appear

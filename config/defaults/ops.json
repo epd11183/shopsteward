@@ -1,0 +1,28 @@
+{
+  "schema": "shopsteward.ops/1",
+  "name": "default",
+  "windows": {
+    "revenue_window_days": 7,
+    "trend_window_days": 7
+  },
+  "dead_listing": {
+    "window_days": 180,
+    "min_observed_days": 90
+  },
+  "shoot_more": {
+    "max_listing_count": 3
+  },
+  "product_type_keywords": {
+    "acrylic": ["acrylic"],
+    "poster": ["poster", "fine art poster"],
+    "canvas": ["canvas"],
+    "digital": ["digital download", "printable"]
+  },
+  "brief_sections": {
+    "revenue": true,
+    "selling": true,
+    "dying": true,
+    "shoot_more": true,
+    "data_quality": true
+  }
+}

@@ -99,3 +99,30 @@ def live_etsy_write_error() -> str:
         "SHOPSTEWARD_LIVE_ETSY_WRITE=1 and ETSY_API_KEY, run `shopsteward etsy "
         "auth` with the listings_w scope, then re-run with --live-etsy-write."
     )
+
+
+_R2_ENV_VARS = (
+    "CLOUDFLARE_R2_KEY",
+    "CLOUDFLARE_R2_SECRET",
+    "CLOUDFLARE_R2_ENDPOINT",
+    "CLOUDFLARE_R2_BUCKET",
+)
+
+
+def live_printfile_open() -> bool:
+    """True iff SHOPSTEWARD_LIVE_PRINTFILE=1 and every Cloudflare R2 object
+    credential env var is set (design §9, §17 Q1/Q1a). Deliberately never
+    checks CLOUDFLARE_R2_TOKEN: that is a Cloudflare account-management
+    credential, not an S3 object credential, and the live adapter has no
+    code path that accepts it as a substitute."""
+    if os.environ.get("SHOPSTEWARD_LIVE_PRINTFILE") != "1":
+        return False
+    return all(os.environ.get(var) for var in _R2_ENV_VARS)
+
+
+def live_printfile_error() -> str:
+    return (
+        "Live print-file hosting is gated on operator approval (PRD §8.4): set "
+        "SHOPSTEWARD_LIVE_PRINTFILE=1 and " + ", ".join(_R2_ENV_VARS) + " in the "
+        "environment, then re-run with --live-printfile."
+    )
