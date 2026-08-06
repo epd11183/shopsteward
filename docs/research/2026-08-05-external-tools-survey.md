@@ -627,16 +627,35 @@ traffic rather than an ephemeral feed.**
 from the public until a video-demo review passes. If true that is a gate
 comparable to Meta's. Verify against Pinterest's own docs before writing code.
 
-**The actual recommendation, and it needs no code:** Etsy supports a one-time
-**Pinterest claim of the shop URL**, which makes every listing eligible for
-**Rich Pins** — live price and availability on any pin, including hand-made
-ones. It is *not* an auto-poster; it enriches pins that already exist. **Five
-minutes in Etsy's settings, zero engineering.** Do that, watch Etsy Stats →
-Traffic Sources for a few weeks, and build an adapter only if Pinterest traffic
-actually shows up.
+**✅ Already done — the shop is claimed on Pinterest** (operator, confirmed
+2026-08-05). Rich Pins have therefore been live, meaning every listing already
+shows live price and availability on any pin. The claim is *not* an auto-poster;
+it enriches pins that already exist.
 
-**Bottom line for the whole lane: don't build it yet.** Not on licence, not on
-API access — on evidence. Test the hypothesis for free first.
+**So the free experiment has already been running, and it is producing.** A
+Pinterest milestone email on 2026-08-05 reports **a single pin at 250
+impressions — and the pin is the black bear cub**, the one subject that has sold
+at *both* ends of the ladder ($7.99 download and a $107.67 canvas). For scale,
+the shop has 1,754 *lifetime* Etsy views. One pin is generating impressions at a
+rate the Etsy listing page never has.
+
+⚠ **Impressions are not clicks, and a milestone email is not analytics.**
+Pinterest fires these at round numbers; it is engagement bait, and 250
+impressions on one pin says nothing about outbound clicks to Etsy. **The
+decisive number is still Etsy Stats → Traffic Sources.** But this moves
+Pinterest from "untested hypothesis" to "live channel with unmeasured
+conversion," which is a materially different question.
+
+If Pinterest is already a meaningful share of those 1,754 views, an adapter is
+justified. If it is negligible *despite* pins earning impressions, that is also
+a result — it would mean pins get seen but don't convert to visits, and the fix
+is pin copy and destination, not more automation.
+
+⚠ Etsy's API exposes no traffic-source data (consistent with §9.3), so this
+reading is manual and cannot be pulled into the shop brief.
+
+**Bottom line for the whole lane: don't build it yet** — but for a better reason
+than "untested." The cheap test was already run; go read it.
 
 ---
 
@@ -682,10 +701,10 @@ notice with anything we copy verbatim.
 ## What this changes
 
 ### Do now (no code)
-- **Claim the Etsy shop on Pinterest.** Five minutes, zero engineering, enables
-  Rich Pins, and it tests whether Pinterest traffic exists *before* we build any
-  social adapter. §10.4. This is the highest ratio of value to effort in the
-  whole survey.
+- **Read Etsy Stats → Traffic Sources.** The shop is already claimed on
+  Pinterest, so Rich Pins have been live and the free experiment has already
+  run — the answer exists today. Whether Pinterest shows up decides the social
+  adapter question outright, in either direction. §10.4.
 
 ### Carry into M2/M3/M4
 1. **TODO #3's spike has a stated hypothesis** (geometry keys dropped) and a

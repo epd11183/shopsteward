@@ -69,18 +69,35 @@ than to find it as two identical $7.99 downloads in your shop. Grep the digital
 draft builder for `landing_file_id` keying and compare against
 `pipeline/listings/pod/build.py:_photo_key`.
 
-### 6. Claim the shop on Pinterest — **5 minutes, zero code**
-Traffic is the binding constraint, and this is the cheapest test of a traffic
-channel available. Etsy supports a one-time Pinterest claim of the shop URL,
-which makes every listing eligible for **Rich Pins** — live price and
-availability on any pin, including ones you make by hand. It is *not* an
-auto-poster.
+### 6. Read Etsy Stats → Traffic Sources — **Pinterest is live and producing**
+Pinterest is **already claimed**, Rich Pins have been live, and it is working:
+a milestone email on 2026-08-05 reports **one pin at 250 impressions — the black
+bear cub**, the subject that sold at both ends of the ladder. The shop has 1,754
+*lifetime* Etsy views, so one pin is earning impressions faster than the listing
+page ever has.
 
-Do it, then watch Etsy Stats → Traffic Sources for a few weeks. **Build a social
-adapter only if Pinterest traffic actually appears.** Evidence says Instagram is
-the wrong first bet: Reels drive discovery, static photos only reach existing
-followers, and our pipeline makes stills. See
+⚠ **Impressions are not clicks.** Pinterest fires milestone emails at round
+numbers; it is engagement bait. This proves reach, not traffic.
+
+Open Etsy Stats → Traffic Sources, all-time and this year. The question:
+**is Pinterest a non-trivial share of your 1,754 lifetime views?**
+
+- **Yes** → a Pinterest adapter is justified. It's the better automation target
+  anyway: API v5 is free, generous limits, and pins are evergreen search traffic
+  rather than an ephemeral feed. ⚠ Verify first whether Trial-tier pins are
+  publicly visible or hidden pending review — unverified, and it would gate the
+  work.
+- **No, despite pins earning impressions** → also a result. It would mean pins
+  get *seen* but don't convert to visits, and the fix is pin copy and
+  destination, not more automation. Don't build the adapter.
+
+Either way **Instagram stays unbuilt.** Not licence, not access — evidence.
+Reels drive discovery, static photos only reach existing followers, and our
+pipeline makes stills. See
 `docs/research/2026-08-05-external-tools-survey.md` §10.
+
+⚠ Etsy's API exposes no traffic-source data, so this is a dashboard read only —
+it cannot be automated or pulled into the brief.
 
 ---
 
