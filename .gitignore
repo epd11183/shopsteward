@@ -42,3 +42,8 @@ frontend/dist/
 Thumbs.db
 .idea/
 .vscode/
+
+# Signed tool-call audit receipts (protect-mcp). Local audit trail, not source —
+# they record real paths and commands from this machine.
+receipts/
+review-receipts/
