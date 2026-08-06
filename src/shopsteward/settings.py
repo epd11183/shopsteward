@@ -28,3 +28,7 @@ def operator_templates_dir() -> Path:
 
 def etsy_tokens_path() -> Path:
     return Path(os.environ.get("SHOPSTEWARD_ETSY_TOKENS", "data/etsy_tokens.json"))
+
+
+def meta_tokens_path() -> Path:
+    return Path(os.environ.get("SHOPSTEWARD_META_TOKENS", "data/meta_tokens.json"))
