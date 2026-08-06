@@ -373,6 +373,273 @@ research it a fifth.**
 
 ---
 
+## 7. Staging-template mockups (M4)
+
+**The field is thin.** No mature, maintained open-source project does realistic
+wall-art mockups end to end. What exists is either toy repos (`Mockup-Generator`,
+0 stars, no licence; `etsy-mockup-generator`, Pillow paste only, 1 star) or paid
+SaaS (Dynamic Mockups, Mockey, PosterMock AI). **We are not reinventing a solved
+problem — we are composing primitives.** That is the finding.
+
+### 7.1 The two primitives to lift — **BORROW**
+
+- **`imutils.perspective.four_point_transform`** · MIT · ~4.6k★ · PyImageSearch.
+  The canonical `getPerspectiveTransform` + `warpPerspective` helper. It solves
+  the *inverse* of our problem (photo→flat, document de-skew), but the maths is
+  identical run backwards (flat→quad on a wall). **Take the corner-ordering and
+  output-sizing logic verbatim** rather than deriving homography by hand.
+  ⚠ Its known failure mode is our known failure mode: **bad corner ordering
+  silently produces a mirrored or rotated warp** — no exception, just a wrong
+  picture. Assert `tl/tr/br/bl` ordering in a unit test.
+- **`psd-tools`** · MIT · ~1.4k★ · 2000+ commits · actively maintained.
+  The genuinely valuable find. It reads PSD structure including smart-object
+  layers, and exposes **`layer.smart_object.transform_box`** — the four
+  transformed corner coordinates of a smart object's placement, read from the
+  `PLACED_LAYER` block.
+
+**Why `psd-tools` matters more than it looks.** The entire commercial mockup
+world runs on PSD smart-object templates, sold on Creative Market and similar.
+Today those require Photoshop. With `transform_box` we can **buy or download a
+professional room-scene PSD, read the four corners of its smart object, and do
+our own `warpPerspective`** — no Photoshop, no SaaS, no per-render fee. Adobe
+did the hard part (photographing and measuring the room); we skip their runtime.
+PosterMock AI is that exact pattern, productised behind a paywall.
+
+⚠ `psd-tools` is **read-only for geometry**. It cannot write or replace
+smart-object contents, and does not render most layer effects or blend modes.
+It is a geometry source, not a rendering engine. Don't plan around rendering
+the PSD.
+
+### 7.2 The realism technique — **BORROW (no new dependency)**
+The dominant approach in the commercial mockup world, from the apparel side:
+**a greyscale displacement map plus a Multiply blend.** Bake a displacement map
+from the room photo's own wall texture and lighting, warp the art subtly with it
+so it follows the surface, then multiply the original wall's shadow/highlight
+layer back over the composited art.
+
+Both halves are already in our stack: **`cv2.remap` for the displacement, a
+`numpy` array multiply for the blend.** This is the answer to "can deterministic
+Pillow/OpenCV look professional" — yes, and without adding anything. Gallery-wrap
+edges and frame rendering are the same class of problem.
+
+### 7.3 `CTDave001/automated_mockups` — **REFERENCE**
+MIT · 69★ · Pillow. Batch POD mockups using **colour-keyed placeholder
+detection** — the template marks the art region with a flat known colour and the
+code finds it. Cruder than reading PSD geometry but dependency-free and
+obvious; a reasonable fallback if `psd-tools` disappoints, and a good format for
+templates we generate ourselves (PRD §: vision models generate *empty rooms*,
+which we would then need to locate the wall region in).
+
+### 7.4 The vendors do this server-side
+`Printfulpy` and similar are thin wrappers around **Printful's own server-side
+mockup generation** — not compositing code. Worth knowing so nobody mistakes
+them for a library. Gelato likewise. Our local mockups are for Etsy listing
+imagery and pre-listing preview, not for duplicating what the POD vendor already
+does at fulfilment.
+
+---
+
+## 8. Print-file preparation and the viability gate
+
+**No end-to-end open-source POD print-prep project exists.** Searched GitHub
+topics `print-on-demand` and `printing`; results are mockup overlays and
+unrelated imaging pipelines. Same conclusion as §7: compose primitives.
+
+### 8.1 The viability gate — **numbers, not a library**
+This is roughly ten lines of code, and the numbers are the deliverable:
+
+| Source | Number | Note |
+|---|---|---|
+| **Gelato (official)** | **150–225 PPI inside the BleedBox** | Our fulfiller. Authoritative — this is the literal target. |
+| WhiteWall (pro lab) | 300 PPI close-viewed, **200 PPI canvas/acrylic** at ~2m | The most rigorous public source found |
+| Printful | 150 DPI floor, 300 for paper wall art | |
+| CanvasPop / CanvasDiscount | 150 sufficient for canvas; **acrylic needs 150–200 minimum** | |
+
+**The mechanism is surface finish, not just viewing distance** — canvas texture
+masks the 150→300 difference, while acrylic's gloss and depth *reveal* pixel
+grain. That corrects the intuition in our own notes: acrylic is our premium SKU
+and it is also the **least** forgiving, so the gate must be per-product, not one
+global threshold.
+
+**Implement as a formula, not a lookup table:** max useful PPI ≈
+**6878 ÷ viewing distance in inches**. Compute the requirement from
+`(print_size_inches, product_viewing_distance)` — defensible in code, and it
+generalises when a new SKU appears. Suggested floors: 150 canvas/poster,
+200 acrylic, 300 as the no-warning ceiling.
+
+### 8.2 `smartcrop.py` — **BORROW**
+`hhatto/smartcrop.py` · MIT · ~273★ · Python port of `smartcrop.js`.
+
+Slides a window of the target aspect ratio over the image and scores each
+position on edge detection, rule of thirds, and saturation. **Classical CV, zero
+ML, nothing generative** — it passes our hard rule cleanly. This is the answer to
+fitting a 2:3 photograph into a 4:5 or 3:4 product **without a destructive
+centre-crop**, which is a live defect class for us (portrait heroes already bit
+us once on orientation).
+
+Note it computes a crop *window*; keep the full frame and store the window.
+`keplerlab/katna` (MIT, ~398★) does the same thing plus faces and saliency but
+drags in video keyframe machinery — **REFERENCE**, not worth the weight.
+
+### 8.3 Already in the stack — **BORROW, zero new dependencies**
+- **Gallery-wrap bleed:** `cv2.copyMakeBorder(BORDER_REFLECT_101)` or
+  `np.pad(mode="reflect")`. There is no open-source "canvas bleed generator" —
+  every hit is a manual Photoshop tutorial. Take the outer N-inch strip and
+  reflect it outward. Done.
+- **Colour management:** Pillow's `ImageCms` (wraps LittleCMS2) —
+  `profileToProfile()`, `buildProofTransform()`, `Intent.PERCEPTUAL` for
+  photographic content.
+- **Output sharpening:** `PIL.ImageFilter.UnsharpMask` implements exactly the
+  radius/amount/threshold model the print community tunes. **Resize to final
+  print pixels first, then sharpen** — order matters, and radius scales with
+  resolution (~1.5 radius / 100 amount at 300 PPI, less at 150).
+  ⚠ **Whether Gelato re-sharpens on their end is unverified** — no doc found
+  either way. Do not assume they cancel ours; the canvas sample order (TODO #2)
+  is the only way to find out.
+
+### 8.4 Soft-proofing — **REFERENCE, don't build**
+Valuable in general prepress, low leverage for us: **Gelato does its own
+RGB→CMYK conversion and publishes no per-SKU ICC profile to proof against.**
+Embed sRGB and move on. `ImageCms` is already available if a printer profile
+ever materialises.
+
+### 8.5 Real-ESRGAN — **CLOSED (by our rule, not its licence)**
+BSD-3-Clause, so the licence is fine. **Disqualified by "AI never touches the
+photograph."** Flagged explicitly because a licence-only screen would have
+waved it through — the guardrail is doing work that the licence check cannot.
+
+---
+
+## 9. Etsy tooling
+
+### 9.1 Python clients — **mostly CLOSED, and the graveyard is the lesson**
+- `anitabyte/etsyv3` · **GPL-3.0** · 77★ — **CLOSED on licence.** Don't even
+  copy from it. Also has gaps (no `UpdateShopReceipt`, no shipping profiles).
+- `amitray007/etsy-python-sdk` · **MIT** · 11★ · 139 commits, semantic-release
+  CI — genuinely maintained, ~28 resource classes. **REFERENCE**: read it as a
+  *checklist* of endpoints we haven't touched (return policies, shipping
+  profiles, production partners). Not worth swapping our working adapter.
+- `mcfunley/etsy-python`, `priestc/python-etsy`, `npike/etsy-python3`,
+  `etsyclient` — **all v2-era, all dead.** Etsy shut v2 down in 2022.
+  ⚠ They still rank top in search results. A dead client that 401s everything is
+  worse than no client. `notbvdr/Etsy-Keywords-Research` (21★) is archived with
+  the maintainer's own note: *"This Script No Working With New Api."*
+
+**Our adapter is ahead of everything found.** That is worth knowing before
+anyone proposes replacing it.
+
+### 9.2 SEO and keyword research — **CLOSED, and this is the useful part**
+**Etsy's API has no search-volume or query-analytics endpoint.** Confirmed via
+standing, repeatedly-requested, unfulfilled feature requests on `etsy/open-api`.
+Every commercial tool — eRank, Alura, Marmalead, Sale Samurai — is closed source
+and none publishes its methodology, because **there is no data feed to licence.**
+They scrape Etsy search and autocomplete. `etsy-serp-scraper` and
+`etsy-shop-spy` confirm the mechanism openly.
+
+**Verdict: do not build or adopt a scraper.** ToS-grey, operationally fragile,
+and a maintenance burden a single operator should not own. Traffic is our binding
+constraint, so the temptation here is real — but the higher-leverage move is
+off-Etsy (Google Trends, Pinterest Trends, cross-referenced by hand), not a
+scraper we have to keep alive.
+
+### 9.3 Shop analytics — **REFERENCE (a pattern, not a library)**
+Confirmed across `etsy/open-api` discussions #1304, #1386, #681: the API exposes
+only **lifetime cumulative views per listing.** No favourites, no visits, no time
+windows, no history. Years-old unresolved request.
+
+**Any tool showing "views this week" is polling and snapshotting client-side.
+There is no other mechanism.** `cmd-not-found/etsy-polling-lambda` is the only
+prior art and it is just that pattern: cron, poll, persist.
+
+**This independently validates what we already built.** Our event-sourced SQLite
+with `proj_listing_daily` preserving history *is* the correct design, and the
+note in `TODO.md` that "views/favourites do not come back retroactively, the
+series starts the day you first sync" is not a limitation of our implementation
+— **it is a hard platform limit nobody has solved.** Stop looking for a better way.
+
+### 9.4 Digital delivery — **a load-bearing constraint, not a TODO**
+- **Static** digital files: Etsy delivers automatically once attached at
+  listing creation. Nothing to automate. Already how M5a works.
+- **Per-order personalised files: there is no API to attach a file to a
+  specific order after purchase.** Confirmed via `etsy/open-api` #1301, with
+  Etsy contributors stating there is no programmatic path into Etsy Chat.
+  Sellers upload by hand or email.
+
+⚠ **Write this into any future design that assumes personalised digital
+delivery.** It cannot be automated end to end — not a tooling gap, a platform
+wall. No open-source project solves it because it is unsolvable from outside.
+
+### 9.5 Listing renewal — **CLOSED as a research question**
+$0.20 on expiry at 4 months, auto-renew is a listing-level flag. Community
+consensus converges: **renewal affects recency only, not a full re-index** — so
+renew-for-SEO is cargo cult. Track expiry, cron a renew call. ~20 lines against
+the API we already have.
+
+### 9.6 Prior art — thin
+`devonjhills/etsy-digital-mockup-tools` (MIT, 11★) is the closest: mockups +
+LLM listing copy + OAuth2/PKCE upload + bulk creation. Worth a skim for the
+mockup structure and PKCE flow. **REFERENCE.**
+
+**No project was found doing Etsy + POD + listing enrichment end to end at any
+maturity.** Our "POD creates the listing, we enrich it" pattern appears to have
+no open-source prior art at all. Genuinely under-explored, not reinvented.
+
+---
+
+## 10. Social promotion — **the honest answer is "not yet"**
+
+### 10.1 instagrapi and the unofficial path — **CLOSED**
+`subzeroid/instagrapi` · MIT · very active. Licence is fine; **the risk is not.**
+Its *own README* now steers business users to the official API and calls
+private-API automation fragile in production. Reported suspension rates:
+**<0.5%/yr for official-API tools vs 15–30%/yr for app-emulating automation.**
+We would be betting the shop's only Instagram account to save an app review.
+
+### 10.2 Self-hosted schedulers
+- `gitroomhq/postiz-app` · **AGPL-3.0** · 34.3k★ — **CLOSED as a dependency.**
+  AGPL is *stricter* than GPL for anything network-served, which is what we are.
+  Safe to read its Instagram/Pinterest client code for API-call shape; never vendor.
+- `inovector/mixpost` · **MIT** · Laravel — licence fine, but **Instagram is
+  gated to the paid tier and is not in the open-source core.** REFERENCE only.
+
+### 10.3 The official Instagram API — clean but mismatched
+Content Publishing API, confirmed against Meta's docs: Professional
+(Business/Creator) account linked to a Facebook Page, Page Publishing
+Authorization, a Meta developer app, and app review for
+`instagram_business_content_publish` — **2–4 weeks, one-time.** Two-step publish
+(container → `media_publish`). **JPEG only, no PNG.** Carousels ≤10. No product
+tags via API, no alt text on Reels/Stories.
+⚠ Rate limit sources disagree — 100 posts/24h vs 25. **Unverified; don't design
+near either ceiling.**
+
+**The problem is not the API, it's the content.** Converging sources: **Reels
+drive Instagram discovery; static feed photos reach only existing followers.**
+Our pipeline produces a single composited photograph. An automated feed post is
+therefore *"notify the followers we already have"*, not *"acquire traffic"* —
+and traffic is the entire constraint. Building it would ship a feature whose own
+evidence says it won't move the needle.
+
+### 10.4 Pinterest is the better bet — and it's testable for free
+Pinterest API v5 is free at Trial and Standard, OAuth, generous limits (1000
+read/min, 100 write/min), and structurally better suited: **evergreen search
+traffic rather than an ephemeral feed.**
+⚠ **Unverified:** one source says pins created under Trial access are hidden
+from the public until a video-demo review passes. If true that is a gate
+comparable to Meta's. Verify against Pinterest's own docs before writing code.
+
+**The actual recommendation, and it needs no code:** Etsy supports a one-time
+**Pinterest claim of the shop URL**, which makes every listing eligible for
+**Rich Pins** — live price and availability on any pin, including hand-made
+ones. It is *not* an auto-poster; it enriches pins that already exist. **Five
+minutes in Etsy's settings, zero engineering.** Do that, watch Etsy Stats →
+Traffic Sources for a few weeks, and build an adapter only if Pinterest traffic
+actually shows up.
+
+**Bottom line for the whole lane: don't build it yet.** Not on licence, not on
+API access — on evidence. Test the hypothesis for free first.
+
+---
+
 ## Licence summary
 
 | Project | Licence | Safe to vendor? |
@@ -380,11 +647,22 @@ research it a fifth.**
 | pixcull | MIT | yes (we won't — too big) |
 | facet | MIT | yes |
 | lightroom-mcp | MIT | yes (Lua only) |
+| imutils | MIT | yes |
+| psd-tools | MIT | yes |
+| smartcrop.py | MIT | yes |
+| automated_mockups | MIT | yes |
+| etsy-python-sdk | MIT | yes |
+| etsy-digital-mockup-tools | MIT | yes |
+| mixpost | MIT | yes (but IG is paid-tier) |
 | PhotoSort | Apache-2.0 | yes |
+| Katna | MIT | yes (too heavy) |
 | MMArt datasets | Apache-2.0 | yes |
+| Real-ESRGAN | BSD-3 | licence fine — **blocked by our own rule** |
 | canon_cr3 | **GPL-3.0** | **no** — docs only |
 | preset-generator | **GPL-3.0** | **no** |
 | lightroom-cc-api | **GPL-3.0** | **no** |
+| etsyv3 | **GPL-3.0** | **no** |
+| postiz | **AGPL-3.0** | **no** — worse than GPL for a served app |
 | JarvisArt / JarvisEvo | **non-commercial** | **no** — this is a business |
 
 **The rule: ShopSteward is MIT** (`pyproject.toml`, `LICENSE`) and is going
@@ -401,15 +679,48 @@ notice with anything we copy verbatim.
 
 ---
 
-## What this changes, if anything
+## What this changes
 
-Nothing today — we are in M5b, and every item above lands in M2a/M2b/M3.
-Three things to carry forward:
+### Do now (no code)
+- **Claim the Etsy shop on Pinterest.** Five minutes, zero engineering, enables
+  Rich Pins, and it tests whether Pinterest traffic exists *before* we build any
+  social adapter. §10.4. This is the highest ratio of value to effort in the
+  whole survey.
 
-1. **TODO #3's spike now has a stated hypothesis** (geometry keys are dropped)
-   and a stated fallback (§3.2, `ElementTree`, no new dependency). Test the
-   sidecar *round-trip*, not just the write.
-2. **The 6-axis rubric and the XMP-sidecar transport** are the two design ideas
-   worth stealing before M3's scoring work starts.
-3. **Printify is the POD fallback, Printful is not.** Written down so the
-   question stays closed.
+### Carry into M2/M3/M4
+1. **TODO #3's spike has a stated hypothesis** (geometry keys dropped) and a
+   stated fallback (§3.2, `ElementTree`, no new dependency). Test the sidecar
+   *round-trip*, not just the write.
+2. **The 6-axis rubric and XMP-sidecar transport** (§1.1) before M3 scoring.
+3. **`psd-tools` + `warpPerspective` is the M4 mockup architecture** (§7.1).
+   Buy professional room-scene PSDs, read the smart object's four corners, warp
+   ourselves. Skips Photoshop and skips the SaaS paywall.
+4. **Displacement map + Multiply blend** (§7.2) is how deterministic compositing
+   reaches professional quality — `cv2.remap` and a numpy multiply, no new
+   dependency. Settles any doubt about the "no generative fill" rule costing us
+   realism.
+5. **`smartcrop.py` for aspect fitting** (§8.2) — classical CV, passes the hard
+   rule, fixes destructive centre-crops.
+6. **Acrylic is the least forgiving SKU, not the most** (§8.1) — gloss reveals
+   grain that canvas texture hides. The viability gate must be per-product.
+   Gelato's own number is **150–225 PPI in the BleedBox**.
+
+### Now settled, stop looking
+7. **Etsy has no search-volume API and never has.** Every SEO tool scrapes.
+   Don't build one, don't adopt one (§9.2).
+8. **Etsy gives lifetime cumulative views only — no history, ever.** Our
+   poll-and-snapshot event sourcing is not a workaround, it is the only known
+   design (§9.3).
+9. **Per-order personalised digital files cannot be delivered via API** (§9.4).
+   A platform wall. Any design assuming otherwise is wrong.
+10. **Printify is the POD fallback, Printful is not** (§6).
+11. **Don't build Instagram automation yet** (§10). Not licence, not access —
+    evidence. Our pipeline makes stills; stills don't drive discovery.
+
+### The pattern across all of it
+Three times over — mockups (§7), print prep (§8), and Etsy+POD end to end
+(§9.6) — the search returned **no mature open-source project at all.** That is
+not a gap in the searching. These are real gaps, and it means ShopSteward is
+composing primitives rather than reinventing frameworks. Worth remembering when
+this repo goes public: the parts with no prior art are the parts worth
+publishing.

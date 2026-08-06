@@ -69,6 +69,19 @@ than to find it as two identical $7.99 downloads in your shop. Grep the digital
 draft builder for `landing_file_id` keying and compare against
 `pipeline/listings/pod/build.py:_photo_key`.
 
+### 6. Claim the shop on Pinterest — **5 minutes, zero code**
+Traffic is the binding constraint, and this is the cheapest test of a traffic
+channel available. Etsy supports a one-time Pinterest claim of the shop URL,
+which makes every listing eligible for **Rich Pins** — live price and
+availability on any pin, including ones you make by hand. It is *not* an
+auto-poster.
+
+Do it, then watch Etsy Stats → Traffic Sources for a few weeks. **Build a social
+adapter only if Pinterest traffic actually appears.** Evidence says Instagram is
+the wrong first bet: Reels drive discovery, static photos only reach existing
+followers, and our pipeline makes stills. See
+`docs/research/2026-08-05-external-tools-survey.md` §10.
+
 ---
 
 ## State of the code
