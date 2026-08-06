@@ -132,6 +132,27 @@ def test_missing_usage_yields_none_tokens_and_cost() -> None:
 
 
 @respx.mock
+def test_long_rationale_within_max_length_validates() -> None:
+    # Verify that rationale longer than 140 chars (the old limit) but under 500 (new limit)
+    # validates successfully. Real Pro model verdicts are 150-250 chars.
+    long_rationale = (
+        "This is a professional interior photograph with excellent composition and lighting. "
+        "The styling is contemporary with neutral tones that appeal to a broad market. "
+        "Wall space is clean and uncluttered, providing ideal staging for product mockups. "
+        "Minor shadows in lower left corner, but overall excellent commercial viability."
+    )
+    assert len(long_rationale) > 140 and len(long_rationale) < 500
+
+    long_verdict = {**VALID_VERDICT, "rationale": long_rationale}
+    respx.post(BASE).mock(return_value=_response(json.dumps(long_verdict)))
+    adapter = OpenRouterVisionAdapter(api_key="k", prompt=PROMPT)
+
+    result = adapter.score_commercial(JPEG_BYTES, model=MODEL)
+
+    assert result.verdict.rationale == long_rationale
+
+
+@respx.mock
 def test_huge_payload_error_message_is_truncated() -> None:
     huge_choices = [{"message": {"content": "x" * 5000}}]
     respx.post(BASE).mock(return_value=httpx.Response(200, json={"choices": huge_choices}))

@@ -114,7 +114,7 @@ Scored photos never re-scored (idempotent via proj_scores).
 ## 4. Vision adapter
 
 VisionVerdict {commercial_score int 0-100, subject, strongest_room_style,
-one_risk, rationale ≤140 chars}; VisionUsage {model, input_tokens?,
+one_risk, rationale ≤500 chars}; VisionUsage {model, input_tokens?,
 output_tokens?, est_cost_usd?}; VisionResult {verdict, usage|None}.
 `score_commercial(jpeg_bytes, *, model) -> VisionResult`.
 

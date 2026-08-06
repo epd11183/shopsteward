@@ -1,5 +1,6 @@
 """ShopSteward CLI. UI is the primary surface; this is the scriptable path."""
 
+import logging
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -26,6 +27,7 @@ def main() -> None:
     typer app itself — tests import/invoke `app` and must never inherit the
     operator's real .env). Existing env vars win over .env values."""
     load_dotenv()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     app()
 
 
