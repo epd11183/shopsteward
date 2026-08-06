@@ -209,10 +209,14 @@ shipped the fix on the physical side, this is the last place it lives.
 
 ## Research
 
-- `docs/research/2026-08-05-external-tools-survey.md` — culling, Lightroom
-  automation, presets, POD. Verdicts are BORROW / REFERENCE / **CLOSED**; the
-  CLOSED list exists so we stop re-researching Printful, Lightroom cloud, and
-  the two non-commercial Jarvis models. Lands in M2a/M2b/M3, not M5b.
+- `docs/research/2026-08-05-direction-findings.md` — **read this one first.**
+  What the survey implies for *direction*: four decisions for you, and a PRD
+  discrepancy register (Pinterest is a §3 non-goal; the evidence says it is the
+  live channel). Nothing acted on.
+- `docs/research/2026-08-05-external-tools-survey.md` — the underlying survey.
+  Culling, Lightroom automation, presets, mockups, print prep, Etsy, social.
+  Verdicts are BORROW / REFERENCE / **CLOSED**; the CLOSED list exists so we
+  stop re-researching Printful, Etsy SEO tooling, and Lightroom cloud.
 
 ## Designs written but not built
 
