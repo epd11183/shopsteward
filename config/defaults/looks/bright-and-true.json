@@ -1,0 +1,10 @@
+{
+  "name": "bright-and-true",
+  "description": "Clean, faithful color with a gentle lift. Minimal grade.",
+  "contrast": 8,
+  "tone_curve": [[0, 0], [64, 60], [128, 132], [192, 200], [255, 255]],
+  "hsl": {},
+  "split_toning": {},
+  "vibrance": 10,
+  "saturation": 0
+}
