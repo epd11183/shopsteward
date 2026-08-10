@@ -169,3 +169,41 @@ def run(
         )
     finally:
         conn.close()
+
+
+look_app = typer.Typer(no_args_is_help=True, help="Look tools: A/B preview.")
+edit_app.add_typer(look_app, name="look")
+
+
+@look_app.command("preview")
+def look_preview(
+    sample_dir: Annotated[str, typer.Argument(help="Folder of a few sample RAWs")],
+    look: Annotated[str, typer.Option(help="Candidate look name or description")],
+    against: Annotated[str, typer.Option(help="Comparison seed look")] = "bright-and-true",
+    live_look: Annotated[
+        bool, typer.Option(help="Generate a described candidate via the live LLM")
+    ] = False,
+) -> None:
+    """Write candidate + comparison sidecars into <sample_dir>/_preview/ for LR compare."""
+    from shopsteward.editing.config import LOOKS_DIR
+    from shopsteward.editing.preview import run_preview
+
+    conn = connect(db_path())
+    try:
+        migrate(conn)
+        adapter, is_live = _build_look_adapter(live_look)
+        llm = load_look_llm()
+        guard = load_look_guard()
+        out = run_preview(
+            conn, DEFAULT_USER_ID, Path(sample_dir), look, against=against,
+            decoder=_default_decoder(), look_adapter=adapter,
+            model=llm.get("model", "fixture"), knobs=load_correction_knobs(), looks_dir=LOOKS_DIR,
+            guard_knobs=guard if is_live else None,
+            soft_cap_usd=llm.get("monthly_soft_cap_usd") if is_live else None,
+            fallback_look=guard.get("fallback_look", "bright-and-true"),
+            month_prefix=datetime.now(UTC).strftime("%Y-%m"),
+        )
+        typer.echo(f"preview: candidate={out['candidate']} vs {out['against']} "
+                   f"— {out['frames']} frames in {out['dir']}")
+    finally:
+        conn.close()
