@@ -53,10 +53,12 @@ class OpenRouterLookAdapter:
         pricing: dict[str, dict[str, float]] | None = None,
         temperature: float = 0.7,
         timeout: float = 60.0,
+        structured: bool = True,
     ):
         self._prompt_template = prompt_template
         self._pricing = pricing
         self._temperature = temperature
+        self._structured = structured
         self._client = httpx.Client(
             headers={
                 "Authorization": f"Bearer {api_key}",
@@ -72,11 +74,12 @@ class OpenRouterLookAdapter:
             "model": model,
             "temperature": self._temperature,
             "messages": [{"role": "user", "content": prompt}],
-            "response_format": {
+        }
+        if self._structured:
+            body["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {"name": "look_profile", "strict": True, "schema": _PROFILE_SCHEMA},
-            },
-        }
+            }
         resp = self._client.post(BASE, json=body)
         resp.raise_for_status()
         payload = resp.json()

@@ -47,3 +47,17 @@ def test_openrouter_raises_on_bad_json():
     adapter = OpenRouterLookAdapter(api_key="k", prompt_template="{description}")
     with pytest.raises(LookParseError):
         adapter.generate_look("x", model="m")
+
+
+@respx.mock
+def test_openrouter_prompt_guided_omits_response_format():
+    import json as _json
+    route = respx.post(BASE).mock(return_value=httpx.Response(200, json={
+        "choices": [{"message": {"content": '{"contrast": 5}'}}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+    }))
+    adapter = OpenRouterLookAdapter(api_key="k", prompt_template="{description}", structured=False)
+    result = adapter.generate_look("warm", model="m")
+    assert result.profile.contrast == 5
+    body = _json.loads(route.calls[0].request.content)
+    assert "response_format" not in body
