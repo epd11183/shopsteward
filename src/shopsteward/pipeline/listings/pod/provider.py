@@ -1,6 +1,8 @@
 """POD provider create->poll->link (Phase C, slice 3, design §7.1/§3). For
 every POD draft that reached `listingdraft.print_file_hosted` (pod/build.py,
-slice 2) and has no CONFIRMED provider product (pod_status == "linked"),
+slice 2) and has no CONFIRMED provider product (etsy_listing_id IS NULL --
+the durable link signal; pod_status is mutable and advances past "linked"
+once enrichment runs, so it must never gate the skip),
 this builds a `PodProductSpec` from the draft's already-selected+priced
 variants, calls `PodAdapter.create_product`, polls `get_product` until
 linked/failed/poll_max, and events the outcome. Never raises on one draft's
@@ -58,7 +60,7 @@ class PodLinkReport(BaseModel):
 def _eligible_rows(conn: sqlite3.Connection, user_id: int) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT draft_id, landing_file_id, photo_id, format AS product_type, "
-        "variants_json, currency, provider_product_id, pod_status "
+        "variants_json, currency, provider_product_id, pod_status, etsy_listing_id "
         "FROM proj_listing_drafts WHERE user_id=? AND pod_config_hash IS NOT NULL "
         "AND print_file_key IS NOT NULL ORDER BY draft_id",
         (user_id,),
@@ -147,7 +149,7 @@ def link_pod_drafts(
     poll_interval = cfg.gelato.poll_interval_seconds
 
     for row in _eligible_rows(conn, user_id):
-        if not force and row["pod_status"] == "linked":
+        if not force and row["etsy_listing_id"] is not None:
             report.skipped_idempotent += 1
             continue
 

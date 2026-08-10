@@ -52,6 +52,41 @@ def test_run_shop_build_links_and_enriches_pod_drafts(conn, tmp_path):
     assert enriched["n"] > 0
 
 
+def test_run_shop_build_twice_is_idempotent(conn, tmp_path):
+    """Rerunning `shop build` on the same folder/conn must not regress an
+    already-linked draft. link_pod_drafts used to gate its skip on the
+    mutable pod_status ('linked'), which enrich_pod_drafts advances past
+    ('enriched'/'enrich_failed') -- so a second run re-polled already-linked
+    drafts against a FRESH fake adapter with no products, got a 404, and
+    flipped them from 'enriched' back to 'failed'. The skip must key off the
+    durable etsy_listing_id instead."""
+    folder = _winners_folder(tmp_path)
+
+    result1 = run_shop_build(conn, USER_ID, folder)
+    assert result1["pod_linked"] > 0
+    assert result1["pod_enriched"] > 0
+
+    statuses_after_1 = {
+        r["draft_id"]: r["pod_status"]
+        for r in conn.execute("SELECT draft_id, pod_status FROM proj_listing_drafts").fetchall()
+    }
+    enriched_after_1 = {d for d, s in statuses_after_1.items() if s == "enriched"}
+    assert enriched_after_1
+
+    result2 = run_shop_build(conn, USER_ID, folder)
+
+    # Nothing already linked gets re-created; only a draft that never got a
+    # provider_product_id in run 1 (e.g. a catalog gap) legitimately retries.
+    assert result2["pod_link_created"] == 0
+
+    statuses_after_2 = {
+        r["draft_id"]: r["pod_status"]
+        for r in conn.execute("SELECT draft_id, pod_status FROM proj_listing_drafts").fetchall()
+    }
+    for draft_id in enriched_after_1:
+        assert statuses_after_2[draft_id] != "failed"
+
+
 def test_run_shop_build_refuses_live_gelato_before_creating_products(conn, tmp_path):
     folder = _winners_folder(tmp_path)
 
