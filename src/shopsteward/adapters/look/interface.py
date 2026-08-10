@@ -11,6 +11,12 @@ class LookProfile(BaseModel):
     name: str
     description: str = ""
     contrast: int = Field(default=0, ge=-100, le=100)
+    highlights: int = Field(default=0, ge=-100, le=100)
+    whites: int = Field(default=0, ge=-100, le=100)
+    blacks: int = Field(default=0, ge=-100, le=100)
+    clarity: int = Field(default=0, ge=-100, le=100)
+    dehaze: int = Field(default=0, ge=-100, le=100)
+    texture: int = Field(default=0, ge=-100, le=100)
     tone_curve: list[list[int]] = Field(default_factory=list)  # [[x, y], ...]
     hsl: dict[str, int] = Field(default_factory=dict)
     split_toning: dict[str, int] = Field(default_factory=dict)

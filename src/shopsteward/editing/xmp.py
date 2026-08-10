@@ -1,7 +1,9 @@
 """Compose an Adobe Camera Raw XMP sidecar from a correction + a look, and write
 it next to the RAW. WB is trusted as-shot (Temp/Tint omitted). Correction owns
-Exposure2012 + a local luminance-range shadow-lift mask; the look owns Contrast,
-tone curve, HSL, split toning, vibrance, saturation.
+Exposure2012, adaptive Highlights/Blacks recovery, and a local luminance-range
+shadow-lift mask; the look owns Contrast, presence (Whites/Clarity/Dehaze/
+Texture), tone curve, HSL, split toning, vibrance, saturation, plus a creative
+Highlights/Blacks bias that sums onto the correction's adaptive value.
 
 ponytail: the local-mask (MaskGroupBasedCorrections) block is the fiddliest part
 of the ACR schema; it is verified structurally in tests and MUST be confirmed by
@@ -33,11 +35,20 @@ def sidecar_path(raw_path: Path) -> Path:
 
 
 def compose(correction: CorrectionSettings, look: LookProfile) -> str:
+    # Highlights/Blacks = adaptive per-photo correction + the look's creative bias.
+    highlights = _clamp(correction.highlight_recovery + look.highlights, -100, 100)
+    blacks = _clamp(correction.black_point + look.blacks, -100, 100)
     attrs: list[str] = [
         'crs:Version="15.0"',
         'crs:WhiteBalance="As Shot"',
         f'crs:Exposure2012="{correction.exposure:.2f}"',
         f'crs:Contrast2012="{_clamp(look.contrast, -100, 100)}"',
+        f'crs:Highlights2012="{highlights}"',
+        f'crs:Whites2012="{_clamp(look.whites, -100, 100)}"',
+        f'crs:Blacks2012="{blacks}"',
+        f'crs:Clarity2012="{_clamp(look.clarity, -100, 100)}"',
+        f'crs:Dehaze="{_clamp(look.dehaze, -100, 100)}"',
+        f'crs:Texture="{_clamp(look.texture, -100, 100)}"',
         f'crs:Vibrance="{_clamp(look.vibrance, -100, 100)}"',
         f'crs:Saturation="{_clamp(look.saturation, -100, 100)}"',
     ]

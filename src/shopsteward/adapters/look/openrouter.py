@@ -20,6 +20,12 @@ _PROFILE_SCHEMA = {
     "type": "object",
     "properties": {
         "contrast": {"type": "integer", "minimum": -100, "maximum": 100},
+        "highlights": {"type": "integer", "minimum": -100, "maximum": 100},
+        "whites": {"type": "integer", "minimum": -100, "maximum": 100},
+        "blacks": {"type": "integer", "minimum": -100, "maximum": 100},
+        "clarity": {"type": "integer", "minimum": -100, "maximum": 100},
+        "dehaze": {"type": "integer", "minimum": -100, "maximum": 100},
+        "texture": {"type": "integer", "minimum": -100, "maximum": 100},
         "tone_curve": {
             "type": "array",
             "items": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2},
@@ -29,7 +35,10 @@ _PROFILE_SCHEMA = {
         "vibrance": {"type": "integer", "minimum": -100, "maximum": 100},
         "saturation": {"type": "integer", "minimum": -100, "maximum": 100},
     },
-    "required": ["contrast", "tone_curve", "hsl", "split_toning", "vibrance", "saturation"],
+    "required": [
+        "contrast", "highlights", "whites", "blacks", "clarity", "dehaze", "texture",
+        "tone_curve", "hsl", "split_toning", "vibrance", "saturation",
+    ],
     "additionalProperties": False,
 }
 
