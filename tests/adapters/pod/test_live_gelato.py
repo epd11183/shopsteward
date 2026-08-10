@@ -3,7 +3,7 @@ import pytest
 import respx
 
 from shopsteward.adapters.pod.interface import PodWriteError
-from shopsteward.adapters.pod.live import LiveGelatoAdapter
+from shopsteward.adapters.pod.live import LiveGelatoAdapter, format_template_variants
 from shopsteward.adapters.pod.models import PodProductSpec, PodProviderRef, PodVariantSpec
 
 BASE = "https://ecommerce.gelatoapis.com"
@@ -133,6 +133,54 @@ def test_create_product_error_maps_to_pod_write_error_without_full_body() -> Non
     message = str(exc_info.value)
     assert "bad template" in message
     assert "leak-me" not in message
+
+
+@respx.mock
+def test_get_template_returns_parsed_dict() -> None:
+    body = {
+        "id": "tpl",
+        "variants": [
+            {"id": "tv-1", "title": "16x20", "imagePlaceholders": [{"name": "ImageFront"}]},
+            {
+                "templateVariantId": "tv-2",
+                "imagePlaceholders": [{"name": "Front"}, {"name": "Back"}],
+            },
+        ],
+    }
+    respx.get(f"{BASE}/v1/templates/tpl").mock(return_value=httpx.Response(200, json=body))
+
+    result = _adapter().get_template("tpl")
+    assert result == body
+
+
+@respx.mock
+def test_get_template_error_maps_to_pod_write_error() -> None:
+    respx.get(f"{BASE}/v1/templates/tpl").mock(
+        return_value=httpx.Response(404, json={"error": "no template"})
+    )
+    with pytest.raises(PodWriteError) as exc_info:
+        _adapter().get_template("tpl")
+    assert exc_info.value.status_code == 404
+
+
+def test_format_template_variants_extracts_ids_and_placeholder_names() -> None:
+    body = {
+        "variants": [
+            {"id": "tv-1", "imagePlaceholders": [{"name": "ImageFront"}]},
+            {
+                "templateVariantId": "tv-2",
+                "imagePlaceholders": [{"name": "Front"}, {"name": "Back"}, {}],
+            },
+        ]
+    }
+    lines = format_template_variants(body)
+    joined = "\n".join(lines)
+    assert "tv-1" in joined
+    assert "tv-2" in joined
+    assert "ImageFront" in joined
+    assert "Front" in joined and "Back" in joined
+    # a placeholder with no name is skipped, not rendered as an empty line
+    assert "placeholder: \n" not in joined + "\n"
 
 
 @respx.mock

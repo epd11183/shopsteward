@@ -126,7 +126,7 @@ def run_shop_build(
         adapter=build_pod_adapter(
             live=live_gelato,
             etsy_listings=getattr(etsy_adapter, "listings", None),
-            store_id=pod_cfg.gelato.store_id,
+            store_id=pod_config.resolve_store_id(pod_cfg),
         ),
         print_file_host=host,
         cfg=pod_cfg,

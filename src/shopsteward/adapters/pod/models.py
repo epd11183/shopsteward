@@ -18,6 +18,11 @@ from typing import Literal
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 _OPERATOR_PLACEHOLDER = "<OPERATOR>"
+# pod.json ships store_id as this literal so the PUBLIC repo never carries a
+# real Gelato store id; the real value comes from GELATO_STORE_ID at runtime
+# (pod/config.py::resolve_store_id). A live spec still holding it is a config
+# error, rejected here the same way the "<OPERATOR>" catalog placeholders are.
+_STORE_ID_PLACEHOLDER = "REPLACE_AT_C3_gelato_store_id"
 
 
 class PodVariantSpec(BaseModel):
@@ -25,7 +30,11 @@ class PodVariantSpec(BaseModel):
     variant_key: str = Field(min_length=1)  # OPAQUE. gelato: templateVariantId
     placeholder: str | None = None  # gelato imagePlaceholders[].name  ("ImageFront")
     fit_method: str | None = None  # gelato fitMethod                 ("slice")
-    retail_price: float = Field(gt=0)  # set HERE, at product creation -- never via Etsy inventory
+    # Our computed (margin-cleared) price recommendation, kept on the spec for
+    # records + surfaced by `pod build --dry-run` so the operator can enter it
+    # on the Gelato TEMPLATE. NOT sent to Gelato at create: create-from-template
+    # has no price field; retail price is inherited from the template.
+    retail_price: float = Field(gt=0)
 
     @field_validator("variant_key")
     @classmethod
@@ -49,11 +58,11 @@ class PodProviderRef(BaseModel):
     @field_validator("store_id", "template_id")
     @classmethod
     def _reject_operator_placeholder(cls, value: str | None, info: ValidationInfo) -> str | None:
-        if value == _OPERATOR_PLACEHOLDER:
+        if value in (_OPERATOR_PLACEHOLDER, _STORE_ID_PLACEHOLDER):
             raise ValueError(
-                f"{info.field_name} is the literal {_OPERATOR_PLACEHOLDER!r} placeholder "
+                f"{info.field_name} is the literal {value!r} placeholder "
                 "from pod.json -- an operator must supply a real value before this can "
-                "go live"
+                "go live (set GELATO_STORE_ID for store_id)"
             )
         return value
 

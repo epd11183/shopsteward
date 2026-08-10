@@ -85,7 +85,7 @@ def test_provider_ref_store_id_rejects_empty_and_placeholder() -> None:
     build a request against the wrong resource. Sibling of the variant_key and
     template_id guards (review round 3)."""
     variant = PodVariantSpec(format="framed_poster_16x20", variant_key="v1", retail_price=99.0)
-    for bad in ("", "<OPERATOR>"):
+    for bad in ("", "<OPERATOR>", "REPLACE_AT_C3_gelato_store_id"):
         with pytest.raises(ValidationError):
             PodProviderRef(provider="gelato", store_id=bad, template_id="t1", variants=[variant])
 

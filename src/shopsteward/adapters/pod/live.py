@@ -32,6 +32,28 @@ def _safe_error_from_data(data: dict) -> str | None:
     return err if isinstance(err, str) else None
 
 
+def format_template_variants(data: dict) -> list[str]:
+    """Copy-pasteable lines describing each template variant's templateVariantId
+    (-> pod.json variant_key) and imagePlaceholder names (-> pod.json
+    placeholder). Defensive against the exact key nesting: the Get Template
+    response gives each variant an id and imagePlaceholders[{name}]; we read
+    templateVariantId or id, and skip placeholders with no name."""
+    lines: list[str] = []
+    variants = data.get("variants") or []
+    for v in variants:
+        variant_id = v.get("templateVariantId") or v.get("id") or "?"
+        title = v.get("title") or v.get("name")
+        header = f"variant_key: {variant_id}"
+        if title:
+            header += f"   ({title})"
+        lines.append(header)
+        for p in v.get("imagePlaceholders") or []:
+            name = p.get("name")
+            if name:
+                lines.append(f"    placeholder: {name}")
+    return lines
+
+
 def _as_int(external_id: object) -> int | None:
     try:
         return int(external_id) if external_id not in (None, "") else None
@@ -82,9 +104,12 @@ class LiveGelatoAdapter:
                             "fitMethod": v.fit_method,
                         }
                     ],
-                    # ponytail: per-variant retail_price submission is UNVERIFIED against
-                    # Gelato's live API (docs omit a price field on create-from-template);
-                    # resolve at the operator smoke before trusting live margins.
+                    # No price is sent here by design: Gelato's
+                    # create-from-template body has NO price field. Retail price
+                    # is configured on the Gelato TEMPLATE in the dashboard and
+                    # inherited at create. Our computed spec.retail_price is a
+                    # recommendation surfaced by `pod build --dry-run` for the
+                    # operator to enter on the template -- never submitted here.
                 }
                 for v in spec.ref.variants
             ],
@@ -93,6 +118,16 @@ class LiveGelatoAdapter:
         if resp.status_code >= 400:
             raise PodWriteError(resp.status_code, _safe_error(resp))
         return self._to_product(resp.json(), variant_count=len(spec.ref.variants))
+
+    def get_template(self, template_id: str) -> dict:
+        """Fetch a Gelato template (its variants + imagePlaceholder names).
+        Read-only helper for `pod template show` -- discovers the
+        templateVariantId + placeholder names to fill into pod.json."""
+        url = f"{self._base}/v1/templates/{template_id}"
+        resp = self._client.get(url)
+        if resp.status_code >= 400:
+            raise PodWriteError(resp.status_code, _safe_error(resp))
+        return resp.json()
 
     def get_product(self, provider_product_id: str) -> PodProduct:
         url = f"{self._base}/v1/stores/{self._store_id}/products/{provider_product_id}"
