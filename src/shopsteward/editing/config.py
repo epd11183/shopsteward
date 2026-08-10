@@ -22,3 +22,11 @@ def load_correction_knobs() -> dict:
 
 def load_look_prompt() -> str:
     return LOOK_PROMPT_PATH.read_text()
+
+
+def load_look_llm() -> dict:
+    return load_editing_defaults().get("look_llm", {})
+
+
+def load_look_guard() -> dict:
+    return load_editing_defaults().get("look_guard", {})

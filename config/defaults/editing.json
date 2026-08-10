@@ -22,5 +22,21 @@
     "cast_trigger": 0.06,
     "cast_nudge_cap": 8,
     "cast_full_scale_bias": 0.2
+  },
+  "look_llm": {
+    "provider": "openrouter",
+    "model": "anthropic/claude-sonnet-4.5",
+    "temperature": 0.7,
+    "structured_output": false,
+    "pricing": { "anthropic/claude-sonnet-4.5": { "in": 3.0, "out": 15.0 } },
+    "monthly_soft_cap_usd": 5.0,
+    "_pricing_note": "Confirm in/out per-Mtok against https://openrouter.ai/anthropic/claude-sonnet-4.5"
+  },
+  "look_guard": {
+    "fallback_look": "bright-and-true",
+    "max_saturation_load": 220,
+    "max_contrast_tone": 140,
+    "max_presence_load": 200,
+    "max_split_saturation": 60
   }
 }
