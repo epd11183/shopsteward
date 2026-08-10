@@ -14,7 +14,7 @@ PROJECTION_SCHEMA = """
 DROP TABLE IF EXISTS proj_photos;
 CREATE TABLE proj_photos (
     user_id INTEGER NOT NULL, photo_id TEXT NOT NULL, base_name TEXT NOT NULL,
-    raw_path TEXT NOT NULL, jpeg_path TEXT NOT NULL, raw_sha256 TEXT NOT NULL,
+    raw_path TEXT NOT NULL, jpeg_path TEXT, raw_sha256 TEXT NOT NULL,
     mode TEXT NOT NULL, status TEXT NOT NULL, exif_json TEXT NOT NULL,
     PRIMARY KEY (user_id, photo_id)
 );

@@ -45,3 +45,27 @@ class EditJobSpec(BaseModel):
     collection: str
     import_missing: bool = True
     export: ExportSpec | None = None  # None for hero jobs
+
+
+class CorrectionSettings(BaseModel):
+    """Objective per-image correction. WB is trusted as-shot. temp/tint nudges
+    are computed and recorded for a future per-camera calibration effort; v1
+    never writes them to XMP."""
+
+    white_balance: str = "As Shot"
+    temp_nudge: int = 0  # recorded recommendation; not written in v1
+    tint_nudge: int = 0
+    exposure: float = 0.0  # stops, global Exposure2012
+    shadow_lift: float = 0.0  # local exposure boost in the shadow mask, stops
+    shadow_range_low: int = 0  # luminance range mask lower bound, 0-100
+    shadow_range_high: int = 45  # upper bound, 0-100
+
+
+class EditReport(BaseModel):
+    edit_job_id: str
+    look: str
+    processed: int = 0
+    written: int = 0
+    skipped_existing: int = 0
+    failed: int = 0
+    sidecar_paths: list[str] = Field(default_factory=list)

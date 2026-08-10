@@ -1,15 +1,19 @@
 """`shopsteward edit` sub-app: preset browsing/seeding + bridge status."""
 
+from pathlib import Path
 from typing import Annotated
 
 import typer
 
 from shopsteward.adapters.lightroom.bridge import FolderBridge
+from shopsteward.adapters.look.fake import FixtureLookAdapter
 from shopsteward.core.db import connect, migrate
 from shopsteward.editing import presets
-from shopsteward.editing.config import PRESET_FAMILIES_DIR
+from shopsteward.editing.config import PRESET_FAMILIES_DIR, load_correction_knobs
+from shopsteward.editing.edit import run_edit
 from shopsteward.editing.outcomes import scan_outcomes
 from shopsteward.editing.projections import rebuild_editing
+from shopsteward.editing.rawdecode import RawpyDecoder
 from shopsteward.settings import DEFAULT_USER_ID, bridge_dir, db_path
 
 edit_app = typer.Typer(no_args_is_help=True, help="Editing module: presets + bridge status.")
@@ -87,5 +91,43 @@ def status() -> None:
             (DEFAULT_USER_ID,),
         ).fetchall():
             typer.echo(f"  {row['status']}: {row['n']}")
+    finally:
+        conn.close()
+
+
+def _default_decoder():
+    return RawpyDecoder()
+
+
+def _default_look_adapter():
+    # Offline default. Live LLM generation is gated (flag+env+key) — out of scope here.
+    return FixtureLookAdapter()
+
+
+@edit_app.command("run")
+def run(
+    path: Annotated[str, typer.Argument(help="Folder of RAW files to edit")],
+    look: Annotated[str, typer.Option(help="Look name or free-text description")],
+    regenerate: Annotated[
+        bool, typer.Option(help="Force LLM regeneration of a described look")
+    ] = False,
+    overwrite: Annotated[bool, typer.Option(help="Overwrite existing .xmp sidecars")] = False,
+    batch_lock: Annotated[bool, typer.Option(help="Average correction across the batch")] = False,
+    model: Annotated[str, typer.Option(help="LLM model id for described looks")] = "fixture",
+) -> None:
+    """Decode each RAW, compute correction + look, write an XMP sidecar."""
+    conn = connect(db_path())
+    try:
+        migrate(conn)
+        report = run_edit(
+            conn, DEFAULT_USER_ID, Path(path), look,
+            decoder=_default_decoder(), look_adapter=_default_look_adapter(),
+            model=model, knobs=load_correction_knobs(),
+            regenerate=regenerate, overwrite=overwrite, batch_lock=batch_lock,
+        )
+        typer.echo(
+            f"look={report.look} processed={report.processed} written={report.written} "
+            f"skipped_existing={report.skipped_existing} failed={report.failed}"
+        )
     finally:
         conn.close()

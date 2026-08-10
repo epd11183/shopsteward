@@ -1,0 +1,10 @@
+{
+  "name": "national-geographic",
+  "description": "Rich earthy contrast, warm shadows, restrained saturation.",
+  "contrast": 18,
+  "tone_curve": [[0, 6], [64, 56], [128, 128], [192, 202], [255, 250]],
+  "hsl": {"SaturationOrange": 8, "SaturationGreen": -6, "LuminanceBlue": -8},
+  "split_toning": {"SplitToningShadowHue": 45, "SplitToningShadowSaturation": 12, "SplitToningBalance": -10},
+  "vibrance": 14,
+  "saturation": -4
+}
