@@ -47,7 +47,7 @@ def run_shop_build(
     tuning.seed(conn, user_id, TUNING_PROFILE_PATH)
     profile = tuning.get_profile(conn, user_id)
 
-    # Refuse up front (before any event is emitted) if a --live-* flag is set
+    # Refuse up front (before any scan or spend) if a --live-* flag is set
     # but its gate is closed, mirroring the CLI-level checks in
     # listings/cli.py and cli.py::sync so a half-run never happens.
     if live_vision and not live_vision_open(profile.vision.provider):
@@ -64,7 +64,7 @@ def run_shop_build(
         conn,
         user_id,
         adapter=vision_adapter,
-        model=profile.vision.rescore_model,
+        model=profile.vision.triage_model,
         soft_cap_usd=profile.vision.monthly_soft_cap_usd,
         month_prefix=current_month_prefix(),
         regenerate=regenerate,
@@ -89,6 +89,7 @@ def run_shop_build(
         "scored": vision["scored"],
         "vision_skipped": vision["skipped"],
         "vision_failed": vision["failed"],
+        "vision_cap_hit": vision["cap_hit"],
         "mockup_sets": mockups.sets_completed,
         "mockups_written": mockups.mockups_written,
         "drafts": drafts.drafts_built,

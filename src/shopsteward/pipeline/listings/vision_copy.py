@@ -15,10 +15,6 @@ from shopsteward.pipeline.llm_ledger import monthly_spend
 from shopsteward.pipeline.projections import rebuild_pipeline
 
 
-class VisionCostCapError(RuntimeError):
-    """Raised when the month's vision-copy spend is already at/over the cap."""
-
-
 def _read_bytes(path: str) -> bytes:
     return Path(path).read_bytes()
 
@@ -48,16 +44,15 @@ def run_vision_copy(
     done = set() if regenerate else _already_scored(conn, user_id)
 
     scored = skipped = failed = 0
+    cap_hit = False
     for row in rows:
         sid = _synthetic_id(row["file_id"])
         if sid in done:
             skipped += 1
             continue
         if monthly_spend(conn, user_id, month_prefix) >= soft_cap_usd:
-            raise VisionCostCapError(
-                f"vision-copy spend for {month_prefix} is at the ${soft_cap_usd} cap; "
-                "raise tuning_profile.vision.monthly_soft_cap_usd to continue"
-            )
+            cap_hit = True
+            break
         try:
             result = adapter.score_commercial(_read_bytes(row["path"]), model=model)
         except Exception:  # noqa: BLE001 - per-photo vision failure is non-fatal
@@ -74,4 +69,4 @@ def run_vision_copy(
         scored += 1
 
     rebuild_pipeline(conn)
-    return {"scored": scored, "skipped": skipped, "failed": failed}
+    return {"scored": scored, "skipped": skipped, "failed": failed, "cap_hit": cap_hit}

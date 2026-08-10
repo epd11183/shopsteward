@@ -298,5 +298,9 @@ def shop_build(
             typer.secho(str(exc), fg="red")
             raise typer.Exit(code=1) from None
         typer.echo(f"shop build: {result}")
+        if result.get("vision_cap_hit"):
+            typer.secho(
+                "vision cost cap hit — some winners used generic copy", fg="yellow"
+            )
     finally:
         conn.close()

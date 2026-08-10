@@ -1,10 +1,8 @@
-import pytest
-
 from shopsteward.adapters.vision.fake import FakeVisionAdapter
 from shopsteward.adapters.vision.interface import VisionResult, VisionUsage, VisionVerdict
 from shopsteward.core.db import connect, migrate
 from shopsteward.core.events import Event, append
-from shopsteward.pipeline.listings.vision_copy import VisionCostCapError, run_vision_copy
+from shopsteward.pipeline.listings.vision_copy import run_vision_copy
 from shopsteward.pipeline.projections import rebuild_pipeline
 
 USER = 1
@@ -55,12 +53,12 @@ def test_idempotent_skip(monkeypatch):
     assert out["scored"] == 0 and out["skipped"] == 1
 
 
-def test_soft_cap_refuses(monkeypatch):
+def test_soft_cap_stops_scoring_without_raising(monkeypatch):
     c = _conn()
     _landing_winner(c)
     append(c, Event(user_id=USER, type="llm.call",
                     payload={"feature": "vision_copy", "est_cost_usd": 5.0}))
     monkeypatch.setattr("shopsteward.pipeline.listings.vision_copy._read_bytes", lambda p: b"jpg")
-    with pytest.raises(VisionCostCapError):
-        run_vision_copy(c, USER, adapter=FakeVisionAdapter([_verdict_result()]),
-                        model="m", soft_cap_usd=5.0, month_prefix="2026-08")
+    out = run_vision_copy(c, USER, adapter=FakeVisionAdapter([_verdict_result()]),
+                          model="m", soft_cap_usd=5.0, month_prefix="2026-08")
+    assert out["scored"] == 0 and out["cap_hit"] is True
