@@ -37,9 +37,13 @@ def build_print_file_host(*, live: bool) -> PrintFileHost:
     )
 
 
-def build_pod_adapter(*, live: bool):
+def build_pod_adapter(*, live: bool, etsy_listings: dict | None = None):
+    """`etsy_listings` (fake mode only): a `FakeEtsyWriteAdapter.listings`
+    dict to seed when a product links, so a caller chaining link then
+    enrich offline (shop.py) doesn't 404 against an id no Etsy fake ever
+    heard of -- see FakeGelatoAdapter's docstring."""
     from shopsteward.adapters.pod.fake import FakeGelatoAdapter
 
     if not live:
-        return FakeGelatoAdapter()
+        return FakeGelatoAdapter(etsy_listings=etsy_listings)
     raise NotImplementedError("live Gelato adapter is Phase C3 (not yet built)")
