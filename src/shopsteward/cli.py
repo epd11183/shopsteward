@@ -267,14 +267,19 @@ def shop_build(
     live_etsy_write: Annotated[
         bool, typer.Option("--live-etsy-write", help="Push drafts to the real Etsy API")
     ] = False,
+    live_printfile: Annotated[
+        bool, typer.Option("--live-printfile", help="Host POD print files on the real R2 bucket")
+    ] = False,
     regenerate: Annotated[
         bool, typer.Option("--regenerate", help="Re-run vision on already-scored winners")
     ] = False,
 ) -> None:
     """Scan a manual winners folder, run gated vision-for-copy, composite
-    staging-template mockups, and build+push Etsy digital listing drafts --
-    one command, unattended (scan_landing -> run_vision_copy -> run_mockups
-    -> build_drafts)."""
+    staging-template mockups, build+push Etsy digital listing drafts, and
+    build costed physical POD drafts through print-file hosting -- one
+    command, unattended (scan_landing -> run_vision_copy -> run_mockups ->
+    build_drafts -> build_pod_drafts). POD provider create/Etsy push/
+    enrichment is a later phase."""
     from shopsteward.core.db import connect, migrate
     from shopsteward.settings import DEFAULT_USER_ID, db_path
     from shopsteward.shop import LiveGateClosedError, run_shop_build
@@ -292,6 +297,7 @@ def shop_build(
                 live_vision=live_vision,
                 live_copy=live_copy,
                 live_etsy_write=live_etsy_write,
+                live_printfile=live_printfile,
                 regenerate=regenerate,
             )
         except LiveGateClosedError as exc:

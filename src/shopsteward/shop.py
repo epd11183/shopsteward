@@ -17,12 +17,16 @@ from shopsteward.pipeline import tuning
 from shopsteward.pipeline.config import TUNING_PROFILE_PATH
 from shopsteward.pipeline.landing import scan_landing
 from shopsteward.pipeline.listings.drafts import build_drafts
+from shopsteward.pipeline.listings.pod.build import build_pod_drafts
+from shopsteward.pipeline.listings.pod.factory import build_print_file_host
 from shopsteward.pipeline.listings.vision_copy import run_vision_copy
 from shopsteward.pipeline.live_gate import (
     live_copy_error,
     live_copy_open,
     live_etsy_write_error,
     live_etsy_write_open,
+    live_printfile_error,
+    live_printfile_open,
     live_vision_error,
     live_vision_open,
 )
@@ -42,6 +46,7 @@ def run_shop_build(
     live_vision: bool = False,
     live_copy: bool = False,
     live_etsy_write: bool = False,
+    live_printfile: bool = False,
     regenerate: bool = False,
 ) -> dict:
     tuning.seed(conn, user_id, TUNING_PROFILE_PATH)
@@ -56,6 +61,8 @@ def run_shop_build(
         raise LiveGateClosedError(live_copy_error())
     if live_etsy_write and not live_etsy_write_open():
         raise LiveGateClosedError(live_etsy_write_error())
+    if live_printfile and not live_printfile_open():
+        raise LiveGateClosedError(live_printfile_error())
 
     landing = scan_landing(conn, user_id, folder)
 
@@ -82,6 +89,12 @@ def run_shop_build(
         live_etsy_write=live_etsy_write,
     )
 
+    # Costed physical POD drafts (variant selection + pricing + print-file
+    # hosting, design §13 slice 1-2) for every eligible winner -- stops at
+    # print_file_hosted; provider create/Etsy push/enrichment is Phase C.
+    host = build_print_file_host(live=live_printfile)
+    pod = build_pod_drafts(conn, user_id, print_file_host=host)
+
     return {
         "observed": landing.observed,
         "matched": landing.matched,
@@ -94,4 +107,8 @@ def run_shop_build(
         "mockups_written": mockups.mockups_written,
         "drafts": drafts.drafts_built,
         "pushed": drafts.pushed,
+        "pod_drafts": pod.drafts_built,
+        "pod_variants_priced": pod.variants_priced,
+        "pod_print_files_hosted": pod.print_files_hosted,
+        "pod_skipped": pod.pod_skipped,
     }
