@@ -30,16 +30,9 @@ def test_seed_is_idempotent(conn):
 def test_get_profile_round_trips_values(conn):
     tuning.seed(conn, user_id=1, path=DEFAULTS_PATH)
     profile = tuning.get_profile(conn, user_id=1, name="default")
-    assert profile.scoring.gate1_threshold == 60
-    assert profile.scoring.borderline_band == 15
-    assert profile.scoring.hero_preset_family == "neutral"
-    assert profile.scoring.weights == {
-        "technical": 0.35,
-        "commercial": 0.65,
-        "catalog_gap": 0.0,
-        "historical_conversion": 0.0,
-    }
     assert profile.vision.monthly_soft_cap_usd == 10.0
+    assert profile.vision.provider == "openrouter"
+    assert profile.landing.min_long_edge_px == 3000
     assert profile.schema_version == "shopsteward.tuning/1"
 
 
@@ -59,10 +52,10 @@ def test_seed_never_overwrites_existing_profile(conn, tmp_path):
     changed defaults would silently revert future operator tuning updates."""
     tuning.seed(conn, user_id=1, path=DEFAULTS_PATH)
     changed = json.loads(DEFAULTS_PATH.read_text())
-    changed["scoring"]["gate1_threshold"] = 75
+    changed["vision"]["monthly_soft_cap_usd"] = 75
     changed_path = tmp_path / "changed.json"
     changed_path.write_text(json.dumps(changed))
 
     seeded = tuning.seed(conn, user_id=1, path=changed_path)
     assert seeded is False
-    assert tuning.get_profile(conn, user_id=1).scoring.gate1_threshold == 60
+    assert tuning.get_profile(conn, user_id=1).vision.monthly_soft_cap_usd == 10.0

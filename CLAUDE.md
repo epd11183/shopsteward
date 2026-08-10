@@ -11,11 +11,18 @@ Modular workflow tool for a photography business.
   drafts (digital direct; physical via Printful and Gelato), Instagram
   promotion, and a performance feedback loop into tuning profiles.
 
-**The operating principle for the hero/Etsy path: three gates.** Gate 1
-Curate (approve/reject scored candidates), Gate 2 Finish (quick Lightroom
-pass; export = approval), Gate 3 Publish (one-tap listing + IG approval).
-Everything between must run unattended. If a feature adds a fourth human
-touchpoint in the hero path, it is wrong — redesign it.
+**Superseded 2026-08-09 (see "Current focus").** The automated hero/Etsy
+gating — **Gate 1 Curate** (scored candidates) and its scoring pipeline — was
+removed; the operator now culls winners manually. The core is the mass-mode
+RAW auto-edit engine. Shop-building (the former Gate 3 Publish: one-tap
+listing + IG) is **deferred**, its adapters parked, to be resourced later from
+a manual winners folder. The historical three-gate model below is kept for
+context only:
+
+> _The operating principle for the hero/Etsy path: three gates. Gate 1 Curate
+> (approve/reject scored candidates), Gate 2 Finish (quick Lightroom pass;
+> export = approval), Gate 3 Publish (one-tap listing + IG approval).
+> Everything between must run unattended._
 
 **Mass mode has its own flow** — see `docs/PRD_v2.1.md` §4.2.
 

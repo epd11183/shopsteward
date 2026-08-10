@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchSummary, type Summary } from "./api";
 import Ingest from "./pages/Ingest";
-import Gate1 from "./pages/Gate1";
 import Templates from "./pages/Templates";
 import Mockups from "./pages/Mockups";
 import Gate3 from "./pages/Gate3";
@@ -9,7 +8,6 @@ import Gate3 from "./pages/Gate3";
 type Tab =
   | "analytics"
   | "ingest"
-  | "gate1"
   | "templates"
   | "mockups"
   | "gate3";
@@ -33,11 +31,6 @@ export default function App() {
               onClick={() => setTab("ingest")}
             />
             <TabButton
-              label="Gate 1"
-              active={tab === "gate1"}
-              onClick={() => setTab("gate1")}
-            />
-            <TabButton
               label="Templates"
               active={tab === "templates"}
               onClick={() => setTab("templates")}
@@ -59,8 +52,6 @@ export default function App() {
         <Analytics />
       ) : tab === "ingest" ? (
         <Ingest />
-      ) : tab === "gate1" ? (
-        <Gate1 />
       ) : tab === "templates" ? (
         <Templates />
       ) : tab === "mockups" ? (

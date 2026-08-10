@@ -1,8 +1,15 @@
 """Derived read models for the pipeline module: proj_tuning_profiles,
-proj_scores, proj_gate1, proj_landing_files. Drop-and-rebuild, own schema, own
+proj_scores, proj_landing_files. Drop-and-rebuild, own schema, own
 rebuild entrypoint (rebuild_pipeline), mirroring editing/projections.py.
 
 Ownership rule: pipeline never writes proj_photos (owned by editing).
+
+Note: automated Etsy gating (vision scoring + Gate 1 curation) was ripped out
+-- see 2026-08-10-ripout-etsy-gating. proj_scores is kept because
+pipeline/listings/copy.py still reads it for vision-verdict copy signals, but
+it has no live producer anymore: it only projects historical/seeded
+`photo.scored` events. proj_gate1 had no kept-side consumer and was removed
+along with the gate1.* event handlers.
 """
 
 import json
@@ -25,13 +32,6 @@ CREATE TABLE proj_scores (
     model_used TEXT, scored_at TEXT,
     PRIMARY KEY (user_id, photo_id)
 );
-DROP TABLE IF EXISTS proj_gate1;
-CREATE TABLE proj_gate1 (
-    user_id INTEGER NOT NULL, photo_id TEXT NOT NULL,
-    state TEXT NOT NULL, composite REAL NOT NULL, decided_at TEXT,
-    edit_job_id TEXT,
-    PRIMARY KEY (user_id, photo_id)
-);
 DROP TABLE IF EXISTS proj_landing_files;
 CREATE TABLE proj_landing_files (
     user_id INTEGER NOT NULL, file_id TEXT NOT NULL,
@@ -41,12 +41,6 @@ CREATE TABLE proj_landing_files (
     PRIMARY KEY (user_id, file_id)
 );
 """
-
-_GATE1_STATE_BY_EVENT = {
-    "gate1.approved": "approved",
-    "gate1.rejected": "rejected",
-    "gate1.snoozed": "snoozed",
-}
 
 
 def rebuild_pipeline(conn: sqlite3.Connection) -> None:
@@ -63,32 +57,6 @@ def rebuild_pipeline(conn: sqlite3.Connection) -> None:
 
         elif e.type == "photo.scored":
             _fold_photo_scored(conn, e.user_id, e.created_at, p)
-
-        elif e.type == "photo.queued":
-            conn.execute(
-                "INSERT OR REPLACE INTO proj_gate1 VALUES (?,?,'pending',?,NULL,NULL)",
-                (e.user_id, p["photo_id"], p["composite"]),
-            )
-
-        elif e.type in _GATE1_STATE_BY_EVENT:
-            conn.execute(
-                "UPDATE proj_gate1 SET state=?, decided_at=?, edit_job_id=? "
-                "WHERE user_id=? AND photo_id=?",
-                (
-                    _GATE1_STATE_BY_EVENT[e.type],
-                    e.created_at,
-                    p.get("edit_job_id"),
-                    e.user_id,
-                    p["photo_id"],
-                ),
-            )
-
-        elif e.type == "gate1.undone":
-            conn.execute(
-                "UPDATE proj_gate1 SET state='pending', decided_at=NULL, edit_job_id=NULL "
-                "WHERE user_id=? AND photo_id=?",
-                (e.user_id, p["photo_id"]),
-            )
 
         elif e.type == "landing.file_observed":
             conn.execute(

@@ -1,6 +1,7 @@
 """Shared llm.call monthly-spend ledger (PRD §13 decisions 22, 38): the
 $10/mo vision soft cap (M3) now also gates listing copy generation (M5a).
-One function so scoring.py and listings/copy.py read the same ledger."""
+One function so listings/copy.py reads the same ledger as other llm.call
+producers."""
 
 import sqlite3
 from datetime import UTC, datetime
