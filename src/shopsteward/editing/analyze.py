@@ -7,6 +7,7 @@ import math
 import numpy as np
 
 from shopsteward.editing.models import CorrectionSettings
+from shopsteward.editing.rawdecode import DecodedImage
 
 # Rec. 709 luma weights.
 _LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
@@ -16,7 +17,7 @@ def _luma(rgb: np.ndarray) -> np.ndarray:
     return rgb @ _LUMA
 
 
-def analyze_raw(decoded, knobs: dict) -> CorrectionSettings:
+def analyze_raw(decoded: DecodedImage, knobs: dict) -> CorrectionSettings:
     rgb = np.clip(decoded.rgb.astype(np.float32), 0.0, 1.0)
     luma = _luma(rgb)
 
@@ -67,6 +68,7 @@ def _cast_nudge(rgb: np.ndarray, knobs: dict) -> tuple[int, int]:
     calibration if the nudge is ever enabled by default."""
     trigger = float(knobs["cast_trigger"])
     cap = int(knobs["cast_nudge_cap"])
+    full_scale = float(knobs["cast_full_scale_bias"])  # relative green excess that saturates the nudge to the cap
     r, g, b = (float(rgb[..., i].mean()) for i in range(3))
     gray = (r + g + b) / 3.0
     if gray <= 1e-4:
@@ -75,12 +77,13 @@ def _cast_nudge(rgb: np.ndarray, knobs: dict) -> tuple[int, int]:
     green_bias = (g - (r + b) / 2.0) / gray
     if abs(green_bias) < trigger:
         return 0, 0
-    tint_nudge = int(round(max(-cap, min(cap, green_bias * cap / 0.2))))
+    tint_nudge = int(round(max(-cap, min(cap, green_bias * cap / full_scale))))
     return 0, tint_nudge
 
 
 def average_corrections(items: list[CorrectionSettings]) -> CorrectionSettings:
     """Batch/sequence lock: mean of continuous corrections applied to all frames."""
+    # Consistency over per-frame optimum: a single dark frame's lift is diluted across the batch.
     n = len(items)
     if n == 0:
         return CorrectionSettings()

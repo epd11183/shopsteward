@@ -12,6 +12,7 @@ KNOBS = {
     "shadow_range_high": 45,
     "cast_trigger": 0.06,
     "cast_nudge_cap": 8,
+    "cast_full_scale_bias": 0.2,
 }
 
 
@@ -33,7 +34,7 @@ def test_bright_image_gets_negative_exposure():
 
 def test_exposure_is_capped():
     cs = analyze_raw(_flat(0.001), KNOBS)
-    assert cs.exposure <= KNOBS["exposure_max_stops"]
+    assert cs.exposure == KNOBS["exposure_max_stops"]
 
 
 def test_very_dark_triggers_shadow_lift():
@@ -51,11 +52,22 @@ def test_green_cast_nudge_is_capped_and_recorded():
     cs = analyze_raw(_flat(0.4, cast=(0.85, 1.15, 0.85)), KNOBS)
     assert cs.tint_nudge != 0
     assert abs(cs.tint_nudge) <= KNOBS["cast_nudge_cap"]
+    assert cs.tint_nudge > 0
 
 
 def test_neutral_image_no_cast_nudge():
     cs = analyze_raw(_flat(0.4), KNOBS)
     assert cs.tint_nudge == 0
+
+
+def test_magenta_cast_nudges_toward_green():
+    cs = analyze_raw(_flat(0.4, cast=(1.15, 0.85, 1.15)), KNOBS)
+    assert cs.tint_nudge < 0
+
+
+def test_all_black_returns_capped_exposure():
+    cs = analyze_raw(_flat(0.0), KNOBS)
+    assert cs.exposure == KNOBS["exposure_max_stops"]
 
 
 def test_average_corrections_means_exposure():
