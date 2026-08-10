@@ -25,7 +25,11 @@ class PodVariantSpec(BaseModel):
     variant_key: str = Field(min_length=1)  # OPAQUE. gelato: templateVariantId
     placeholder: str | None = None  # gelato imagePlaceholders[].name  ("ImageFront")
     fit_method: str | None = None  # gelato fitMethod                 ("slice")
-    retail_price: float = Field(gt=0)  # set HERE, at product creation -- never via Etsy inventory
+    # Our computed (margin-cleared) price recommendation, kept on the spec for
+    # records + surfaced by `pod build --dry-run` so the operator can enter it
+    # on the Gelato TEMPLATE. NOT sent to Gelato at create: create-from-template
+    # has no price field; retail price is inherited from the template.
+    retail_price: float = Field(gt=0)
 
     @field_validator("variant_key")
     @classmethod

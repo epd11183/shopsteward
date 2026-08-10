@@ -16,6 +16,31 @@ import typer
 pod_app = typer.Typer(no_args_is_help=True, help="POD (print-on-demand) physical listings.")
 config_app = typer.Typer(no_args_is_help=True, help="pod.json config.")
 pod_app.add_typer(config_app, name="config")
+template_app = typer.Typer(no_args_is_help=True, help="Gelato template inspection (live read).")
+pod_app.add_typer(template_app, name="template")
+
+
+@template_app.command("show")
+def template_show(
+    template_id: Annotated[str, typer.Argument(help="Gelato templateId")],
+) -> None:
+    """Fetch a Gelato template and print each variant's templateVariantId +
+    imagePlaceholder names, so the operator can fill pod.json's
+    canvas/canvas_portrait variant_key/placeholder. Gated live read: needs
+    SHOPSTEWARD_LIVE_GELATO=1 + GELATO_API_KEY (store_id is not required for
+    the templates endpoint)."""
+    import os
+
+    from shopsteward.adapters.pod.live import LiveGelatoAdapter, format_template_variants
+    from shopsteward.pipeline.live_gate import live_gelato_error, live_gelato_open
+
+    if not live_gelato_open():
+        typer.secho(live_gelato_error(), fg="red")
+        raise typer.Exit(code=1)
+
+    adapter = LiveGelatoAdapter(api_key=os.environ["GELATO_API_KEY"], store_id="")
+    for line in format_template_variants(adapter.get_template(template_id)):
+        typer.echo(line)
 
 
 @config_app.command("apply")

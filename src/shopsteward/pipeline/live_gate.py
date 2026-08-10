@@ -129,15 +129,20 @@ def live_printfile_error() -> str:
 
 
 def live_gelato_open() -> bool:
-    """True iff SHOPSTEWARD_LIVE_GELATO=1 and GELATO_API_KEY are both set."""
-    return os.environ.get("SHOPSTEWARD_LIVE_GELATO") == "1" and bool(
-        os.environ.get("GELATO_API_KEY")
+    """True iff SHOPSTEWARD_LIVE_GELATO=1, GELATO_API_KEY, and GELATO_STORE_ID
+    are all set. GELATO_STORE_ID is required here (not at the model) so the
+    offline/fake path stays usable with no Gelato env, while a LIVE run refuses
+    up front rather than posting against a placeholder store_id."""
+    return (
+        os.environ.get("SHOPSTEWARD_LIVE_GELATO") == "1"
+        and bool(os.environ.get("GELATO_API_KEY"))
+        and bool(os.environ.get("GELATO_STORE_ID"))
     )
 
 
 def live_gelato_error() -> str:
     return (
         "Live Gelato product creation is gated on operator approval: set "
-        "SHOPSTEWARD_LIVE_GELATO=1 and GELATO_API_KEY, fill real Gelato IDs in "
-        "pod.json, then re-run with --live-gelato."
+        "SHOPSTEWARD_LIVE_GELATO=1, GELATO_API_KEY, and GELATO_STORE_ID, fill "
+        "real Gelato IDs in pod.json, then re-run with --live-gelato."
     )

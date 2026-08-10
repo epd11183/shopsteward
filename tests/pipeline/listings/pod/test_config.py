@@ -19,6 +19,19 @@ def conn(tmp_path):
     return c
 
 
+def test_resolve_store_id_prefers_env(monkeypatch):
+    monkeypatch.setenv("GELATO_STORE_ID", "real-store-999")
+    cfg = pod_config.load_pod_config()
+    assert pod_config.resolve_store_id(cfg) == "real-store-999"
+
+
+def test_resolve_store_id_falls_back_to_config_when_env_unset(monkeypatch):
+    monkeypatch.delenv("GELATO_STORE_ID", raising=False)
+    cfg = pod_config.load_pod_config()
+    # the committed default is the placeholder (PUBLIC repo carries no real id)
+    assert pod_config.resolve_store_id(cfg) == cfg.gelato.store_id
+
+
 def test_load_pod_config_from_real_defaults_file():
     cfg = pod_config.load_pod_config()
     assert cfg.schema_version == "shopsteward.pod/1"

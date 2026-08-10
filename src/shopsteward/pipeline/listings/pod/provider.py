@@ -44,6 +44,7 @@ from shopsteward.adapters.pod.models import PodProductSpec, PodProviderRef, PodV
 from shopsteward.adapters.printfile.interface import PrintFileHost
 from shopsteward.core.events import Event, append
 from shopsteward.pipeline.listings.pod import printfile
+from shopsteward.pipeline.listings.pod.config import resolve_store_id
 from shopsteward.pipeline.listings.pod.models import PodConfig
 from shopsteward.pipeline.listings.projections import rebuild_listings
 
@@ -104,7 +105,7 @@ def _build_spec(
 
     ref = PodProviderRef(
         provider="gelato",
-        store_id=cfg.gelato.store_id,
+        store_id=resolve_store_id(cfg),
         template_id=template_id,
         variants=variant_specs,
     )

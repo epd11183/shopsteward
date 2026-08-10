@@ -23,6 +23,7 @@ without a matching apply()."""
 
 import hashlib
 import json
+import os
 import sqlite3
 from pathlib import Path
 
@@ -33,6 +34,17 @@ _REPO_ROOT = Path(__file__).resolve().parents[5]
 POD_CONFIG_PATH = _REPO_ROOT / "config" / "defaults" / "pod.json"
 
 POD_CONFIG_EVENT_TYPES = ("podconfig.seeded", "podconfig.updated")
+
+
+def resolve_store_id(cfg: PodConfig) -> str:
+    """Gelato store id from the GELATO_STORE_ID env var (name declared by
+    cfg.catalog["gelato"].store_id_env), falling back to cfg.gelato.store_id.
+    The committed pod.json holds only a placeholder there -- this PUBLIC repo
+    never carries a real store id -- so the operator sets GELATO_STORE_ID and
+    the placeholder fallback fails fast at PodProviderRef validation."""
+    catalog = cfg.catalog.get("gelato")
+    env_name = catalog.store_id_env if catalog else "GELATO_STORE_ID"
+    return os.environ.get(env_name) or cfg.gelato.store_id
 
 
 def load_pod_config(path: Path = POD_CONFIG_PATH) -> PodConfig:
