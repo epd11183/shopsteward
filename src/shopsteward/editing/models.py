@@ -56,9 +56,13 @@ class CorrectionSettings(BaseModel):
     temp_nudge: int = 0  # recorded recommendation; not written in v1
     tint_nudge: int = 0
     exposure: float = 0.0  # stops, global Exposure2012
+    highlight_recovery: int = 0  # adaptive Highlights2012 (<=0), scaled to this frame's clipping
+    black_point: int = 0  # adaptive Blacks2012 (<=0), deepens hazy/flat frames only
     shadow_lift: float = 0.0  # local exposure boost in the shadow mask, stops
     shadow_range_low: int = 0  # luminance range mask lower bound, 0-100
     shadow_range_high: int = 45  # upper bound, 0-100
+    lens_profile: bool = False  # enable Lightroom auto lens-profile corrections
+    remove_ca: bool = False  # enable auto lateral chromatic-aberration removal
 
 
 class EditReport(BaseModel):

@@ -75,6 +75,31 @@ def test_negative_exposure_formatting():
     assert desc.get(f"{{{CRS}}}Exposure2012") == "-1.50"
 
 
+def test_presence_sliders_land_and_clamp():
+    look = LookProfile.model_construct(
+        name="x", contrast=0, highlights=-55, whites=8, blacks=-20, clarity=14,
+        dehaze=18, texture=999, tone_curve=[], hsl={}, split_toning={},
+        vibrance=0, saturation=0,
+    )
+    desc = _parse(compose(CorrectionSettings(), look)).find(
+        ".//{http://www.w3.org/1999/02/22-rdf-syntax-ns#}Description"
+    )
+    assert desc.get(f"{{{CRS}}}Highlights2012") == "-55"
+    assert desc.get(f"{{{CRS}}}Blacks2012") == "-20"
+    assert desc.get(f"{{{CRS}}}Dehaze") == "18"
+    assert desc.get(f"{{{CRS}}}Texture") == "100"  # clamped
+
+
+def test_lens_profile_and_ca_flags_emit_when_enabled():
+    on = compose(CorrectionSettings(lens_profile=True, remove_ca=True), LookProfile(name="x"))
+    desc = _parse(on).find(".//{http://www.w3.org/1999/02/22-rdf-syntax-ns#}Description")
+    assert desc.get(f"{{{CRS}}}LensProfileEnable") == "1"
+    assert desc.get(f"{{{CRS}}}LensProfileSetup") == "LensDefaults"
+    assert desc.get(f"{{{CRS}}}AutoLateralCA") == "1"
+    off = compose(CorrectionSettings(), LookProfile(name="x"))
+    assert "LensProfileEnable" not in off
+
+
 def test_tone_curve_content_lands():
     xmp = compose(
         CorrectionSettings(), LookProfile(name="x", tone_curve=[[0, 0], [128, 140], [255, 255]])

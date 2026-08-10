@@ -27,22 +27,62 @@ def analyze_raw(decoded: DecodedImage, knobs: dict) -> CorrectionSettings:
 
     return CorrectionSettings(
         exposure=exposure,
+        highlight_recovery=_highlight_recovery(luma, knobs),
+        black_point=_black_point(luma, knobs),
         shadow_lift=shadow_lift,
         shadow_range_low=lo,
         shadow_range_high=hi,
         temp_nudge=temp_nudge,
         tint_nudge=tint_nudge,
+        lens_profile=bool(knobs.get("lens_profile_corrections", False)),
+        remove_ca=bool(knobs.get("remove_chromatic_aberration", False)),
     )
 
 
 def _exposure(luma: np.ndarray, knobs: dict) -> float:
     target = float(knobs["exposure_target_luma"])
     cap = float(knobs["exposure_max_stops"])
+    ceiling = float(knobs.get("exposure_highlight_ceiling", 0.92))
     median = float(np.median(luma))
-    if median <= 1e-4:
-        return cap
-    stops = math.log2(target / median)
+    stops = cap if median <= 1e-4 else math.log2(target / median)
+    if stops > 0:
+        # Protect highlights: never brighten past the point the bright end (p99)
+        # would clip. A blown sky caps the positive push at ~0; the subject is
+        # recovered by the local shadow lift + the look's Highlights slider.
+        p_high = float(np.quantile(luma, 0.99))
+        if p_high > 1e-4:
+            max_up = math.log2(ceiling / p_high)  # stops until p99 reaches the ceiling
+            stops = min(stops, max(0.0, max_up))
+    # Global operator calibration for the rawpy-vs-Lightroom render offset:
+    # a uniform stop shift applied to every frame. Negative = darker overall.
+    stops += float(knobs.get("exposure_bias", 0.0))
     return round(max(-cap, min(cap, stops)), 2)
+
+
+def _highlight_recovery(luma: np.ndarray, knobs: dict) -> int:
+    """Adaptive Highlights2012: pull the bright end down in proportion to how
+    much of the frame is near clipping. A blown sky gets strong recovery; a frame
+    with no hot highlights gets 0. Returns a value in [-max, 0]."""
+    thresh = float(knobs.get("highlight_clip_threshold", 0.90))
+    max_recovery = int(knobs.get("highlight_recovery_max", 70))
+    saturate = float(knobs.get("highlight_recovery_saturate", 0.15))
+    frac = float((luma >= thresh).mean())
+    strength = min(1.0, frac / saturate) if saturate > 0 else 0.0
+    return -int(round(max_recovery * strength))
+
+
+def _black_point(luma: np.ndarray, knobs: dict) -> int:
+    """Adaptive Blacks2012: deepen the black point only when the darkest pixels
+    are lifted/hazy (restores contrast on flat frames); leave already-crushed
+    frames alone. Returns a value in [-max, 0]."""
+    target = float(knobs.get("black_point_target", 0.02))
+    max_deepen = int(knobs.get("black_point_max", 25))
+    saturate = float(knobs.get("black_point_saturate", 0.15))
+    p_low = float(np.quantile(luma, 0.01))
+    if p_low <= target:
+        return 0  # already has true blacks
+    strength = min(1.0, (p_low - target) / max(1e-4, saturate - target))
+    return -int(round(max_deepen * strength))
 
 
 def _shadow(luma: np.ndarray, knobs: dict) -> tuple[float, int, int]:
@@ -90,9 +130,13 @@ def average_corrections(items: list[CorrectionSettings]) -> CorrectionSettings:
         return CorrectionSettings()
     return CorrectionSettings(
         exposure=round(sum(c.exposure for c in items) / n, 2),
+        highlight_recovery=int(round(sum(c.highlight_recovery for c in items) / n)),
+        black_point=int(round(sum(c.black_point for c in items) / n)),
         shadow_lift=round(sum(c.shadow_lift for c in items) / n, 2),
         shadow_range_low=items[0].shadow_range_low,
         shadow_range_high=items[0].shadow_range_high,
         temp_nudge=int(round(sum(c.temp_nudge for c in items) / n)),
         tint_nudge=int(round(sum(c.tint_nudge for c in items) / n)),
+        lens_profile=items[0].lens_profile,
+        remove_ca=items[0].remove_ca,
     )

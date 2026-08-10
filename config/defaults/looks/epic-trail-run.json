@@ -1,0 +1,30 @@
+{
+  "name": "epic-trail-run",
+  "description": "Epic trail running: recovered dramatic sky, dehazed mountain air, punchy midtone clarity, deep blacks, teal shadows / warm highlights, foliage kept natural.",
+  "contrast": 12,
+  "highlights": -10,
+  "whites": 0,
+  "blacks": -8,
+  "clarity": 14,
+  "dehaze": 18,
+  "texture": 12,
+  "tone_curve": [[0, 4], [52, 44], [128, 128], [205, 205], [255, 246]],
+  "hsl": {
+    "SaturationAdjustmentOrange": 10,
+    "SaturationAdjustmentYellow": -5,
+    "SaturationAdjustmentGreen": -12,
+    "LuminanceAdjustmentGreen": -8,
+    "SaturationAdjustmentBlue": 18,
+    "LuminanceAdjustmentBlue": -25,
+    "SaturationAdjustmentAqua": 8
+  },
+  "split_toning": {
+    "SplitToningShadowHue": 210,
+    "SplitToningShadowSaturation": 14,
+    "SplitToningHighlightHue": 45,
+    "SplitToningHighlightSaturation": 8,
+    "SplitToningBalance": 10
+  },
+  "vibrance": 16,
+  "saturation": -2
+}
