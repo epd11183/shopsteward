@@ -31,12 +31,19 @@ def run_edit(
     regenerate: bool,
     overwrite: bool,
     batch_lock: bool,
+    guard_knobs: dict | None = None,
+    soft_cap_usd: float | None = None,
+    fallback_look: str = "bright-and-true",
+    month_prefix: str | None = None,
 ) -> EditReport:
     # 1. Resolve the look FIRST — this may hit the LLM and must fail before any
     #    sidecar is written, so a batch is never half-graded.
     looks.seed(conn, user_id, _looks_dir())
-    look = looks.resolve_look(conn, user_id, look_arg, look_adapter, model=model,
-                              regenerate=regenerate)
+    look = looks.resolve_look(
+        conn, user_id, look_arg, look_adapter, model=model, regenerate=regenerate,
+        guard_knobs=guard_knobs, soft_cap_usd=soft_cap_usd,
+        fallback_look=fallback_look, month_prefix=month_prefix,
+    )
 
     edit_job_id = str(uuid.uuid4())
     report = EditReport(edit_job_id=edit_job_id, look=look.name)
