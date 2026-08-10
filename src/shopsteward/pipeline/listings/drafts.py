@@ -177,12 +177,15 @@ def build_drafts(
             # only run whichever of copy/price is still missing.
             images = [ListingImage(**img) for img in json.loads(existing["images_json"] or "[]")]
             if existing["title"] is None:
+                effective_photo_id = (
+                    existing["photo_id"] or f"file-{existing['landing_file_id'][:12]}"
+                )
                 ran = generate_copy(
                     conn,
                     user_id,
                     draft_id,
                     existing["landing_file_id"],
-                    existing["photo_id"],
+                    effective_photo_id,
                     images,
                     copy_adapter,
                     cfg,
@@ -233,12 +236,13 @@ def build_drafts(
             ),
         )
 
+        effective_photo_id = row["photo_id"] or f"file-{landing_file_id[:12]}"
         ran = generate_copy(
             conn,
             user_id,
             draft_id,
             landing_file_id,
-            row["photo_id"],
+            effective_photo_id,
             images,
             copy_adapter,
             cfg,
