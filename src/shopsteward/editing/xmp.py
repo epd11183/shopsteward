@@ -52,6 +52,11 @@ def compose(correction: CorrectionSettings, look: LookProfile) -> str:
         f'crs:Vibrance="{_clamp(look.vibrance, -100, 100)}"',
         f'crs:Saturation="{_clamp(look.saturation, -100, 100)}"',
     ]
+    if correction.lens_profile:
+        # Auto-match the lens profile from EXIF (Setup=LensDefaults) and enable it.
+        attrs += ['crs:LensProfileEnable="1"', 'crs:LensProfileSetup="LensDefaults"']
+    if correction.remove_ca:
+        attrs.append('crs:AutoLateralCA="1"')
     seen: set[str] = set()
     for key, value in sorted(look.hsl.items()):
         name = _xml_name(key)

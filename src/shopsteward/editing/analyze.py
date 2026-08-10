@@ -34,6 +34,8 @@ def analyze_raw(decoded: DecodedImage, knobs: dict) -> CorrectionSettings:
         shadow_range_high=hi,
         temp_nudge=temp_nudge,
         tint_nudge=tint_nudge,
+        lens_profile=bool(knobs.get("lens_profile_corrections", False)),
+        remove_ca=bool(knobs.get("remove_chromatic_aberration", False)),
     )
 
 
@@ -51,6 +53,9 @@ def _exposure(luma: np.ndarray, knobs: dict) -> float:
         if p_high > 1e-4:
             max_up = math.log2(ceiling / p_high)  # stops until p99 reaches the ceiling
             stops = min(stops, max(0.0, max_up))
+    # Global operator calibration for the rawpy-vs-Lightroom render offset:
+    # a uniform stop shift applied to every frame. Negative = darker overall.
+    stops += float(knobs.get("exposure_bias", 0.0))
     return round(max(-cap, min(cap, stops)), 2)
 
 
@@ -132,4 +137,6 @@ def average_corrections(items: list[CorrectionSettings]) -> CorrectionSettings:
         shadow_range_high=items[0].shadow_range_high,
         temp_nudge=int(round(sum(c.temp_nudge for c in items) / n)),
         tint_nudge=int(round(sum(c.tint_nudge for c in items) / n)),
+        lens_profile=items[0].lens_profile,
+        remove_ca=items[0].remove_ca,
     )

@@ -61,6 +61,8 @@ class CorrectionSettings(BaseModel):
     shadow_lift: float = 0.0  # local exposure boost in the shadow mask, stops
     shadow_range_low: int = 0  # luminance range mask lower bound, 0-100
     shadow_range_high: int = 45  # upper bound, 0-100
+    lens_profile: bool = False  # enable Lightroom auto lens-profile corrections
+    remove_ca: bool = False  # enable auto lateral chromatic-aberration removal
 
 
 class EditReport(BaseModel):

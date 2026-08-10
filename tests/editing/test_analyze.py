@@ -50,6 +50,12 @@ def test_blown_highlights_suppress_positive_exposure():
     assert analyze_raw(_flat(0.15), knobs).exposure > 0
 
 
+def test_exposure_bias_shifts_uniformly():
+    base = analyze_raw(_flat(0.3), KNOBS).exposure
+    biased = analyze_raw(_flat(0.3), {**KNOBS, "exposure_bias": -0.45}).exposure
+    assert round(biased - base, 2) == -0.45
+
+
 def test_highlight_recovery_scales_with_clipping():
     # A frame with a large near-clipping region gets strong (negative) recovery;
     # a clean midtone frame gets none.

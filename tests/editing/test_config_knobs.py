@@ -4,7 +4,7 @@ from shopsteward.editing import config
 def test_correction_knobs_present_and_typed():
     knobs = config.load_correction_knobs()
     assert knobs["exposure_max_stops"] == 1.5
-    assert knobs["shadow_range_high"] == 45
+    assert knobs["shadow_range_high"] == 35
 
 
 def test_look_prompt_has_description_slot():

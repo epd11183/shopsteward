@@ -90,6 +90,16 @@ def test_presence_sliders_land_and_clamp():
     assert desc.get(f"{{{CRS}}}Texture") == "100"  # clamped
 
 
+def test_lens_profile_and_ca_flags_emit_when_enabled():
+    on = compose(CorrectionSettings(lens_profile=True, remove_ca=True), LookProfile(name="x"))
+    desc = _parse(on).find(".//{http://www.w3.org/1999/02/22-rdf-syntax-ns#}Description")
+    assert desc.get(f"{{{CRS}}}LensProfileEnable") == "1"
+    assert desc.get(f"{{{CRS}}}LensProfileSetup") == "LensDefaults"
+    assert desc.get(f"{{{CRS}}}AutoLateralCA") == "1"
+    off = compose(CorrectionSettings(), LookProfile(name="x"))
+    assert "LensProfileEnable" not in off
+
+
 def test_tone_curve_content_lands():
     xmp = compose(
         CorrectionSettings(), LookProfile(name="x", tone_curve=[[0, 0], [128, 140], [255, 255]])
