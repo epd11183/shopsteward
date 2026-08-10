@@ -130,6 +130,8 @@ def _generate_gated(
         candidate = result.profile.model_copy(update={"name": key, "description": look_arg})
         if guard_knobs is None or sanitize_look(candidate, guard_knobs).ok:
             return candidate
+    # Both attempts tripped the guard. Cache the seed under this description's key
+    # so repeats reload it cheaply; the operator can force a fresh try with --regenerate.
     seed = get_look(conn, user_id, fallback_look)
     return seed.model_copy(update={
         "name": key,

@@ -27,14 +27,14 @@ def run_preview(
 
     raws = sorted(p for p in Path(sample_dir).iterdir()
                   if p.is_file() and p.suffix.lower() in RAW_SUFFIXES)
+    corrections = {rp: analyze_raw(decoder.decode(str(rp)), knobs) for rp in raws}
     preview_root = Path(sample_dir) / "_preview"
     for label, look in ((candidate.name, candidate), (seed.name, seed)):
         sub = preview_root / label
         sub.mkdir(parents=True, exist_ok=True)
         for rp in raws:
-            correction = analyze_raw(decoder.decode(str(rp)), knobs)
             dest = sub / rp.name
             shutil.copy2(rp, dest)
-            write_sidecar(dest, compose(correction, look), overwrite=True)
+            write_sidecar(dest, compose(corrections[rp], look), overwrite=True)
     return {"candidate": candidate.name, "against": seed.name,
             "frames": len(raws), "dir": str(preview_root)}

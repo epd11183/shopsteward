@@ -33,3 +33,20 @@ def test_named_look_offline_still_works(tmp_path: Path, monkeypatch):
     result = runner.invoke(edit_app, ["run", str(tmp_path), "--look", "bright-and-true"])
     assert result.exit_code == 0, result.output
     assert "written=1" in result.output
+
+
+def test_live_look_refused_when_model_has_no_pricing(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHOPSTEWARD_DB", str(tmp_path / "t.db"))
+    monkeypatch.setenv("SHOPSTEWARD_LIVE_LOOK", "1")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    (tmp_path / "IMG.CR3").write_bytes(b"x")
+    from shopsteward.editing import cli as cli_mod
+    monkeypatch.setattr(cli_mod, "load_look_llm",
+                        lambda: {"provider": "openrouter", "model": "no/pricing", "pricing": {},
+                                 "monthly_soft_cap_usd": 5.0, "structured_output": False})
+    from typer.testing import CliRunner
+    result = CliRunner().invoke(
+        cli_mod.edit_app, ["run", str(tmp_path), "--look", "x", "--live-look"]
+    )
+    assert result.exit_code != 0
+    assert "pricing" in result.output

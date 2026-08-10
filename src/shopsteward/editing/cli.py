@@ -9,6 +9,7 @@ import typer
 
 from shopsteward.adapters.lightroom.bridge import FolderBridge
 from shopsteward.adapters.look.fake import FixtureLookAdapter
+from shopsteward.adapters.look.interface import LookParseError
 from shopsteward.adapters.look.openrouter import OpenRouterLookAdapter
 from shopsteward.core.db import connect, migrate
 from shopsteward.editing import presets
@@ -21,6 +22,7 @@ from shopsteward.editing.config import (
 )
 from shopsteward.editing.edit import run_edit
 from shopsteward.editing.live_look import live_look_error, live_look_open
+from shopsteward.editing.looks import LookCostCapError
 from shopsteward.editing.outcomes import scan_outcomes
 from shopsteward.editing.projections import rebuild_editing
 from shopsteward.editing.rawdecode import RawpyDecoder
@@ -122,10 +124,17 @@ def _build_look_adapter(live_look: bool):
     if not live_look_open():
         raise typer.BadParameter(live_look_error())
     llm = load_look_llm()
+    model = llm.get("model", "")
+    pricing = llm.get("pricing") or {}
+    if model not in pricing:
+        raise typer.BadParameter(
+            f"look_llm.model {model!r} has no look_llm.pricing entry; add one so the "
+            "monthly soft cap can estimate spend before enabling live generation."
+        )
     adapter = OpenRouterLookAdapter(
         api_key=os.environ["OPENROUTER_API_KEY"],
         prompt_template=load_look_prompt(),
-        pricing=llm.get("pricing"),
+        pricing=pricing,
         temperature=float(llm.get("temperature", 0.7)),
         structured=bool(llm.get("structured_output", False)),
     )
@@ -153,16 +162,20 @@ def run(
         adapter, is_live = _build_look_adapter(live_look)
         llm = load_look_llm()
         guard = load_look_guard()
-        report = run_edit(
-            conn, DEFAULT_USER_ID, Path(path), look,
-            decoder=_default_decoder(), look_adapter=adapter,
-            model=llm.get("model", model), knobs=load_correction_knobs(),
-            regenerate=regenerate, overwrite=overwrite, batch_lock=batch_lock,
-            guard_knobs=guard if is_live else None,
-            soft_cap_usd=llm.get("monthly_soft_cap_usd") if is_live else None,
-            fallback_look=guard.get("fallback_look", "bright-and-true"),
-            month_prefix=datetime.now(UTC).strftime("%Y-%m"),
-        )
+        try:
+            report = run_edit(
+                conn, DEFAULT_USER_ID, Path(path), look,
+                decoder=_default_decoder(), look_adapter=adapter,
+                model=llm.get("model", model), knobs=load_correction_knobs(),
+                regenerate=regenerate, overwrite=overwrite, batch_lock=batch_lock,
+                guard_knobs=guard if is_live else None,
+                soft_cap_usd=llm.get("monthly_soft_cap_usd") if is_live else None,
+                fallback_look=guard.get("fallback_look", "bright-and-true"),
+                month_prefix=datetime.now(UTC).strftime("%Y-%m"),
+            )
+        except (LookCostCapError, LookParseError) as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(1) from exc
         typer.echo(
             f"look={report.look} processed={report.processed} written={report.written} "
             f"skipped_existing={report.skipped_existing} failed={report.failed}"
@@ -194,15 +207,20 @@ def look_preview(
         adapter, is_live = _build_look_adapter(live_look)
         llm = load_look_llm()
         guard = load_look_guard()
-        out = run_preview(
-            conn, DEFAULT_USER_ID, Path(sample_dir), look, against=against,
-            decoder=_default_decoder(), look_adapter=adapter,
-            model=llm.get("model", "fixture"), knobs=load_correction_knobs(), looks_dir=LOOKS_DIR,
-            guard_knobs=guard if is_live else None,
-            soft_cap_usd=llm.get("monthly_soft_cap_usd") if is_live else None,
-            fallback_look=guard.get("fallback_look", "bright-and-true"),
-            month_prefix=datetime.now(UTC).strftime("%Y-%m"),
-        )
+        try:
+            out = run_preview(
+                conn, DEFAULT_USER_ID, Path(sample_dir), look, against=against,
+                decoder=_default_decoder(), look_adapter=adapter,
+                model=llm.get("model", "fixture"), knobs=load_correction_knobs(),
+                looks_dir=LOOKS_DIR,
+                guard_knobs=guard if is_live else None,
+                soft_cap_usd=llm.get("monthly_soft_cap_usd") if is_live else None,
+                fallback_look=guard.get("fallback_look", "bright-and-true"),
+                month_prefix=datetime.now(UTC).strftime("%Y-%m"),
+            )
+        except (LookCostCapError, LookParseError) as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(1) from exc
         typer.echo(f"preview: candidate={out['candidate']} vs {out['against']} "
                    f"— {out['frames']} frames in {out['dir']}")
     finally:
