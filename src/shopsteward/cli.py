@@ -20,6 +20,7 @@ from shopsteward.pipeline.listings.pod.cli import pod_app
 from shopsteward.pipeline.ops.cli import ops_app
 
 app = typer.Typer(no_args_is_help=True, help="ShopSteward — photography workflow tool.")
+shop_app = typer.Typer(no_args_is_help=True, help="One-command winners-folder shop build.")
 
 
 def main() -> None:
@@ -38,6 +39,7 @@ app.add_typer(etsy_app, name="etsy")
 app.add_typer(listings_app, name="listings")
 app.add_typer(pod_app, name="pod")
 app.add_typer(ops_app, name="ops")
+app.add_typer(shop_app, name="shop")
 
 
 class IngestMode(StrEnum):
@@ -249,3 +251,52 @@ def sync(
         f"events appended: {result.shops + result.listings + result.receipts} "
         f"(shop={result.shops}, listings={result.listings}, receipts={result.receipts})"
     )
+
+
+@shop_app.command("build")
+def shop_build(
+    folder: Annotated[
+        Path, typer.Argument(exists=True, file_okay=False, help="Folder of finished winner JPEGs")
+    ],
+    live_vision: Annotated[
+        bool, typer.Option("--live-vision", help="Call the real vision API for copy signals")
+    ] = False,
+    live_copy: Annotated[
+        bool, typer.Option("--live-copy", help="Call the real OpenRouter copy API")
+    ] = False,
+    live_etsy_write: Annotated[
+        bool, typer.Option("--live-etsy-write", help="Push drafts to the real Etsy API")
+    ] = False,
+    regenerate: Annotated[
+        bool, typer.Option("--regenerate", help="Re-run vision on already-scored winners")
+    ] = False,
+) -> None:
+    """Scan a manual winners folder, run gated vision-for-copy, composite
+    staging-template mockups, and build+push Etsy digital listing drafts --
+    one command, unattended (scan_landing -> run_vision_copy -> run_mockups
+    -> build_drafts)."""
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+    from shopsteward.shop import LiveGateClosedError, run_shop_build
+
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        try:
+            result = run_shop_build(
+                conn,
+                DEFAULT_USER_ID,
+                folder,
+                live_vision=live_vision,
+                live_copy=live_copy,
+                live_etsy_write=live_etsy_write,
+                regenerate=regenerate,
+            )
+        except LiveGateClosedError as exc:
+            typer.secho(str(exc), fg="red")
+            raise typer.Exit(code=1) from None
+        typer.echo(f"shop build: {result}")
+    finally:
+        conn.close()
