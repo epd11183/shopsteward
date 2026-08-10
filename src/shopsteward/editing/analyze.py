@@ -63,9 +63,9 @@ def _shadow(luma: np.ndarray, knobs: dict) -> tuple[float, int, int]:
 
 def _cast_nudge(rgb: np.ndarray, knobs: dict) -> tuple[int, int]:
     """Green-magenta (tint) cast estimate only. Temp axis needs Kelvin
-    calibration and is left at 0. Recorded for downstream; only written when
-    apply_wb_nudge is enabled. ponytail: tint-axis proxy, upgrade to per-camera
-    calibration if the nudge is ever enabled by default."""
+    calibration and is left at 0. Recorded for a future per-camera Kelvin
+    calibration effort; v1 never writes it to XMP. ponytail: tint-axis proxy,
+    upgrade to per-camera calibration if the nudge is ever enabled by default."""
     trigger = float(knobs["cast_trigger"])
     cap = int(knobs["cast_nudge_cap"])
     # relative green excess that saturates the nudge to the cap

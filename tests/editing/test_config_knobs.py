@@ -3,7 +3,6 @@ from shopsteward.editing import config
 
 def test_correction_knobs_present_and_typed():
     knobs = config.load_correction_knobs()
-    assert knobs["apply_wb_nudge"] is False
     assert knobs["exposure_max_stops"] == 1.5
     assert knobs["shadow_range_high"] == 45
 

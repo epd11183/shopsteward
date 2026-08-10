@@ -11,7 +11,6 @@
     "shadow_range_high": 45,
     "cast_trigger": 0.06,
     "cast_nudge_cap": 8,
-    "cast_full_scale_bias": 0.2,
-    "apply_wb_nudge": false
+    "cast_full_scale_bias": 0.2
   }
 }

@@ -1,5 +1,8 @@
 """Mass-mode edit orchestration: resolve look (fail fast) -> ingest RAWs ->
-per-photo decode/analyze/compose/write sidecar -> events -> EditReport."""
+per-photo decode/analyze/compose/write sidecar -> events -> EditReport.
+
+Jobs report synchronously via the returned EditReport; they are not tracked
+in the bridge-era proj_edit_jobs projection."""
 
 import sqlite3
 import uuid

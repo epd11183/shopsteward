@@ -100,3 +100,6 @@ class OpenRouterLookAdapter:
             output_tokens=output_tokens,
             est_cost_usd=est_cost_usd,
         )
+
+    def close(self) -> None:
+        self._client.close()

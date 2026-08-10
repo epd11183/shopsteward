@@ -48,11 +48,12 @@ class EditJobSpec(BaseModel):
 
 
 class CorrectionSettings(BaseModel):
-    """Objective per-image correction. WB is trusted as-shot; temp/tint nudges
-    are recorded but only written to XMP when apply_wb_nudge is enabled."""
+    """Objective per-image correction. WB is trusted as-shot. temp/tint nudges
+    are computed and recorded for a future per-camera calibration effort; v1
+    never writes them to XMP."""
 
     white_balance: str = "As Shot"
-    temp_nudge: int = 0  # recorded recommendation; not written unless apply_wb_nudge
+    temp_nudge: int = 0  # recorded recommendation; not written in v1
     tint_nudge: int = 0
     exposure: float = 0.0  # stops, global Exposure2012
     shadow_lift: float = 0.0  # local exposure boost in the shadow mask, stops
