@@ -1,25 +1,6 @@
 {
   "schema": "shopsteward.tuning/1",
   "name": "default",
-  "scoring": {
-    "weights": {
-      "technical": 0.35,
-      "commercial": 0.65,
-      "catalog_gap": 0.0,
-      "historical_conversion": 0.0
-    },
-    "gate1_threshold": 60,
-    "borderline_band": 15,
-    "hero_preset_family": "neutral",
-    "technical": {
-      "laplacian_floor": 50,
-      "laplacian_ceiling": 1500,
-      "clip_shadow_pct_max": 2.0,
-      "clip_highlight_pct_max": 1.0,
-      "noise_sigma_ceiling": 12.0,
-      "min_long_edge_px": 4000
-    }
-  },
   "vision": {
     "_comment": "PRD v2.1 §13 decision 36: provider=openrouter is the default transport. Model ids are OpenRouter-prefixed (e.g. google/gemini-2.5-pro); the provider=gemini fallback strips the 'google/' prefix at the adapter for the native API URL but keys pricing off the original prefixed id, so these ids + pricing entries serve both providers.",
     "provider": "openrouter",
