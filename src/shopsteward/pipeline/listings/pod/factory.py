@@ -35,3 +35,11 @@ def build_print_file_host(*, live: bool) -> PrintFileHost:
         endpoint=values["CLOUDFLARE_R2_ENDPOINT"],
         bucket=values["CLOUDFLARE_R2_BUCKET"],
     )
+
+
+def build_pod_adapter(*, live: bool):
+    from shopsteward.adapters.pod.fake import FakeGelatoAdapter
+
+    if not live:
+        return FakeGelatoAdapter()
+    raise NotImplementedError("live Gelato adapter is Phase C3 (not yet built)")

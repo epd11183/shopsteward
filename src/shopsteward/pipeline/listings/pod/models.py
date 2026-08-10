@@ -35,6 +35,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
+    "GelatoConfig",
+    "GelatoVariantConfig",
     "PodBuildReport",
     "PodCatalogVariant",
     "PodConfig",
@@ -125,6 +127,32 @@ class _PodImages(BaseModel):
     trim_provider_images: bool
 
 
+class GelatoVariantConfig(BaseModel):
+    """One `pod.json` "gelato".variants entry, keyed by product_type (the
+    same key `routing[].product_type` produces). Phase C1: placeholder
+    values only -- `build_pod_adapter` (pod/factory.py) wires these into a
+    live PodProviderRef/PodVariantSpec at Phase C3."""
+
+    variant_key: str
+    placeholder: str | None = None
+    fit_method: str | None = None
+
+
+class GelatoConfig(BaseModel):
+    """Phase C1 scaffolding for the live Gelato adapter (Phase C3). Kept
+    separate from `catalog["gelato"]` (PodProviderCatalog, per-product-type
+    template_id + priced variants) -- this block is provider account/store
+    wiring, not catalog data. Defaults match the shipped pod.json
+    placeholders so PodConfig instances built by hand (test helpers
+    predating this block) keep validating without carrying it."""
+
+    store_id: str = "REPLACE_AT_C3_gelato_store_id"
+    template_id: str = "REPLACE_AT_C3_gelato_template_id"
+    poll_max: int = 10
+    poll_interval_seconds: int = 0
+    variants: dict[str, GelatoVariantConfig] = Field(default_factory=dict)
+
+
 class PodConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -147,6 +175,7 @@ class PodConfig(BaseModel):
     images: _PodImages
     link_timeout_seconds: int
     link_poll_interval_seconds: int
+    gelato: GelatoConfig = Field(default_factory=GelatoConfig)
 
 
 # --- pure selection output (pod/catalog.py, design §5) ----------------------
