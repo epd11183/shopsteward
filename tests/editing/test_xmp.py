@@ -54,3 +54,27 @@ def test_write_sidecar_creates_file_and_skips_existing(tmp_path: Path):
     assert sidecar_path(raw).exists()
     assert write_sidecar(raw, xmp, overwrite=False) is False  # already exists
     assert write_sidecar(raw, xmp, overwrite=True) is True
+
+
+def test_malformed_hsl_key_is_skipped_not_emitted():
+    xmp = compose(CorrectionSettings(), LookProfile(name="x", hsl={"!!!": 5, "2Bad": 5}))
+    _parse(xmp)  # must still be well-formed
+    assert 'crs:="' not in xmp and "crs:2Bad" not in xmp
+
+
+def test_split_toning_hue_passthrough_and_clamp():
+    xmp = compose(CorrectionSettings(), LookProfile(name="x",
+        split_toning={"SplitToningShadowHue": 45, "SplitToningHighlightHue": 400}))
+    assert 'crs:SplitToningShadowHue="45"' in xmp
+    assert 'crs:SplitToningHighlightHue="360"' in xmp
+
+
+def test_negative_exposure_formatting():
+    xmp = compose(CorrectionSettings(exposure=-1.5), LookProfile(name="x"))
+    desc = _parse(xmp).find(".//{http://www.w3.org/1999/02/22-rdf-syntax-ns#}Description")
+    assert desc.get(f"{{{CRS}}}Exposure2012") == "-1.50"
+
+
+def test_tone_curve_content_lands():
+    xmp = compose(CorrectionSettings(), LookProfile(name="x", tone_curve=[[0, 0], [128, 140], [255, 255]]))
+    assert "128, 140" in xmp
