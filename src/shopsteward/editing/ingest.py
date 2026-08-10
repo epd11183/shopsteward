@@ -67,6 +67,7 @@ def ingest_folder(
     preset_family: str | None = None,
     event_name: str | None = None,
     output_folder: str | None = None,
+    require_jpeg: bool = True,
 ) -> IngestReport:
     ingest_job_id = str(uuid.uuid4())
     append(
@@ -126,7 +127,7 @@ def ingest_folder(
             )
             unpaired += 1
             continue
-        if jpeg_path is None:
+        if jpeg_path is None and require_jpeg:
             append(
                 conn,
                 Event(
@@ -162,7 +163,7 @@ def ingest_folder(
             continue
 
         photo_id = raw_sha256
-        exif = _extract_exif(jpeg_path)
+        exif = _extract_exif(jpeg_path) if jpeg_path is not None else {}
         append(
             conn,
             Event(
@@ -173,7 +174,7 @@ def ingest_folder(
                     "ingest_job_id": ingest_job_id,
                     "base_name": raw_path.stem,
                     "raw_path": str(raw_path),
-                    "jpeg_path": str(jpeg_path),
+                    "jpeg_path": str(jpeg_path) if jpeg_path is not None else None,
                     "raw_sha256": raw_sha256,
                     "exif": exif,
                     "mode": mode,
