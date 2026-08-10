@@ -10,6 +10,8 @@ from shopsteward.pipeline.live_gate import (
     live_etsy_read_open,
     live_etsy_write_error,
     live_etsy_write_open,
+    live_gelato_error,
+    live_gelato_open,
     live_printfile_error,
     live_printfile_open,
     live_vision_error,
@@ -92,6 +94,37 @@ def test_live_copy_error_names_env_vars() -> None:
     message = live_copy_error()
     assert "SHOPSTEWARD_LIVE_COPY" in message
     assert "OPENROUTER_API_KEY" in message
+
+
+def _clear_gelato(monkeypatch) -> None:
+    monkeypatch.delenv("SHOPSTEWARD_LIVE_GELATO", raising=False)
+    monkeypatch.delenv("GELATO_API_KEY", raising=False)
+
+
+def test_live_gelato_closed_when_flag_unset(monkeypatch) -> None:
+    _clear_gelato(monkeypatch)
+    monkeypatch.setenv("GELATO_API_KEY", "some-key")
+    assert live_gelato_open() is False
+
+
+def test_live_gelato_closed_when_key_unset(monkeypatch) -> None:
+    _clear_gelato(monkeypatch)
+    monkeypatch.setenv("SHOPSTEWARD_LIVE_GELATO", "1")
+    assert live_gelato_open() is False
+
+
+def test_live_gelato_open_when_flag_and_key_set(monkeypatch) -> None:
+    _clear_gelato(monkeypatch)
+    monkeypatch.setenv("SHOPSTEWARD_LIVE_GELATO", "1")
+    monkeypatch.setenv("GELATO_API_KEY", "some-key")
+    assert live_gelato_open() is True
+
+
+def test_live_gelato_error_names_flag_key_and_cli_flag() -> None:
+    message = live_gelato_error()
+    assert "SHOPSTEWARD_LIVE_GELATO" in message
+    assert "GELATO_API_KEY" in message
+    assert "--live-gelato" in message
 
 
 def _tokens(**overrides: object) -> EtsyTokens:

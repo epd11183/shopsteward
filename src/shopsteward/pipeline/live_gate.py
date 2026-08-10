@@ -126,3 +126,18 @@ def live_printfile_error() -> str:
         "SHOPSTEWARD_LIVE_PRINTFILE=1 and " + ", ".join(_R2_ENV_VARS) + " in the "
         "environment, then re-run with --live-printfile."
     )
+
+
+def live_gelato_open() -> bool:
+    """True iff SHOPSTEWARD_LIVE_GELATO=1 and GELATO_API_KEY are both set."""
+    return os.environ.get("SHOPSTEWARD_LIVE_GELATO") == "1" and bool(
+        os.environ.get("GELATO_API_KEY")
+    )
+
+
+def live_gelato_error() -> str:
+    return (
+        "Live Gelato product creation is gated on operator approval: set "
+        "SHOPSTEWARD_LIVE_GELATO=1 and GELATO_API_KEY, fill real Gelato IDs in "
+        "pod.json, then re-run with --live-gelato."
+    )

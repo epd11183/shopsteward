@@ -1,8 +1,9 @@
 """shop build's Phase C wiring: after POD drafts reach print_file_hosted,
 drive them through provider link (C1) and enrich (C2) -- all fakes by
-default. --live-gelato refuses up front since the live Gelato adapter
-(C3) isn't built yet (pod/factory.py::build_pod_adapter). Offline end to
-end (test_shop_build_pod.py precedent)."""
+default. --live-gelato refuses up front when its live gate is closed
+(default: SHOPSTEWARD_LIVE_GELATO/GELATO_API_KEY unset), same pattern as
+the other --live-* flags (pipeline/live_gate.py). Offline end to end
+(test_shop_build_pod.py precedent)."""
 
 from pathlib import Path
 

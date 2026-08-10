@@ -4,8 +4,8 @@ pinned True in the model, and this adapter always sends
 isVisibleInTheOnlineStore=false, so a Gelato-created Etsy listing is ALWAYS a
 draft, never live.
 
-NOT wired into any default path yet -- factory/gate wiring is a separate task
-(winners-shop Phase C3 Task 2). The live HTTP call itself is exercised only
+Wired into pod/factory.py::build_pod_adapter behind the live_gelato_open()
+gate (pipeline/live_gate.py). The live HTTP call itself is exercised only
 by an operator smoke, never by the test suite (respx-mocked here)."""
 
 import httpx

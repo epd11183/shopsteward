@@ -274,7 +274,7 @@ def shop_build(
         bool,
         typer.Option(
             "--live-gelato",
-            help="Create real Gelato products (refuses -- live adapter is Phase C3, not yet built)",
+            help="Create real Gelato products (gated: SHOPSTEWARD_LIVE_GELATO=1 + GELATO_API_KEY)",
         ),
     ] = False,
     regenerate: Annotated[
@@ -286,8 +286,8 @@ def shop_build(
     costed physical POD drafts through print-file hosting, then drive them
     through provider link + enrich -- one command, unattended (scan_landing
     -> run_vision_copy -> run_mockups -> build_drafts -> build_pod_drafts ->
-    link_pod_drafts -> enrich_pod_drafts). --live-gelato refuses: the live
-    Gelato adapter is Phase C3, not yet built."""
+    link_pod_drafts -> enrich_pod_drafts). --live-gelato refuses up front
+    unless SHOPSTEWARD_LIVE_GELATO=1 and GELATO_API_KEY are set."""
     from shopsteward.core.db import connect, migrate
     from shopsteward.settings import DEFAULT_USER_ID, db_path
     from shopsteward.shop import LiveGateClosedError, run_shop_build
