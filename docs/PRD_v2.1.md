@@ -133,6 +133,26 @@ Mass mode has one active touchpoint plus optional post-hoc curation:
 | **Optional review** | Lightroom Classic | Standard event finishing pass on the batch. No per-image scoring, no curation UI. | Normal event edit time |
 | **Optional Etsy send-off** | ShopSteward CLI or UI | Flag any post-event standouts to the Etsy landing folder for later processing by the hero pipeline. | Seconds |
 
+### 4.3 Amendment (2026-08-09): Etsy gating removed, mass-mode RAW auto-edit engine added
+
+**This amendment supersedes §4.1 and the scoring/curation parts of §4.2/§5.1
+for current build purposes; the prose above is kept for history.** The app
+pivoted:
+
+- Automated Etsy gating — the Gate 1 curation UI, commercial/catalog/
+  historical-conversion scoring, and viability scoring described above — is
+  **removed**. There is no automated three-gate hero flow in the active
+  build.
+- Mass-mode editing now writes Adobe Camera Raw `.xmp` sidecars (a
+  conservative correction pass plus a described "look") directly next to
+  each RAW, consumed by Lightroom Classic on import — no EPD Edit Bridge
+  round-trip required for this path. Invocation:
+  `shopsteward edit run <folder> --look <name|description>`.
+- Hero-mode/Etsy shop-building (listing creation, mockups, Etsy pipeline) is
+  **deferred** to a later effort, to be sourced from a manually curated
+  "winners" folder rather than automated scoring.
+- Design detail: `docs/superpowers/specs/2026-08-09-raw-auto-edit-engine-design.md`.
+
 ## 5. Functional Scope by Stage
 
 ### 5.1 Stage 1: Discovery (folder-pointed) and Commercial Viability Scoring
@@ -381,11 +401,26 @@ editing module can deliver value to event work before any Etsy code exists.
 | **M0** | Public repo scaffold + amendments folded in + sub-agent roster + Workiva addendum confirmed (✅ confirmed 2026-07-03). | 1 evening | Safe to build in the open. |
 | **M1** | Etsy data pull + analytics dashboard (data model foundation). | 1 weekend | Shop performance visible; baseline established. |
 | **M2** | Editing module — folder-pointed ingestion, RAW+JPEG pairing, EPD Edit Bridge queue processor, mass-mode preset application, standalone CLI. | 2 weekends | Event work runs on ShopSteward independently. |
-| **M3** | Hero-mode viability scoring + Gate 1 curation UI + landing-folder handoff. | 2 weekends | Etsy pipeline picks up where editing leaves off. |
-| **M4** | Staging template library + mockup compositor + AI template expansion. | 2–3 weekends | Largest manual-effort reduction lands. |
-| **M5** | Listing drafts: Gelato + Printful adapters, Etsy enrichment, Gate 3 UI. | 2–3 weekends | Listing time cut to minutes. |
+| **M3** | ~~Hero-mode viability scoring + Gate 1 curation UI + landing-folder handoff.~~ **Superseded 2026-08-09** — automated Etsy gating removed; see below. | 2 weekends | Etsy pipeline picks up where editing leaves off. |
+| **M4** | ~~Staging template library + mockup compositor + AI template expansion.~~ **Superseded 2026-08-09** — deferred with hero/Etsy shop-building. | 2–3 weekends | Largest manual-effort reduction lands. |
+| **M5** | ~~Listing drafts: Gelato + Printful adapters, Etsy enrichment, Gate 3 UI.~~ **Superseded 2026-08-09** — deferred with hero/Etsy shop-building. | 2–3 weekends | Listing time cut to minutes. |
 | **M6** | Instagram asset generation + scheduled posting. | 1 weekend | Cadence on autopilot. |
 | **M7** | Feedback loop v1: tuning profiles + weekly action queue. | 2 weekends | System becomes self-improving. |
+
+### Amendment (2026-08-09): mass-mode RAW auto-edit engine is the active work
+
+M3–M5 above (hero-mode scoring/curation, mockup generation, Etsy listing
+creation) are **superseded**. Automated Etsy gating is removed; hero-mode
+and Etsy shop-building are deferred to a later effort sourced from a
+manually curated winners folder, not from automated scoring.
+
+The active mass-mode work is the **RAW auto-edit engine**:
+`shopsteward edit run <folder> --look <name|description>` writes Adobe
+Camera Raw `.xmp` sidecars (conservative correction + described look) next
+to each RAW for Lightroom to read on import. See
+`docs/superpowers/specs/2026-08-09-raw-auto-edit-engine-design.md` for the
+design and `docs/superpowers/plans/2026-08-09-raw-auto-edit-engine.md` for
+the implementation plan.
 
 ## 11. Success Metrics
 

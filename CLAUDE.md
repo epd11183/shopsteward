@@ -109,10 +109,20 @@ disagree, the PRD wins; flag the discrepancy.
 
 ## Current focus
 
-M0 scaffold → M1 (Etsy data pull + analytics dashboard). The revised
-milestone order (M2 = standalone editing module, M3 = hero-mode + landing
-folder) is in `docs/PRD_v2.1.md` §10. Check the milestone table before
-starting new work, and keep PRs scoped to one milestone.
+**Amended 2026-08-09.** The app pivoted: automated Etsy gating (scoring,
+viability, Gate 1 curation) is removed. Active work is the mass-mode **RAW
+auto-edit engine** — `shopsteward edit run <folder> --look <name|description>`
+writes Adobe Camera Raw `.xmp` sidecars (a conservative correction pass plus
+a described "look") next to each RAW for Lightroom Classic to read on
+import. Design: `docs/superpowers/specs/2026-08-09-raw-auto-edit-engine-design.md`;
+plan: `docs/superpowers/plans/2026-08-09-raw-auto-edit-engine.md`. Hero-mode
+Etsy shop-building is deferred to a later effort sourced from a manually
+curated winners folder, not automated scoring.
+
+The milestone table (`docs/PRD_v2.1.md` §10) reflects this: M3–M5
+(hero-mode scoring/curation, mockups, listing creation) are superseded.
+Check the milestone table and §4.3/§10 amendments before starting new work.
+The PRD wins on any disagreement with this file — flag the discrepancy.
 
 All 16 open questions from `KICKOFF.md` §2 were resolved on 2026-07-03 and
 are folded into PRD v2.1 (see its §13 for the decision log). No stage is
