@@ -270,16 +270,24 @@ def shop_build(
     live_printfile: Annotated[
         bool, typer.Option("--live-printfile", help="Host POD print files on the real R2 bucket")
     ] = False,
+    live_gelato: Annotated[
+        bool,
+        typer.Option(
+            "--live-gelato",
+            help="Create real Gelato products (refuses -- live adapter is Phase C3, not yet built)",
+        ),
+    ] = False,
     regenerate: Annotated[
         bool, typer.Option("--regenerate", help="Re-run vision on already-scored winners")
     ] = False,
 ) -> None:
     """Scan a manual winners folder, run gated vision-for-copy, composite
-    staging-template mockups, build+push Etsy digital listing drafts, and
-    build costed physical POD drafts through print-file hosting -- one
-    command, unattended (scan_landing -> run_vision_copy -> run_mockups ->
-    build_drafts -> build_pod_drafts). POD provider create/Etsy push/
-    enrichment is a later phase."""
+    staging-template mockups, build+push Etsy digital listing drafts, build
+    costed physical POD drafts through print-file hosting, then drive them
+    through provider link + enrich -- one command, unattended (scan_landing
+    -> run_vision_copy -> run_mockups -> build_drafts -> build_pod_drafts ->
+    link_pod_drafts -> enrich_pod_drafts). --live-gelato refuses: the live
+    Gelato adapter is Phase C3, not yet built."""
     from shopsteward.core.db import connect, migrate
     from shopsteward.settings import DEFAULT_USER_ID, db_path
     from shopsteward.shop import LiveGateClosedError, run_shop_build
@@ -298,6 +306,7 @@ def shop_build(
                 live_copy=live_copy,
                 live_etsy_write=live_etsy_write,
                 live_printfile=live_printfile,
+                live_gelato=live_gelato,
                 regenerate=regenerate,
             )
         except LiveGateClosedError as exc:

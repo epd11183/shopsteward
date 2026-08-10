@@ -254,5 +254,10 @@
     "trim_provider_images": true
   },
   "link_timeout_seconds": 180,
-  "link_poll_interval_seconds": 10
+  "link_poll_interval_seconds": 10,
+  "gelato": {
+    "store_id": "REPLACE_AT_C3_gelato_store_id",
+    "poll_max": 10,
+    "poll_interval_seconds": 0
+  }
 }

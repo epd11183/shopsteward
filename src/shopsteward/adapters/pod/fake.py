@@ -25,6 +25,17 @@ on two genuinely different product types built from one photo. draft_id is
 stable across both cases. `delete_product` clears the entry, so the design
 §14 cleanup rehearsal (create -> delete -> recreate) works.
 
+`etsy_listings`: on the real Gelato integration, Gelato itself creates the
+Etsy draft the moment the product links (CLAUDE.md's "POD-first listing
+creation") -- a real `FakeEtsyWriteAdapter.listings[id]` never exists until
+that happens either. This optional constructor arg lets an orchestrator
+(shop.py) that already holds a `FakeEtsyWriteAdapter` pass its `.listings`
+dict so THIS fake can seed the matching placeholder row at the moment it
+mints `etsy_listing_id` -- otherwise a caller chaining link_pod_drafts ->
+enrich_pod_drafts offline would 404 on an id no Etsy fake ever heard of.
+None (the default, and every pre-existing direct FakeGelatoAdapter() test)
+skips this entirely.
+
 `calls` records every method invocation (name, kwargs) for assertions.
 """
 
@@ -35,12 +46,18 @@ from shopsteward.adapters.pod.models import PodProduct, PodProductSpec
 
 
 class FakeGelatoAdapter:
-    def __init__(self, *, links_after_polls: int = 2) -> None:
+    def __init__(
+        self,
+        *,
+        links_after_polls: int = 2,
+        etsy_listings: dict[int, dict[str, Any]] | None = None,
+    ) -> None:
         self._links_after_polls = links_after_polls
         self._next_product_id = 1
         self._next_etsy_listing_id = 5000
         self._products: dict[str, dict[str, Any]] = {}
         self._by_idempotency_key: dict[str, str] = {}
+        self._etsy_listings = etsy_listings
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     def create_product(self, spec: PodProductSpec) -> PodProduct:
@@ -64,6 +81,13 @@ class FakeGelatoAdapter:
             "variant_count": len(spec.ref.variants),
             "etsy_listing_id": None,
             "status": "publishing",
+            # Only needed to seed etsy_listings on link (see class docstring)
+            # -- placeholder title/description at create time either way
+            # (pod/provider.py's _build_spec), overwritten by real copy at
+            # enrich time via update_listing.
+            "title": spec.title,
+            "description": spec.description,
+            "price": spec.ref.variants[0].retail_price if spec.ref.variants else 0.0,
         }
         self.calls.append(
             (
@@ -85,6 +109,17 @@ class FakeGelatoAdapter:
         if row["status"] != "linked" and row["polls"] >= self._links_after_polls:
             row["status"] = "linked"
             row["etsy_listing_id"] = self._next_etsy_listing_id
+            if self._etsy_listings is not None:
+                self._etsy_listings[self._next_etsy_listing_id] = {
+                    "title": row["title"],
+                    "description": row["description"],
+                    "price": row["price"],
+                    "quantity": 1,
+                    "tags": [],
+                    "state": "draft",
+                    "images": [],
+                    "files": [],
+                }
             self._next_etsy_listing_id += 1
         self.calls.append(
             ("get_product", {"provider_product_id": provider_product_id, "polls": row["polls"]})
