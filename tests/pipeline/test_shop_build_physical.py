@@ -20,9 +20,10 @@ USER_ID = 1
 def conn(tmp_path, monkeypatch):
     monkeypatch.setenv("SHOPSTEWARD_MOCKUPS_DIR", str(tmp_path / "mockups"))
     monkeypatch.setenv("SHOPSTEWARD_TEMPLATES_DIR", str(tmp_path / "no_such_operator_dir"))
-    # store_id resolves from GELATO_STORE_ID (pod.json ships only a placeholder,
-    # rejected by PodProviderRef); set one so POD specs validate in fake mode.
-    monkeypatch.setenv("GELATO_STORE_ID", "test-store")
+    # Offline/fake POD linking must work with NO Gelato env at all (store_id
+    # resolves to pod.json's harmless placeholder, which the fake ignores).
+    for var in ("SHOPSTEWARD_LIVE_GELATO", "GELATO_API_KEY", "GELATO_STORE_ID"):
+        monkeypatch.delenv(var, raising=False)
     c = connect(tmp_path / "t.db")
     migrate(c)
     return c

@@ -16,11 +16,7 @@ USER_ID = 1
 
 
 @pytest.fixture()
-def conn(tmp_path, monkeypatch):
-    # store_id now resolves from GELATO_STORE_ID (pod.json ships only a
-    # placeholder, rejected by PodProviderRef); set a real one so acrylic/
-    # poster specs validate. canvas still fails on its "<OPERATOR>" template_id.
-    monkeypatch.setenv("GELATO_STORE_ID", "test-store")
+def conn(tmp_path):
     c = connect(tmp_path / "t.db")
     migrate(c)
     return c

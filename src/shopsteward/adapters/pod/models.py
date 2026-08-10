@@ -18,11 +18,6 @@ from typing import Literal
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 _OPERATOR_PLACEHOLDER = "<OPERATOR>"
-# pod.json ships store_id as this literal so the PUBLIC repo never carries a
-# real Gelato store id; the real value comes from GELATO_STORE_ID at runtime
-# (pod/config.py::resolve_store_id). A live spec still holding it is a config
-# error, rejected here the same way the "<OPERATOR>" catalog placeholders are.
-_STORE_ID_PLACEHOLDER = "REPLACE_AT_C3_gelato_store_id"
 
 
 class PodVariantSpec(BaseModel):
@@ -58,11 +53,11 @@ class PodProviderRef(BaseModel):
     @field_validator("store_id", "template_id")
     @classmethod
     def _reject_operator_placeholder(cls, value: str | None, info: ValidationInfo) -> str | None:
-        if value in (_OPERATOR_PLACEHOLDER, _STORE_ID_PLACEHOLDER):
+        if value == _OPERATOR_PLACEHOLDER:
             raise ValueError(
-                f"{info.field_name} is the literal {value!r} placeholder "
+                f"{info.field_name} is the literal {_OPERATOR_PLACEHOLDER!r} placeholder "
                 "from pod.json -- an operator must supply a real value before this can "
-                "go live (set GELATO_STORE_ID for store_id)"
+                "go live"
             )
         return value
 

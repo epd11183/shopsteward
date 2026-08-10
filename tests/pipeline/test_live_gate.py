@@ -99,31 +99,43 @@ def test_live_copy_error_names_env_vars() -> None:
 def _clear_gelato(monkeypatch) -> None:
     monkeypatch.delenv("SHOPSTEWARD_LIVE_GELATO", raising=False)
     monkeypatch.delenv("GELATO_API_KEY", raising=False)
+    monkeypatch.delenv("GELATO_STORE_ID", raising=False)
 
 
 def test_live_gelato_closed_when_flag_unset(monkeypatch) -> None:
     _clear_gelato(monkeypatch)
     monkeypatch.setenv("GELATO_API_KEY", "some-key")
+    monkeypatch.setenv("GELATO_STORE_ID", "store-1")
     assert live_gelato_open() is False
 
 
 def test_live_gelato_closed_when_key_unset(monkeypatch) -> None:
     _clear_gelato(monkeypatch)
     monkeypatch.setenv("SHOPSTEWARD_LIVE_GELATO", "1")
+    monkeypatch.setenv("GELATO_STORE_ID", "store-1")
     assert live_gelato_open() is False
 
 
-def test_live_gelato_open_when_flag_and_key_set(monkeypatch) -> None:
+def test_live_gelato_closed_when_store_id_unset(monkeypatch) -> None:
     _clear_gelato(monkeypatch)
     monkeypatch.setenv("SHOPSTEWARD_LIVE_GELATO", "1")
     monkeypatch.setenv("GELATO_API_KEY", "some-key")
+    assert live_gelato_open() is False
+
+
+def test_live_gelato_open_when_flag_key_and_store_id_set(monkeypatch) -> None:
+    _clear_gelato(monkeypatch)
+    monkeypatch.setenv("SHOPSTEWARD_LIVE_GELATO", "1")
+    monkeypatch.setenv("GELATO_API_KEY", "some-key")
+    monkeypatch.setenv("GELATO_STORE_ID", "store-1")
     assert live_gelato_open() is True
 
 
-def test_live_gelato_error_names_flag_key_and_cli_flag() -> None:
+def test_live_gelato_error_names_flag_key_store_and_cli_flag() -> None:
     message = live_gelato_error()
     assert "SHOPSTEWARD_LIVE_GELATO" in message
     assert "GELATO_API_KEY" in message
+    assert "GELATO_STORE_ID" in message
     assert "--live-gelato" in message
 
 
