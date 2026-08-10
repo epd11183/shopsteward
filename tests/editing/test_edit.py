@@ -22,7 +22,7 @@ def _folder_with_raws(tmp_path: Path, names: list[str]) -> tuple[Path, FakeRawDe
     images = {}
     for i, name in enumerate(names):
         raw = tmp_path / name
-        raw.write_bytes(b"stub")
+        raw.write_bytes(f"raw-{name}".encode())
         img = np.full((8, 8, 3), 0.1 + 0.1 * i, dtype=np.float32)
         images[str(raw)] = DecodedImage(rgb=img)
     return tmp_path, FakeRawDecoder(images)
@@ -38,7 +38,7 @@ def test_run_edit_writes_a_sidecar_per_raw(tmp_path):
     folder, decoder = _folder_with_raws(tmp_path, ["A.CR3", "B.CR3"])
     report = run_edit(_conn(), USER, folder, "bright-and-true",
                       decoder=decoder, look_adapter=FixtureLookAdapter(),
-                      model="m", knobs=KNOBS, regenerate=False, overwrite=False, wb_lock=False)
+                      model="m", knobs=KNOBS, regenerate=False, overwrite=False, batch_lock=False)
     assert report.written == 2
     assert sidecar_path(tmp_path / "A.CR3").exists()
     assert sidecar_path(tmp_path / "B.CR3").exists()
@@ -49,7 +49,7 @@ def test_run_edit_skips_existing_without_overwrite(tmp_path):
     sidecar_path(tmp_path / "A.CR3").write_text("existing")
     report = run_edit(_conn(), USER, folder, "bright-and-true",
                       decoder=decoder, look_adapter=FixtureLookAdapter(),
-                      model="m", knobs=KNOBS, regenerate=False, overwrite=False, wb_lock=False)
+                      model="m", knobs=KNOBS, regenerate=False, overwrite=False, batch_lock=False)
     assert report.written == 0 and report.skipped_existing == 1
 
 
@@ -63,15 +63,15 @@ def test_run_edit_fails_fast_on_look_error_before_writing(tmp_path):
     with pytest.raises(LookParseError):
         run_edit(_conn(), USER, folder, "some new look",
                  decoder=decoder, look_adapter=Boom(),
-                 model="m", knobs=KNOBS, regenerate=False, overwrite=False, wb_lock=False)
+                 model="m", knobs=KNOBS, regenerate=False, overwrite=False, batch_lock=False)
     assert not sidecar_path(tmp_path / "A.CR3").exists()  # nothing written
 
 
-def test_wb_lock_applies_same_exposure_to_all(tmp_path):
+def test_batch_lock_applies_same_exposure_to_all(tmp_path):
     folder, decoder = _folder_with_raws(tmp_path, ["A.CR3", "B.CR3"])
     report = run_edit(_conn(), USER, folder, "bright-and-true",
                       decoder=decoder, look_adapter=FixtureLookAdapter(),
-                      model="m", knobs=KNOBS, regenerate=False, overwrite=False, wb_lock=True)
+                      model="m", knobs=KNOBS, regenerate=False, overwrite=False, batch_lock=True)
     a = sidecar_path(tmp_path / "A.CR3").read_text()
     b = sidecar_path(tmp_path / "B.CR3").read_text()
     def _exp(x): return x.split('crs:Exposure2012="')[1].split('"')[0]
