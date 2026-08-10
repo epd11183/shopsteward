@@ -9,8 +9,14 @@ from pathlib import Path
 
 from shopsteward.adapters.look.interface import LookAdapter, LookProfile
 from shopsteward.core.events import Event, append, read_all
+from shopsteward.editing.look_cost import append_llm_call, month_look_cost
+from shopsteward.editing.look_guard import sanitize_look
 
 LOOK_EVENT_TYPES = ("look.seeded", "look.updated")
+
+
+class LookCostCapError(RuntimeError):
+    """Raised when the month's look-LLM spend is already at/over the soft cap."""
 
 
 def _latest_by_name(conn: sqlite3.Connection, user_id: int) -> dict[str, dict]:
@@ -73,9 +79,16 @@ def resolve_look(
     *,
     model: str,
     regenerate: bool,
+    guard_knobs: dict | None = None,
+    soft_cap_usd: float | None = None,
+    pricing: dict | None = None,
+    fallback_look: str = "bright-and-true",
+    month_prefix: str | None = None,
 ) -> LookProfile:
     """Resolve --look: an exact stored name wins; otherwise treat as a description
-    keyed by normalized text (reload unless --regenerate); else generate + save."""
+    keyed by normalized text (reload unless --regenerate); else generate + save.
+    When generating: enforce the monthly soft cap, run the sanity guard
+    (retry once, then fall back to a seed), and ledger the LLM cost."""
     latest = _latest_by_name(conn, user_id)
     if look_arg in latest:
         return _profile_from_payload(latest[look_arg])
@@ -84,7 +97,25 @@ def resolve_look(
     if not regenerate and key in latest:
         return _profile_from_payload(latest[key])
 
-    result = adapter.generate_look(look_arg, model=model)
-    profile = result.profile.model_copy(update={"name": key, "description": look_arg})
+    if (soft_cap_usd is not None and month_prefix is not None
+            and month_look_cost(conn, user_id, month_prefix) >= soft_cap_usd):
+        raise LookCostCapError(
+            f"look-LLM spend for {month_prefix} is at the ${soft_cap_usd} cap; "
+            "raise look_llm.monthly_soft_cap_usd to continue"
+        )
+
+    profile = _generate_gated(conn, user_id, look_arg, key, adapter, model,
+                              guard_knobs, fallback_look)
     save_look(conn, user_id, profile)
     return profile
+
+
+def _generate_gated(conn, user_id, look_arg, key, adapter, model, guard_knobs, fallback_look):
+    for _attempt in range(2):  # generate, then one retry on a guard failure
+        result = adapter.generate_look(look_arg, model=model)
+        if result.usage is not None:
+            append_llm_call(conn, user_id, result.usage, description=look_arg)
+        candidate = result.profile.model_copy(update={"name": key, "description": look_arg})
+        if guard_knobs is None or sanitize_look(candidate, guard_knobs).ok:
+            return candidate
+    return get_look(conn, user_id, fallback_look)
