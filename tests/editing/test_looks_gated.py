@@ -32,19 +32,27 @@ def _tasteful():
 
 def test_garish_generation_falls_back_to_seed_after_retry():
     c = _conn()
+    seed = looks.get_look(c, USER, "bright-and-true")
     adapter = FakeLookAdapter([_garish(), _garish()])
     out = looks.resolve_look(c, USER, "loud look", adapter, model="m", regenerate=False,
                              guard_knobs=GUARD, fallback_look="bright-and-true",
                              month_prefix="2026-08")
-    assert out.name == "bright-and-true"
+    # Fell back to the seed's develop values, cached under the description key.
+    assert out.contrast == seed.contrast and out.vibrance == seed.vibrance
+    assert "bright-and-true" in out.description
     assert len(adapter.calls) == 2
+    assert month_look_cost(c, USER, "2026-08") == 0.04  # both attempts ledgered
+    # Re-requesting the same description reloads the cached fallback (no new LLM call).
+    again = looks.resolve_look(c, USER, "loud look", FakeLookAdapter([]), model="m",
+                               regenerate=False, guard_knobs=GUARD, month_prefix="2026-08")
+    assert again.contrast == seed.contrast
 
 
 def test_tasteful_generation_is_kept_and_ledgered():
     c = _conn()
     adapter = FakeLookAdapter([_tasteful()])
     out = looks.resolve_look(c, USER, "nice look", adapter, model="m", regenerate=False,
-                             guard_knobs=GUARD, month_prefix="2026-08", pricing={})
+                             guard_knobs=GUARD, month_prefix="2026-08")
     assert out.contrast == 15
     assert month_look_cost(c, USER, "2026-08") == 0.02
 
@@ -59,3 +67,10 @@ def test_soft_cap_refuses_before_generating():
         looks.resolve_look(c, USER, "new look", adapter, model="m", regenerate=False,
                            guard_knobs=GUARD, month_prefix="2026-08", soft_cap_usd=5.0)
     assert adapter.calls == []
+
+
+def test_soft_cap_without_month_prefix_raises():
+    c = _conn()
+    with pytest.raises(ValueError):
+        looks.resolve_look(c, USER, "x", FakeLookAdapter([_tasteful()]), model="m",
+                           regenerate=False, soft_cap_usd=5.0)

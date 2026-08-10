@@ -81,7 +81,6 @@ def resolve_look(
     regenerate: bool,
     guard_knobs: dict | None = None,
     soft_cap_usd: float | None = None,
-    pricing: dict | None = None,
     fallback_look: str = "bright-and-true",
     month_prefix: str | None = None,
 ) -> LookProfile:
@@ -97,12 +96,16 @@ def resolve_look(
     if not regenerate and key in latest:
         return _profile_from_payload(latest[key])
 
-    if (soft_cap_usd is not None and month_prefix is not None
-            and month_look_cost(conn, user_id, month_prefix) >= soft_cap_usd):
-        raise LookCostCapError(
-            f"look-LLM spend for {month_prefix} is at the ${soft_cap_usd} cap; "
-            "raise look_llm.monthly_soft_cap_usd to continue"
-        )
+    if soft_cap_usd is not None:
+        if month_prefix is None:
+            raise ValueError("soft_cap_usd requires month_prefix")
+        # ponytail: cap is entry-gated, not per-call — a single resolve can spend up
+        # to 2x one generation past the cap via the guard retry. Acceptable for a soft cap.
+        if month_look_cost(conn, user_id, month_prefix) >= soft_cap_usd:
+            raise LookCostCapError(
+                f"look-LLM spend for {month_prefix} is at the ${soft_cap_usd} cap; "
+                "raise look_llm.monthly_soft_cap_usd to continue"
+            )
 
     profile = _generate_gated(conn, user_id, look_arg, key, adapter, model,
                               guard_knobs, fallback_look)
@@ -110,7 +113,16 @@ def resolve_look(
     return profile
 
 
-def _generate_gated(conn, user_id, look_arg, key, adapter, model, guard_knobs, fallback_look):
+def _generate_gated(
+    conn: sqlite3.Connection,
+    user_id: int,
+    look_arg: str,
+    key: str,
+    adapter: LookAdapter,
+    model: str,
+    guard_knobs: dict | None,
+    fallback_look: str,
+) -> LookProfile:
     for _attempt in range(2):  # generate, then one retry on a guard failure
         result = adapter.generate_look(look_arg, model=model)
         if result.usage is not None:
@@ -118,4 +130,8 @@ def _generate_gated(conn, user_id, look_arg, key, adapter, model, guard_knobs, f
         candidate = result.profile.model_copy(update={"name": key, "description": look_arg})
         if guard_knobs is None or sanitize_look(candidate, guard_knobs).ok:
             return candidate
-    return get_look(conn, user_id, fallback_look)
+    seed = get_look(conn, user_id, fallback_look)
+    return seed.model_copy(update={
+        "name": key,
+        "description": f"{look_arg} (fell back to {fallback_look})",
+    })
