@@ -48,6 +48,12 @@ is fold-MERGED by `format` across .variants_selected -> .priced (mirrors
 images_attached's merge-by-rank), so a variant's aspect/dpi (selection
 stage) and its base_cost/retail_price/net/margin_pct (pricing stage) end up
 in the same row instead of the second event's write clobbering the first's.
+
+Phase C slice 4 (pod/enrich.py) adds listingdraft.enriched/.enrich_failed
+(pod_status='enriched'/'enrich_failed', same column provider.py's
+create->poll->link cycle writes) and makes listingdraft.images_selected's
+`sellable_file` payload key optional -- POD enrichment reuses the event for
+its own image plan but has no digital sellable file.
 """
 
 import json
@@ -132,16 +138,23 @@ def rebuild_listings(conn: sqlite3.Connection) -> None:
             )
 
         elif e.type == "listingdraft.images_selected":
-            conn.execute(
-                "UPDATE proj_listing_drafts SET images_json=?, file_source=? "
-                "WHERE user_id=? AND draft_id=?",
-                (
-                    json.dumps(p["images"]),
-                    p["sellable_file"]["source"],
-                    e.user_id,
-                    p["draft_id"],
-                ),
-            )
+            # POD enrichment (Phase C, slice 4, pod/enrich.py) reuses this
+            # event for its own image plan but has no sellable digital file
+            # (POD's sellable artifact is the print file, tracked separately
+            # via print_file_key) -- sellable_file is optional here so its
+            # absence just leaves file_source untouched instead of KeyError.
+            sellable_file = p.get("sellable_file")
+            if sellable_file is not None:
+                conn.execute(
+                    "UPDATE proj_listing_drafts SET images_json=?, file_source=? "
+                    "WHERE user_id=? AND draft_id=?",
+                    (json.dumps(p["images"]), sellable_file["source"], e.user_id, p["draft_id"]),
+                )
+            else:
+                conn.execute(
+                    "UPDATE proj_listing_drafts SET images_json=? WHERE user_id=? AND draft_id=?",
+                    (json.dumps(p["images"]), e.user_id, p["draft_id"]),
+                )
 
         elif e.type == "listingdraft.copy_generated":
             conn.execute(
@@ -228,6 +241,25 @@ def rebuild_listings(conn: sqlite3.Connection) -> None:
         elif e.type == "listingdraft.provider_failed":
             conn.execute(
                 "UPDATE proj_listing_drafts SET pod_status='failed' WHERE user_id=? AND draft_id=?",
+                (e.user_id, p["draft_id"]),
+            )
+
+        elif e.type == "listingdraft.enriched":
+            # POD enrichment (Phase C, slice 4, pod/enrich.py): reuses the
+            # SAME pod_status column provider.py's create->poll->link cycle
+            # writes (that column is "the POD lifecycle state", not
+            # exclusively provider.py's) -- 'enriched' is the terminal
+            # success state pod/enrich.py's eligibility query excludes.
+            conn.execute(
+                "UPDATE proj_listing_drafts SET pod_status='enriched' "
+                "WHERE user_id=? AND draft_id=?",
+                (e.user_id, p["draft_id"]),
+            )
+
+        elif e.type == "listingdraft.enrich_failed":
+            conn.execute(
+                "UPDATE proj_listing_drafts SET pod_status='enrich_failed' "
+                "WHERE user_id=? AND draft_id=?",
                 (e.user_id, p["draft_id"]),
             )
 
