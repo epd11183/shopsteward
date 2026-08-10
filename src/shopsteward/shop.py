@@ -31,6 +31,8 @@ from shopsteward.pipeline.live_gate import (
     live_copy_open,
     live_etsy_write_error,
     live_etsy_write_open,
+    live_gelato_error,
+    live_gelato_open,
     live_printfile_error,
     live_printfile_open,
     live_vision_error,
@@ -70,13 +72,8 @@ def run_shop_build(
         raise LiveGateClosedError(live_etsy_write_error())
     if live_printfile and not live_printfile_open():
         raise LiveGateClosedError(live_printfile_error())
-    if live_gelato:
-        # build_pod_adapter(live=True) raises NotImplementedError (C3 not
-        # built yet) -- refuse up front, before any scan or spend, same as
-        # the other --live-* gates above, instead of a bare traceback mid-run.
-        raise LiveGateClosedError(
-            "live Gelato adapter is Phase C3 (not yet built) -- rerun without --live-gelato."
-        )
+    if live_gelato and not live_gelato_open():
+        raise LiveGateClosedError(live_gelato_error())
 
     landing = scan_landing(conn, user_id, folder)
 
@@ -127,7 +124,9 @@ def run_shop_build(
         conn,
         user_id,
         adapter=build_pod_adapter(
-            live=live_gelato, etsy_listings=getattr(etsy_adapter, "listings", None)
+            live=live_gelato,
+            etsy_listings=getattr(etsy_adapter, "listings", None),
+            store_id=pod_cfg.gelato.store_id,
         ),
         print_file_host=host,
         cfg=pod_cfg,

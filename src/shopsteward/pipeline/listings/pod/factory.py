@@ -1,9 +1,9 @@
 """Single construction path for PrintFileHost instances (build_etsy_write_
 adapter, pipeline/listings/push.py, precedent): FakePrintFileHost unless the
 caller has already confirmed pipeline.live_gate.live_printfile_open().
-`build_pod_adapter` (Gelato create/poll, slice 3) lives here too once it
-exists -- this file is the single "which live adapter" decision point for
-the whole pod/ package, same role config.py plays for pod.json."""
+`build_pod_adapter` (Gelato create/poll) lives here too -- this file is the
+single "which live adapter" decision point for the whole pod/ package, same
+role config.py plays for pod.json."""
 
 import os
 
@@ -37,13 +37,24 @@ def build_print_file_host(*, live: bool) -> PrintFileHost:
     )
 
 
-def build_pod_adapter(*, live: bool, etsy_listings: dict | None = None):
+def build_pod_adapter(
+    *, live: bool, etsy_listings: dict | None = None, store_id: str | None = None
+):
     """`etsy_listings` (fake mode only): a `FakeEtsyWriteAdapter.listings`
     dict to seed when a product links, so a caller chaining link then
     enrich offline (shop.py) doesn't 404 against an id no Etsy fake ever
-    heard of -- see FakeGelatoAdapter's docstring."""
+    heard of -- see FakeGelatoAdapter's docstring.
+
+    `store_id` (live mode only): cfg.gelato.store_id (pod.json), required
+    to construct the live adapter."""
     from shopsteward.adapters.pod.fake import FakeGelatoAdapter
 
     if not live:
         return FakeGelatoAdapter(etsy_listings=etsy_listings)
-    raise NotImplementedError("live Gelato adapter is Phase C3 (not yet built)")
+
+    if not store_id:
+        raise ValueError("live Gelato adapter requires store_id (cfg.gelato.store_id)")
+
+    from shopsteward.adapters.pod.live import LiveGelatoAdapter
+
+    return LiveGelatoAdapter(api_key=os.environ["GELATO_API_KEY"], store_id=store_id)
