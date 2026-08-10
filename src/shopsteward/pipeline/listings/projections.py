@@ -199,6 +199,38 @@ def rebuild_listings(conn: sqlite3.Connection) -> None:
                 (p["file_key"], p["sha256"], e.user_id, p["draft_id"]),
             )
 
+        elif e.type == "listingdraft.provider_created":
+            # POD create->poll->link (Phase C, design §7.1/§3): provider_
+            # product_id is set as soon as create_product succeeds, BEFORE
+            # the async link is confirmed -- pod_status stays 'publishing'
+            # until .provider_linked/.provider_failed resolves it, so a
+            # crash-then-rerun (provider.py) can tell "already created,
+            # still needs polling" apart from "never created" without
+            # re-calling create_product (which would 409 against the
+            # provider's own idempotency-key dedupe).
+            conn.execute(
+                "UPDATE proj_listing_drafts SET provider_product_id=?, pod_status='publishing' "
+                "WHERE user_id=? AND draft_id=?",
+                (p["provider_product_id"], e.user_id, p["draft_id"]),
+            )
+
+        elif e.type == "listingdraft.provider_linked":
+            # pod_status='linked' is the ONLY "confirmed" signal provider.py
+            # treats as done -- reusing etsy_listing_id (also written by the
+            # digital .pushed_to_etsy fold) keeps one column meaning "the
+            # Etsy listing id", regardless of which path produced it.
+            conn.execute(
+                "UPDATE proj_listing_drafts SET pod_status='linked', etsy_listing_id=? "
+                "WHERE user_id=? AND draft_id=?",
+                (str(p["etsy_listing_id"]), e.user_id, p["draft_id"]),
+            )
+
+        elif e.type == "listingdraft.provider_failed":
+            conn.execute(
+                "UPDATE proj_listing_drafts SET pod_status='failed' WHERE user_id=? AND draft_id=?",
+                (e.user_id, p["draft_id"]),
+            )
+
         elif e.type == "listingdraft.pushed_to_etsy":
             conn.execute(
                 "UPDATE proj_listing_drafts SET etsy_listing_id=?, state='pushed' "
