@@ -69,9 +69,9 @@ def test_run_edit_fails_fast_on_look_error_before_writing(tmp_path):
 
 def test_batch_lock_applies_same_exposure_to_all(tmp_path):
     folder, decoder = _folder_with_raws(tmp_path, ["A.CR3", "B.CR3"])
-    report = run_edit(_conn(), USER, folder, "bright-and-true",
-                      decoder=decoder, look_adapter=FixtureLookAdapter(),
-                      model="m", knobs=KNOBS, regenerate=False, overwrite=False, batch_lock=True)
+    run_edit(_conn(), USER, folder, "bright-and-true",
+             decoder=decoder, look_adapter=FixtureLookAdapter(),
+             model="m", knobs=KNOBS, regenerate=False, overwrite=False, batch_lock=True)
     a = sidecar_path(tmp_path / "A.CR3").read_text()
     b = sidecar_path(tmp_path / "B.CR3").read_text()
     def _exp(x): return x.split('crs:Exposure2012="')[1].split('"')[0]

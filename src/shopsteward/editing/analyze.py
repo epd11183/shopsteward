@@ -68,7 +68,8 @@ def _cast_nudge(rgb: np.ndarray, knobs: dict) -> tuple[int, int]:
     calibration if the nudge is ever enabled by default."""
     trigger = float(knobs["cast_trigger"])
     cap = int(knobs["cast_nudge_cap"])
-    full_scale = float(knobs["cast_full_scale_bias"])  # relative green excess that saturates the nudge to the cap
+    # relative green excess that saturates the nudge to the cap
+    full_scale = float(knobs["cast_full_scale_bias"])
     r, g, b = (float(rgb[..., i].mean()) for i in range(3))
     gray = (r + g + b) / 3.0
     if gray <= 1e-4:

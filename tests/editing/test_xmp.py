@@ -76,5 +76,7 @@ def test_negative_exposure_formatting():
 
 
 def test_tone_curve_content_lands():
-    xmp = compose(CorrectionSettings(), LookProfile(name="x", tone_curve=[[0, 0], [128, 140], [255, 255]]))
+    xmp = compose(
+        CorrectionSettings(), LookProfile(name="x", tone_curve=[[0, 0], [128, 140], [255, 255]])
+    )
     assert "128, 140" in xmp

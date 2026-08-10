@@ -45,15 +45,23 @@ def test_resolve_named_look_does_not_call_llm():
 def test_resolve_description_generates_then_reloads():
     c = _conn()
     adapter = FixtureLookAdapter()
-    first = looks.resolve_look(c, USER, "cinematic mexico", adapter, model="m", regenerate=False)
+    first = looks.resolve_look(
+        c, USER, "cinematic mexico", adapter, model="m", regenerate=False
+    )
     reload_adapter = FakeLookAdapter([])
-    again = looks.resolve_look(c, USER, "cinematic mexico", reload_adapter, model="m", regenerate=False)
+    again = looks.resolve_look(
+        c, USER, "cinematic mexico", reload_adapter, model="m", regenerate=False
+    )
     assert again.model_dump() == first.model_dump()
 
 
 def test_regenerate_forces_new_call():
     c = _conn()
-    looks.resolve_look(c, USER, "cinematic mexico", FixtureLookAdapter(), model="m", regenerate=False)
+    looks.resolve_look(
+        c, USER, "cinematic mexico", FixtureLookAdapter(), model="m", regenerate=False
+    )
     forced = LookResult(profile=LookProfile(name="forced", contrast=77))
-    out = looks.resolve_look(c, USER, "cinematic mexico", FakeLookAdapter([forced]), model="m", regenerate=True)
+    out = looks.resolve_look(
+        c, USER, "cinematic mexico", FakeLookAdapter([forced]), model="m", regenerate=True
+    )
     assert out.contrast == 77
