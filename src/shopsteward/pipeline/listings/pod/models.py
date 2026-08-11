@@ -46,6 +46,8 @@ __all__ = [
     "PodProviderCatalog",
     "PodRoutingRule",
     "PodVariant",
+    "ReprintReason",
+    "ReprintResult",
 ]
 
 # The photo's own orientation (from proj_landing_files width/height). A
@@ -230,3 +232,30 @@ class PodBuildReport(BaseModel):
     print_files_hosted: int = 0
     pod_skipped: int = 0
     skipped_idempotent: int = 0
+
+
+# --- single-photo reprint builder (design 2026-08-11-source-asset-head,
+# gap-fill step 1) ------------------------------------------------------------
+
+# Every no-op reason build_pod_reprint can return instead of raising (the
+# caller -- the next slice's governed capability -- surfaces these to the
+# operator; a stable alias keeps them from drifting the way PodDropReason
+# guards against). "not_eligible" mirrors pod_skipped's aspect/dpi/no_route
+# family collapsed to one value: a reprint result carries no dropped[] detail
+# list of its own, so there is nothing finer to report here.
+ReprintReason = Literal[
+    "not_archived", "already_exists", "unknown_type", "no_dimensions", "not_eligible"
+]
+
+
+class ReprintResult(BaseModel):
+    """build_pod_reprint's return value (pod/build.py). `built=False` is the
+    idempotent/precondition-failure no-op path -- never an exception -- so
+    the caller can branch on `reason` instead of catching. `draft_id` is set
+    whenever a draft (new or pre-existing) can be named: on `built=True` and
+    on `reason="already_exists"`, so the caller can find/re-use it."""
+
+    built: bool
+    reason: ReprintReason | None = None
+    draft_id: str | None = None
+    product_type: str | None = None

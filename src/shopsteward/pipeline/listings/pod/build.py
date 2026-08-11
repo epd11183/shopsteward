@@ -39,7 +39,7 @@ from shopsteward.core.events import Event, append
 from shopsteward.pipeline.listings import archive as asset_archive
 from shopsteward.pipeline.listings import asset_store_config
 from shopsteward.pipeline.listings import config as listing_config
-from shopsteward.pipeline.listings.models import PricingRules
+from shopsteward.pipeline.listings.models import AssetStoreConfig, PricingRules
 from shopsteward.pipeline.listings.pod import catalog, printfile
 from shopsteward.pipeline.listings.pod import config as pod_config
 from shopsteward.pipeline.listings.pod import pricing as pod_pricing
@@ -48,6 +48,7 @@ from shopsteward.pipeline.listings.pod.models import (
     PodConfig,
     PodDroppedVariant,
     PodVariant,
+    ReprintResult,
 )
 from shopsteward.pipeline.listings.pod.projections import rebuild_pod_config
 from shopsteward.pipeline.listings.projections import rebuild_listings
@@ -491,3 +492,224 @@ def build_pod_drafts(
 
     rebuild_listings(conn)
     return report
+
+
+def _archived_row_for_photo(
+    conn: sqlite3.Connection, user_id: int, photo_id: str, prefer: str
+) -> sqlite3.Row | None:
+    """The proj_asset_store row to source a reprint's dims/master from --
+    _representative_row's precedent, over the archive instead of landing
+    rows: prefers pod.json's preferred format (design §7.4), ties break on
+    the lowest format name for determinism. None if the photo was never
+    archived at all."""
+    rows = conn.execute(
+        "SELECT format, width, height, source_landing_file_id FROM proj_asset_store "
+        "WHERE user_id=? AND photo_id=? ORDER BY format",
+        (user_id, photo_id),
+    ).fetchall()
+    if not rows:
+        return None
+    wanted = printfile._PREFERRED_FORMAT.get(prefer)
+    if wanted is not None:
+        for row in rows:
+            if row["format"] == wanted:
+                return row
+    return rows[0]
+
+
+def build_pod_reprint(
+    conn: sqlite3.Connection,
+    user_id: int,
+    photo_id: str,
+    product_type: str,
+    *,
+    print_file_host: PrintFileHost,
+    pod_cfg: PodConfig | None = None,
+    asset_cfg: AssetStoreConfig | None = None,
+) -> ReprintResult:
+    """Gap-fill step 1 (design 2026-08-11-source-asset-head, "How gap-fill
+    consumes the head"): build ONE POD draft for an already-ARCHIVED photo in
+    a NEW product_type, sourcing dims + the print master from proj_asset_store
+    / the archive rather than the landing folder (which may be long gone --
+    that is the entire point of a reprint). Reaches the same print_file_hosted
+    stopping point build_pod_drafts reaches, with a byte-shape-identical event
+    sequence, so the existing link/enrich/push tail carries it on unchanged.
+
+    Builder only -- no provider create/poll/link/enrich here (that is
+    link_pod_drafts, unchanged, called later by the governed capability this
+    slice does not build). Every precondition failure returns a `built=False`
+    ReprintResult instead of raising -- the caller surfaces the reason.
+
+    `asset_cfg`, if given, is accepted for signature symmetry with `pod_cfg`
+    and future callers but currently unused: archive resolution runs through
+    printfile.resolve_print_source_path, which already re-reads
+    asset_store_config itself (printfile.py's own precedent -- not this
+    module's to change)."""
+    pod_config.seed(conn, user_id)
+    listing_config.seed(conn, user_id)
+    asset_store_config.seed(conn, user_id)
+    rebuild_pipeline(conn)
+    rebuild_pod_config(conn)
+    rebuild_listings(conn)
+
+    cfg = pod_cfg if pod_cfg is not None else pod_config.get_pod_config(conn, user_id)
+    listing_cfg = listing_config.get_config(conn, user_id)
+
+    known_types = {
+        product for provider_cat in cfg.catalog.values() for product in provider_cat.products
+    }
+    if product_type not in known_types:
+        return ReprintResult(built=False, reason="unknown_type")
+
+    archived_row = _archived_row_for_photo(conn, user_id, photo_id, cfg.print_file.prefer)
+    if archived_row is None:
+        return ReprintResult(built=False, reason="not_archived")
+
+    width, height = archived_row["width"], archived_row["height"]
+    if width is None or height is None:
+        return ReprintResult(built=False, reason="no_dimensions")
+
+    kept, dropped, priced = _select_and_price(width, height, cfg, listing_cfg.pricing)
+    variants = [v for v in kept if v.product_type == product_type]
+    if not variants:
+        return ReprintResult(built=False, reason="not_eligible")
+
+    cfg_hash = pod_config.pod_config_hash(cfg)
+    provider = variants[0].provider
+    draft_id = hashlib.sha256(
+        f"{photo_id}|{cfg_hash}|{provider}|{product_type}".encode()
+    ).hexdigest()
+
+    if _existing_draft(conn, user_id, draft_id) is not None:
+        return ReprintResult(
+            built=False, reason="already_exists", draft_id=draft_id, product_type=product_type
+        )
+
+    landing_file_id = archived_row["source_landing_file_id"]
+    host = print_file_host
+    host_name = _host_name(host)
+
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="listingdraft.created",
+            payload={
+                "draft_id": draft_id,
+                "landing_file_id": landing_file_id,
+                "photo_id": photo_id,
+                "set_key": None,
+                "provider": provider,
+                "format": product_type,
+                "sku_source": "provider",
+                "listing_type": "physical",
+                "config_hash": None,
+                "pod_config_hash": cfg_hash,
+            },
+        ),
+    )
+
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="listingdraft.variants_selected",
+            payload={
+                "draft_id": draft_id,
+                "aspect": variants[0].aspect,
+                "source_px": [width, height],
+                "variants": [
+                    {
+                        "format": v.format,
+                        "size": v.size,
+                        "aspect": v.aspect,
+                        "variant_key": v.variant_key,
+                        "dpi": v.dpi,
+                    }
+                    for v in variants
+                ],
+                # Full photo-level dropped[] -- build_pod_drafts precedent
+                # (design §3): every OTHER product_type this photo didn't
+                # survive for, so the draft is shape-identical either way.
+                "dropped": [
+                    {"product_type": d.product_type, "format": d.format, "reason": d.reason}
+                    for d in dropped
+                ],
+            },
+        ),
+    )
+
+    priced_variants = []
+    unit_costs = []
+    for variant in variants:
+        unit_cost, price, net, margin_pct = priced[variant.format]
+        unit_costs.append(unit_cost)
+        priced_variants.append(
+            {
+                "format": variant.format,
+                "base_cost": variant.base_cost,
+                "shipping_est": variant.shipping_est,
+                "retail_price": price,
+                "net": net,
+                "margin_pct": margin_pct,
+            }
+        )
+
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="listingdraft.priced",
+            payload={
+                "draft_id": draft_id,
+                "currency": cfg.currency,
+                "unit_cost": min(unit_costs),
+                "variants": priced_variants,
+                "costs_verified_on": cfg.costs_verified_on,
+                "cost_stale": _cost_stale(cfg),
+                "auto": True,
+            },
+        ),
+    )
+
+    # No side-archive here (build_pod_drafts's asset.archived step): the
+    # master this draft prints from IS an existing archive entry -- there is
+    # nothing new to record.
+    data, sellable = printfile.prepare_print_file(
+        conn, user_id, landing_file_id, cfg.print_file.prefer, cfg.print_file.max_bytes
+    )
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="listingdraft.print_file_prepared",
+            payload={
+                "draft_id": draft_id,
+                "source": sellable.source,
+                "sha256": sellable.sha256,
+                "bytes": sellable.bytes,
+                "long_edge_px": max(width, height),
+            },
+        ),
+    )
+
+    hosted = printfile.publish_print_file(
+        host, data, sellable, ttl_seconds=cfg.print_file.host_ttl_seconds
+    )
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="listingdraft.print_file_hosted",
+            payload={
+                "draft_id": draft_id,
+                "host": host_name,
+                "file_key": hosted.key,
+                "expires_at": hosted.expires_at,
+                "sha256": sellable.sha256,
+            },
+        ),
+    )
+
+    rebuild_listings(conn)
+    return ReprintResult(built=True, draft_id=draft_id, product_type=product_type)
