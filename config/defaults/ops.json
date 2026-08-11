@@ -38,6 +38,9 @@
     "default_reduction_pct": 0.10,
     "min_lifetime_views": 25
   },
+  "seo_edit": {
+    "min_lifetime_views": 25
+  },
   "autonomy": {
     "enabled": false,
     "daily_action_cap": 10,

@@ -45,7 +45,11 @@ class ProposalIntent(BaseModel):
 
     capability_key: str
     target_id: str
-    params: dict[str, str | int | float | bool] = {}
+    # list[str] added (M8b slice 4a, `listing.seo_edit`'s tags) -- params
+    # stays an open dict either way; the OpenRouter json_schema
+    # (adapters/planner/openrouter.py's _INTENTS_SCHEMA) already declares
+    # params as a free-form object, so this widening is Python-side only.
+    params: dict[str, str | int | float | bool | list[str]] = {}
     reason: str = Field(min_length=1)
 
 

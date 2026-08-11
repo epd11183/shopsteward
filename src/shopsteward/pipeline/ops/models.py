@@ -89,6 +89,14 @@ class _OpsReprice(BaseModel):
     min_lifetime_views: int = Field(gt=0)
 
 
+class _OpsSeoEdit(BaseModel):
+    # `listing.seo_edit` (M8b slice 4a, draft #10) eligibility threshold --
+    # same "enough traffic to judge this, not just new" floor reprice uses,
+    # kept as its own knob since the two capabilities' signal thresholds
+    # aren't required to track each other.
+    min_lifetime_views: int = Field(gt=0)
+
+
 class _OpsAutonomy(BaseModel):
     # Chassis master switch + caps (M8a spec §3, draft §5). enabled and
     # monthly_spend_cap_usd MUST default false/0.00 -- nothing auto-executes,
@@ -126,6 +134,7 @@ class OpsConfig(BaseModel):
     brief_sections: _OpsBriefSections
     autonomy: _OpsAutonomy
     reprice: _OpsReprice
+    seo_edit: _OpsSeoEdit
 
 
 # --- autonomy chassis (PR1) --------------------------------------------------
@@ -158,7 +167,8 @@ class ProposedAction(BaseModel):
     # Additive/default-empty: autorenew/tune_threshold never set this, so
     # their action_id/inputs_hash are unchanged. Round-trips automatically
     # through the action.proposed event (model_dump()/model_validate()).
-    params: dict[str, str | int | float | bool] = Field(default_factory=dict)
+    # list[str] added (M8b slice 4a, `listing.seo_edit`'s tags).
+    params: dict[str, str | int | float | bool | list[str]] = Field(default_factory=dict)
 
 
 class ExecutionResult(BaseModel):
