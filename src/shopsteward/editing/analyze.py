@@ -8,6 +8,7 @@ import numpy as np
 
 from shopsteward.editing.models import CorrectionSettings
 from shopsteward.editing.rawdecode import DecodedImage
+from shopsteward.editing.whitebalance import estimate_wb
 
 # Rec. 709 luma weights.
 _LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
@@ -23,7 +24,10 @@ def analyze_raw(decoded: DecodedImage, knobs: dict) -> CorrectionSettings:
 
     exposure = _exposure(luma, knobs)
     shadow_lift, lo, hi = _shadow(luma, knobs)
-    temp_nudge, tint_nudge = _cast_nudge(rgb, knobs)
+
+    temperature = tint = None
+    if knobs.get("auto_white_balance"):
+        temperature, tint = estimate_wb(decoded, knobs)
 
     return CorrectionSettings(
         exposure=exposure,
@@ -32,8 +36,8 @@ def analyze_raw(decoded: DecodedImage, knobs: dict) -> CorrectionSettings:
         shadow_lift=shadow_lift,
         shadow_range_low=lo,
         shadow_range_high=hi,
-        temp_nudge=temp_nudge,
-        tint_nudge=tint_nudge,
+        temperature=temperature,
+        tint=tint,
         lens_profile=bool(knobs.get("lens_profile_corrections", False)),
         remove_ca=bool(knobs.get("remove_chromatic_aberration", False)),
     )
@@ -101,33 +105,13 @@ def _shadow(luma: np.ndarray, knobs: dict) -> tuple[float, int, int]:
     return lift, lo, hi
 
 
-def _cast_nudge(rgb: np.ndarray, knobs: dict) -> tuple[int, int]:
-    """Green-magenta (tint) cast estimate only. Temp axis needs Kelvin
-    calibration and is left at 0. Recorded for a future per-camera Kelvin
-    calibration effort; v1 never writes it to XMP. ponytail: tint-axis proxy,
-    upgrade to per-camera calibration if the nudge is ever enabled by default."""
-    trigger = float(knobs["cast_trigger"])
-    cap = int(knobs["cast_nudge_cap"])
-    # relative green excess that saturates the nudge to the cap
-    full_scale = float(knobs["cast_full_scale_bias"])
-    r, g, b = (float(rgb[..., i].mean()) for i in range(3))
-    gray = (r + g + b) / 3.0
-    if gray <= 1e-4:
-        return 0, 0
-    # Green excess relative to red/blue average -> positive means push toward magenta.
-    green_bias = (g - (r + b) / 2.0) / gray
-    if abs(green_bias) < trigger:
-        return 0, 0
-    tint_nudge = int(round(max(-cap, min(cap, green_bias * cap / full_scale))))
-    return 0, tint_nudge
-
-
 def average_corrections(items: list[CorrectionSettings]) -> CorrectionSettings:
     """Batch/sequence lock: mean of continuous corrections applied to all frames."""
     # Consistency over per-frame optimum: a single dark frame's lift is diluted across the batch.
     n = len(items)
     if n == 0:
         return CorrectionSettings()
+    all_wb = all(c.temperature is not None and c.tint is not None for c in items)
     return CorrectionSettings(
         exposure=round(sum(c.exposure for c in items) / n, 2),
         highlight_recovery=int(round(sum(c.highlight_recovery for c in items) / n)),
@@ -135,8 +119,8 @@ def average_corrections(items: list[CorrectionSettings]) -> CorrectionSettings:
         shadow_lift=round(sum(c.shadow_lift for c in items) / n, 2),
         shadow_range_low=items[0].shadow_range_low,
         shadow_range_high=items[0].shadow_range_high,
-        temp_nudge=int(round(sum(c.temp_nudge for c in items) / n)),
-        tint_nudge=int(round(sum(c.tint_nudge for c in items) / n)),
+        temperature=int(round(sum(c.temperature for c in items) / n)) if all_wb else None,
+        tint=int(round(sum(c.tint for c in items) / n)) if all_wb else None,
         lens_profile=items[0].lens_profile,
         remove_ca=items[0].remove_ca,
     )

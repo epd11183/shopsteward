@@ -13,12 +13,23 @@ def _parse(xmp: str) -> ET.Element:
 
 
 def test_compose_is_wellformed_and_wb_as_shot():
+    # Regression guard: default correction (temp/tint None) must stay as-shot,
+    # byte-identical WB behavior to before auto-WB existed.
     xmp = compose(CorrectionSettings(exposure=0.5), LookProfile(name="x"))
     root = _parse(xmp)
     desc = root.find(".//{http://www.w3.org/1999/02/22-rdf-syntax-ns#}Description")
     assert desc.get(f"{{{CRS}}}WhiteBalance") == "As Shot"
     assert f"{{{CRS}}}Temperature" not in desc.attrib
+    assert f"{{{CRS}}}Tint" not in desc.attrib
     assert desc.get(f"{{{CRS}}}Exposure2012") == "0.50"
+
+
+def test_custom_wb_emits_temperature_and_tint():
+    xmp = compose(CorrectionSettings(temperature=5200, tint=8), LookProfile(name="x"))
+    desc = _parse(xmp).find(".//{http://www.w3.org/1999/02/22-rdf-syntax-ns#}Description")
+    assert desc.get(f"{{{CRS}}}WhiteBalance") == "Custom"
+    assert desc.get(f"{{{CRS}}}Temperature") == "5200"
+    assert desc.get(f"{{{CRS}}}Tint") == "8"
 
 
 def test_look_owns_contrast_not_correction():

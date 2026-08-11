@@ -16,6 +16,7 @@ _ANALYSIS_LONG_EDGE = 1024
 class DecodedImage:
     rgb: np.ndarray  # HxWx3, float32 in [0, 1]
     wb_multipliers: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 0.0)
+    xyz_matrix: np.ndarray | None = None  # 3x3 libraw rgb_xyz_matrix (XYZ->camera)
     exif: dict = field(default_factory=dict)
 
 
@@ -29,12 +30,14 @@ class RawpyDecoder:
 
         with rawpy.imread(raw_path) as raw:
             wb = tuple(float(x) for x in raw.camera_whitebalance[:4])
+            # First 3 rows of the libraw rgb_xyz_matrix; estimator orients it.
+            xyz_matrix = np.array(raw.rgb_xyz_matrix, dtype=np.float64)[:3]
             rgb16 = raw.postprocess(
                 output_bps=16, no_auto_bright=True, use_camera_wb=True
             )
         rgb = rgb16.astype(np.float32) / 65535.0
         rgb = _downscale(rgb, _ANALYSIS_LONG_EDGE)
-        return DecodedImage(rgb=rgb, wb_multipliers=wb, exif={})
+        return DecodedImage(rgb=rgb, wb_multipliers=wb, xyz_matrix=xyz_matrix, exif={})
 
 
 class FakeRawDecoder:

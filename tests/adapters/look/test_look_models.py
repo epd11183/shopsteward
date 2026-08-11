@@ -18,4 +18,4 @@ def test_lookprofile_rejects_out_of_range_contrast():
 def test_correctionsettings_defaults():
     cs = CorrectionSettings()
     assert cs.exposure == 0.0 and cs.shadow_lift == 0.0
-    assert cs.temp_nudge == 0 and cs.white_balance == "As Shot"
+    assert cs.temperature is None and cs.tint is None and cs.white_balance == "As Shot"

@@ -10,8 +10,7 @@ from shopsteward.editing.rawdecode import DecodedImage, FakeRawDecoder
 
 USER = 1
 KNOBS = {"exposure_target_luma": 0.4, "exposure_max_stops": 1.5, "shadow_trigger_luma": 0.12,
-         "shadow_lift_max": 0.8, "shadow_range_low": 0, "shadow_range_high": 35,
-         "cast_trigger": 0.06, "cast_nudge_cap": 8, "cast_full_scale_bias": 0.2}
+         "shadow_lift_max": 0.8, "shadow_range_low": 0, "shadow_range_high": 35}
 GUARD = {"max_saturation_load": 220, "max_contrast_tone": 140,
          "max_presence_load": 200, "max_split_saturation": 60}
 

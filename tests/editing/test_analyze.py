@@ -10,10 +10,17 @@ KNOBS = {
     "shadow_lift_max": 1.0,
     "shadow_range_low": 0,
     "shadow_range_high": 45,
-    "cast_trigger": 0.06,
-    "cast_nudge_cap": 8,
-    "cast_full_scale_bias": 0.2,
 }
+
+# Verified Canon-ish libraw rgb_xyz_matrix (XYZ->camera); estimator inverts it.
+XYZ_MATRIX = np.array(
+    [
+        [0.9396, -0.2598, -0.1207],
+        [-0.4408, 1.2296, 0.2369],
+        [-0.0505, 0.1575, 0.6077],
+    ]
+)
+DAYLIGHT_WB = (1896.0, 1024.0, 1547.0, 1024.0)
 
 
 def _flat(value, cast=(1.0, 1.0, 1.0)):
@@ -86,21 +93,20 @@ def test_midtone_image_no_shadow_lift():
     assert cs.shadow_lift == 0.0
 
 
-def test_green_cast_nudge_is_capped_and_recorded():
-    cs = analyze_raw(_flat(0.4, cast=(0.85, 1.15, 0.85)), KNOBS)
-    assert cs.tint_nudge != 0
-    assert abs(cs.tint_nudge) <= KNOBS["cast_nudge_cap"]
-    assert cs.tint_nudge > 0
+def test_auto_wb_off_leaves_temperature_and_tint_none():
+    cs = analyze_raw(_flat(0.4), KNOBS)  # flag absent
+    assert cs.temperature is None and cs.tint is None
+    cs = analyze_raw(_flat(0.4), {**KNOBS, "auto_white_balance": False})
+    assert cs.temperature is None and cs.tint is None
 
 
-def test_neutral_image_no_cast_nudge():
-    cs = analyze_raw(_flat(0.4), KNOBS)
-    assert cs.tint_nudge == 0
-
-
-def test_magenta_cast_nudges_toward_green():
-    cs = analyze_raw(_flat(0.4, cast=(1.15, 0.85, 1.15)), KNOBS)
-    assert cs.tint_nudge < 0
+def test_auto_wb_on_sets_temperature_and_tint():
+    img = np.full((16, 16, 3), 0.4, dtype=np.float32)
+    decoded = DecodedImage(rgb=img, wb_multipliers=DAYLIGHT_WB, xyz_matrix=XYZ_MATRIX)
+    cs = analyze_raw(decoded, {**KNOBS, "auto_white_balance": True})
+    assert isinstance(cs.temperature, int) and isinstance(cs.tint, int)
+    assert 2000 <= cs.temperature <= 50000
+    assert -150 <= cs.tint <= 150
 
 
 def test_all_black_returns_capped_exposure():
