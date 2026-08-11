@@ -19,9 +19,10 @@
     "shadow_range_high": 35,
     "lens_profile_corrections": true,
     "remove_chromatic_aberration": true,
-    "cast_trigger": 0.06,
-    "cast_nudge_cap": 8,
-    "cast_full_scale_bias": 0.2
+    "auto_white_balance": false,
+    "grayworld_blend": 0.0,
+    "wb_temp_offset_k": 0,
+    "wb_tint_offset": 0
   },
   "look_llm": {
     "provider": "openrouter",

@@ -48,13 +48,13 @@ class EditJobSpec(BaseModel):
 
 
 class CorrectionSettings(BaseModel):
-    """Objective per-image correction. WB is trusted as-shot. temp/tint nudges
-    are computed and recorded for a future per-camera calibration effort; v1
-    never writes them to XMP."""
+    """Objective per-image correction. WB is as-shot by default (temperature/tint
+    None -> XMP omits Temp/Tint). When auto_white_balance is on, the estimator
+    fills temperature/tint and XMP emits WhiteBalance="Custom"."""
 
     white_balance: str = "As Shot"
-    temp_nudge: int = 0  # recorded recommendation; not written in v1
-    tint_nudge: int = 0
+    temperature: int | None = None  # absolute Kelvin; None = as-shot
+    tint: int | None = None  # ACR tint; None = as-shot
     exposure: float = 0.0  # stops, global Exposure2012
     highlight_recovery: int = 0  # adaptive Highlights2012 (<=0), scaled to this frame's clipping
     black_point: int = 0  # adaptive Blacks2012 (<=0), deepens hazy/flat frames only

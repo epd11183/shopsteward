@@ -12,3 +12,8 @@ def test_fake_decoder_returns_decoded_image():
     assert out.rgb.shape == (4, 4, 3)
     assert out.wb_multipliers[0] == 2.0
     assert out.exif["Model"] == "R5"
+
+
+def test_decoded_image_xyz_matrix_defaults_to_none():
+    img = np.zeros((4, 4, 3), dtype=np.float32)
+    assert DecodedImage(rgb=img).xyz_matrix is None

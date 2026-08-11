@@ -1,5 +1,7 @@
 """Compose an Adobe Camera Raw XMP sidecar from a correction + a look, and write
-it next to the RAW. WB is trusted as-shot (Temp/Tint omitted). Correction owns
+it next to the RAW. WB is as-shot (Temp/Tint omitted) unless the correction
+carries an estimated temperature+tint, in which case WhiteBalance="Custom" with
+crs:Temperature/crs:Tint is emitted. Correction owns
 Exposure2012, adaptive Highlights/Blacks recovery, and a local luminance-range
 shadow-lift mask; the look owns Contrast, presence (Whites/Clarity/Dehaze/
 Texture), tone curve, HSL, split toning, vibrance, saturation, plus a creative
@@ -38,9 +40,17 @@ def compose(correction: CorrectionSettings, look: LookProfile) -> str:
     # Highlights/Blacks = adaptive per-photo correction + the look's creative bias.
     highlights = _clamp(correction.highlight_recovery + look.highlights, -100, 100)
     blacks = _clamp(correction.black_point + look.blacks, -100, 100)
+    wb_custom = correction.temperature is not None and correction.tint is not None
     attrs: list[str] = [
         'crs:Version="15.0"',
-        'crs:WhiteBalance="As Shot"',
+        'crs:WhiteBalance="Custom"' if wb_custom else 'crs:WhiteBalance="As Shot"',
+    ]
+    if wb_custom:
+        attrs += [
+            f'crs:Temperature="{correction.temperature}"',
+            f'crs:Tint="{correction.tint}"',
+        ]
+    attrs += [
         f'crs:Exposure2012="{correction.exposure:.2f}"',
         f'crs:Contrast2012="{_clamp(look.contrast, -100, 100)}"',
         f'crs:Highlights2012="{highlights}"',

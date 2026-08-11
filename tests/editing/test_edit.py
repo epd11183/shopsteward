@@ -14,7 +14,6 @@ USER = 1
 KNOBS = {
     "exposure_target_luma": 0.45, "exposure_max_stops": 1.5, "shadow_trigger_luma": 0.12,
     "shadow_lift_max": 1.0, "shadow_range_low": 0, "shadow_range_high": 45,
-    "cast_trigger": 0.06, "cast_nudge_cap": 8, "cast_full_scale_bias": 0.2,
 }
 
 
