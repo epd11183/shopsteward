@@ -39,6 +39,8 @@
     "weekly_catalog_pct_cap": 0.10,
     "monthly_spend_cap_usd": 0.00,
     "proposal_ttl_days": 14,
+    "planner_enabled": false,
+    "planner_max_per_capability_per_run": 1,
     "ladder": {
       "promote_approvals": 20,
       "promote_min_days": 14,

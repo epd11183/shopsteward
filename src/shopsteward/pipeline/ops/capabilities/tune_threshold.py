@@ -28,6 +28,7 @@ import hashlib
 import sqlite3
 from datetime import UTC, date, datetime, timedelta
 
+from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.core.events import Event, append, read_all
 from shopsteward.pipeline.ops.config import get_ops_config, ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
@@ -74,6 +75,49 @@ def _proposed_at(conn: sqlite3.Connection, user_id: int, action_id: str) -> date
     return date.fromisoformat(created_at[:10])
 
 
+def _candidates(
+    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig
+) -> dict[str, ProposedAction]:
+    """cfg.name -> the ProposedAction propose() would build for it (or {} when
+    the trigger doesn't fire) -- the ONE grounding function shared by
+    propose() and materialize() (M8b slice-2 planner-safety contract, design
+    §2/§10 CTO improvement) so the two can never disagree."""
+    as_of = datetime.now(UTC).date()
+    span, listing_count = _observation_span(conn, user_id, as_of)
+    cur = cfg.dead_listing.min_observed_days
+    if listing_count == 0 or span < _MIN_SPAN_TO_TUNE or cur <= span:
+        return {}
+
+    new = _new_min_observed(span)
+    if new == cur:
+        return {}
+
+    today = as_of.isoformat()
+    cfg_hash = ops_config_hash(cfg)
+    expires_at = (as_of + timedelta(days=cfg.autonomy.proposal_ttl_days)).isoformat()
+    raw = "|".join((cfg.name, str(cur), str(span), str(new)))
+    inputs_hash = hashlib.sha256(raw.encode()).hexdigest()
+    action_id = compute_action_id("ops.tune_threshold", cfg.name, inputs_hash, cfg_hash, today)
+
+    return {
+        cfg.name: ProposedAction(
+            action_id=action_id,
+            capability="ops.tune_threshold",
+            target_type="ops_config",
+            target_id=cfg.name,
+            tier=Tier.PROPOSE,  # overwritten by the runner with the effective tier
+            reason=(
+                f"Dead-listing analysis can never fire: min_observed_days={cur} exceeds "
+                f"your longest observation ({span}d); propose min_observed_days={new}."
+            ),
+            inputs_hash=inputs_hash,
+            estimated_cost_usd=0.0,
+            undo_available=True,
+            expires_at=expires_at,
+        )
+    }
+
+
 class OpsTuneThreshold:
     key = "ops.tune_threshold"
     max_tier = Tier.PROPOSE  # T2 ceiling -- never promoted, never auto-executed.
@@ -82,40 +126,12 @@ class OpsTuneThreshold:
     def propose(
         self, conn: sqlite3.Connection, user_id: int, cfg: OpsConfig
     ) -> list[ProposedAction]:
-        as_of = datetime.now(UTC).date()
-        span, listing_count = _observation_span(conn, user_id, as_of)
-        cur = cfg.dead_listing.min_observed_days
-        if listing_count == 0 or span < _MIN_SPAN_TO_TUNE or cur <= span:
-            return []
+        return list(_candidates(conn, user_id, cfg).values())
 
-        new = _new_min_observed(span)
-        if new == cur:
-            return []
-
-        today = as_of.isoformat()
-        cfg_hash = ops_config_hash(cfg)
-        expires_at = (as_of + timedelta(days=cfg.autonomy.proposal_ttl_days)).isoformat()
-        raw = "|".join((cfg.name, str(cur), str(span), str(new)))
-        inputs_hash = hashlib.sha256(raw.encode()).hexdigest()
-        action_id = compute_action_id(self.key, cfg.name, inputs_hash, cfg_hash, today)
-
-        return [
-            ProposedAction(
-                action_id=action_id,
-                capability=self.key,
-                target_type="ops_config",
-                target_id=cfg.name,
-                tier=Tier.PROPOSE,  # overwritten by the runner with the effective tier
-                reason=(
-                    f"Dead-listing analysis can never fire: min_observed_days={cur} exceeds "
-                    f"your longest observation ({span}d); propose min_observed_days={new}."
-                ),
-                inputs_hash=inputs_hash,
-                estimated_cost_usd=0.0,
-                undo_available=True,
-                expires_at=expires_at,
-            )
-        ]
+    def materialize(
+        self, conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, intent: ProposalIntent
+    ) -> ProposedAction | None:
+        return _candidates(conn, user_id, cfg).get(intent.target_id)
 
     def execute(
         self, conn: sqlite3.Connection, user_id: int, action: ProposedAction

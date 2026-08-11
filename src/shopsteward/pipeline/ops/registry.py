@@ -18,6 +18,7 @@ when the first real capability needs it (YAGNI)."""
 import hashlib
 from typing import Protocol, runtime_checkable
 
+from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
 
 
@@ -38,6 +39,16 @@ class Capability(Protocol):
         ...
 
     def estimate_cost_usd(self, action: ProposedAction) -> float: ...
+
+    def materialize(
+        self, conn: object, user_id: int, cfg: OpsConfig, intent: ProposalIntent
+    ) -> ProposedAction | None:
+        """The LLM-planner grounding hook (M8b slice 2, design §2): re-derive
+        a ProposedAction for `intent.target_id` from the SAME deterministic
+        candidates propose() would build, or None if that target isn't one of
+        them (a hallucinated/ineligible target). Must share one grounding
+        function with propose() so the two can never disagree."""
+        ...
 
 
 REGISTRY: dict[str, Capability] = {}

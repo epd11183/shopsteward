@@ -56,7 +56,14 @@ def run(
     *,
     dry_run: bool = False,
     today: date | None = None,
+    proposals: list[ProposedAction] | None = None,
 ) -> RunReport:
+    """When `proposals` is given (the M8b planner path, `planner.plan_proposals()`
+    output), the runner uses THAT list instead of calling each capability's
+    own `propose()` -- everything downstream (idempotency by action_id,
+    govern, T2-queue/T0-T1-execute, events) is byte-for-byte identical to the
+    deterministic path. `proposals=None` (the default) is today's unchanged
+    behavior."""
     report = RunReport(dry_run=dry_run)
     if not cfg.autonomy.enabled:
         return report
@@ -64,9 +71,20 @@ def run(
     today = today or datetime.now(UTC).date()
     states = capability_states(conn, user_id)
 
+    proposals_by_cap: dict[str, list[ProposedAction]] | None = None
+    if proposals is not None:
+        proposals_by_cap = {}
+        for a in proposals:
+            proposals_by_cap.setdefault(a.capability, []).append(a)
+
     for cap in capabilities:
         eff_tier = effective_tier(cap, states.get(cap.key))
-        for action in cap.propose(conn, user_id, cfg):
+        cap_proposals = (
+            proposals_by_cap.get(cap.key, [])
+            if proposals_by_cap is not None
+            else cap.propose(conn, user_id, cfg)
+        )
+        for action in cap_proposals:
             action = action.model_copy(update={"tier": eff_tier})
             status = _action_status(conn, user_id, action.action_id)
 

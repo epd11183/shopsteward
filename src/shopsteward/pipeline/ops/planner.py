@@ -1,21 +1,55 @@
-"""LLM narration of the deterministic Brief (M8b slice 1, design §5/§6).
+"""LLM narration of the deterministic Brief (M8b slice 1, design §5/§6) and
+the intent-proposing planner validation gate (M8b slice 2, design §2/§6 --
+the safety-critical piece of this milestone).
 
 narrate_brief() is the only place that decides whether a narration call is
 allowed: it reuses the shared `llm_ledger` monthly soft cap (the same pool
 copy/vision spend against, PRD §13 decisions 22/38) rather than a
 planner-specific cap. Zero new actions -- this only narrates the
-already-rendered deterministic brief text; it proposes nothing."""
+already-rendered deterministic brief text; it proposes nothing.
 
+plan_proposals() is the validation gate: the LLM's `ProposalIntent`s are
+NEVER trusted directly. Every intent is dropped unless it survives, in
+order: (1) the `customer_contact_barred` denylist (Legal belt-and-suspenders
+-- even a mis-registered capability can't reach a customer), (2) it names a
+capability in the passed-in registry (`unknown_capability` -- the
+finite-action-space guarantee), (3) that capability's `policy_verified`
+(`policy_unverified`), (4) that capability's own `materialize()` re-deriving
+a real `ProposedAction` from SQL for the named target (`ungrounded` --
+catches a hallucinated/ineligible target, since materialize() shares
+propose()'s own grounding function). Survivors are then capped per
+capability (`per_run_cap`) in the order the LLM emitted them. Every drop is
+recorded as a `planner.intent_dropped` event -- "why didn't Claude propose X"
+is always answerable from the log (mirrors the governor's
+refusal-is-an-event precedent). The runner is never touched here: this
+function only ever returns a `list[ProposedAction]`, identical in shape to
+what a capability's own `propose()` returns -- `govern()`/execution stay
+entirely downstream, in `runner.run()`."""
+
+import json
 import logging
 import sqlite3
 
 import httpx
 
-from shopsteward.adapters.planner.interface import PlannerAdapter, PlannerParseError
+from shopsteward.adapters.planner.interface import (
+    CapabilityDescriptor,
+    PlannerAdapter,
+    PlannerParseError,
+)
 from shopsteward.core.events import Event, append
 from shopsteward.pipeline.llm_ledger import monthly_spend
+from shopsteward.pipeline.ops import analytics
+from shopsteward.pipeline.ops.models import OpsConfig, ProposedAction
+from shopsteward.pipeline.ops.registry import Capability
 
 logger = logging.getLogger(__name__)
+
+# Legal belt-and-suspenders (design §2 step 1/§10 Chief Legal improvement):
+# any capability whose key even LOOKS like it addresses a customer is barred
+# here too, even if it was somehow registered with policy_verified=True --
+# provable from the planner.intent_dropped log, independent of the registry.
+_CUSTOMER_CONTACT_TERMS = ("message", "reply", "review", "refund", "dispute", "convo")
 
 
 def narrate_brief(
@@ -58,3 +92,126 @@ def narrate_brief(
         ),
     )
     return narration.text
+
+
+def _is_customer_contact_barred(capability_key: str) -> bool:
+    lowered = capability_key.lower()
+    return any(term in lowered for term in _CUSTOMER_CONTACT_TERMS)
+
+
+def _build_facts_json(
+    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, capabilities: list[Capability]
+) -> str:
+    """Real SQL only (design §2/§6): dead-listing candidates + trending from
+    `analytics.py`, plus, per registered capability, the exact grounded
+    target_ids its own `propose()` already computed -- the LLM chooses
+    AMONG these, it never invents a target (`materialize()` re-checks
+    regardless, so this is a courtesy to the model, not the safety
+    boundary)."""
+    dead = analytics.dead_listings(conn, user_id, cfg)
+    trend = analytics.trending(conn, user_id, cfg)
+    facts = {
+        "dead_listings": [dl.model_dump(mode="json") for dl in dead],
+        "trending": [t.model_dump(mode="json") for t in trend],
+        "candidate_target_ids": {
+            cap.key: [a.target_id for a in cap.propose(conn, user_id, cfg)] for cap in capabilities
+        },
+    }
+    return json.dumps(facts, sort_keys=True)
+
+
+def _drop(
+    conn: sqlite3.Connection, user_id: int, reason: str, capability_key: str, target_id: str
+) -> None:
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="planner.intent_dropped",
+            payload={"reason": reason, "capability_key": capability_key, "target_id": target_id},
+        ),
+    )
+
+
+def plan_proposals(
+    conn: sqlite3.Connection,
+    user_id: int,
+    cfg: OpsConfig,
+    adapter: PlannerAdapter,
+    capabilities: list[Capability],
+    *,
+    soft_cap_usd: float,
+) -> list[ProposedAction]:
+    """Returns the validated, materialized `ProposedAction`s the planner's
+    intents survive the gate to become -- never anything the LLM invented
+    directly. Over the shared monthly cap, or a transport/parse failure,
+    returns `[]` so the caller falls back to the deterministic `propose()`
+    path -- this function NEVER raises for a provider/cost problem."""
+    if monthly_spend(conn, user_id) >= soft_cap_usd:
+        logger.warning(
+            "monthly llm.call soft cap reached (>= %.2f usd); skipping planner.plan()",
+            soft_cap_usd,
+        )
+        return []
+
+    catalog = [
+        CapabilityDescriptor(
+            key=cap.key, purpose=getattr(cap, "purpose", cap.key), max_tier=int(cap.max_tier)
+        )
+        for cap in capabilities
+    ]
+    facts_json = _build_facts_json(conn, user_id, cfg, capabilities)
+
+    try:
+        plan = adapter.plan(facts_json, catalog)
+    except (PlannerParseError, httpx.HTTPError) as exc:
+        logger.warning("planner.plan() unavailable: %s", type(exc).__name__)
+        return []
+
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="llm.call",
+            payload={
+                "producer": "ops.planner.plan",
+                "model": cfg.planner.model,
+                "est_cost_usd": plan.usage.est_cost_usd,
+                "prompt_tokens": plan.usage.prompt_tokens,
+                "completion_tokens": plan.usage.completion_tokens,
+            },
+        ),
+    )
+
+    cap_by_key = {cap.key: cap for cap in capabilities}
+    max_per_cap = cfg.autonomy.planner_max_per_capability_per_run
+    kept_counts: dict[str, int] = {}
+    proposals: list[ProposedAction] = []
+
+    for intent in plan.intents:
+        if _is_customer_contact_barred(intent.capability_key):
+            _drop(conn, user_id, "customer_contact_barred", intent.capability_key, intent.target_id)
+            continue
+
+        cap = cap_by_key.get(intent.capability_key)
+        if cap is None:
+            _drop(conn, user_id, "unknown_capability", intent.capability_key, intent.target_id)
+            continue
+
+        if not cap.policy_verified:
+            _drop(conn, user_id, "policy_unverified", intent.capability_key, intent.target_id)
+            continue
+
+        action = cap.materialize(conn, user_id, cfg, intent)
+        if action is None:
+            _drop(conn, user_id, "ungrounded", intent.capability_key, intent.target_id)
+            continue
+
+        if kept_counts.get(intent.capability_key, 0) >= max_per_cap:
+            _drop(conn, user_id, "per_run_cap", intent.capability_key, intent.target_id)
+            continue
+
+        kept_counts[intent.capability_key] = kept_counts.get(intent.capability_key, 0) + 1
+        proposals.append(action)
+
+    return proposals

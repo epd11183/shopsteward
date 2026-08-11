@@ -25,6 +25,7 @@ import pydantic
 
 from shopsteward.adapters.etsy.interface import EtsyWriteAdapter
 from shopsteward.adapters.etsy.models import EtsyListing, EtsyListingUpdate
+from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.core.events import read_all
 from shopsteward.pipeline.ops import analytics
 from shopsteward.pipeline.ops.config import ops_config_hash
@@ -49,6 +50,68 @@ def _latest_observed(conn: sqlite3.Connection, user_id: int, listing_id: int) ->
     return latest
 
 
+def _candidates(
+    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig
+) -> dict[str, ProposedAction]:
+    """target_id -> the ProposedAction propose() would build for it -- the
+    ONE grounding function shared by propose() and materialize() (the M8b
+    slice-2 planner-safety contract, design §2/§10 CTO improvement) so the
+    two can never disagree. materialize() looks a target up here: the LLM
+    can only name a target this deterministic grounding already blessed.
+
+    Keyed by str(listing_id) -- assumes analytics.dead_listings() returns at
+    most one row per listing_id (true today, sorted().listing_id is the
+    dedup key). If it ever returned duplicates for one listing, this dict
+    would silently collapse them to the last one, where the old list
+    (pre-slice-2) would have proposed both."""
+    candidates = analytics.dead_listings(conn, user_id, cfg)
+    if not candidates:
+        return {}
+
+    today_date = datetime.now(UTC).date()
+    today = today_date.isoformat()
+    cfg_hash = ops_config_hash(cfg)
+    expires_at = (today_date + timedelta(days=cfg.autonomy.proposal_ttl_days)).isoformat()
+
+    out: dict[str, ProposedAction] = {}
+    for dl in candidates:
+        listing = _latest_observed(conn, user_id, dl.listing_id)
+        if listing is None or not listing.should_auto_renew or listing.state != "active":
+            # Never observed, already auto-renew-off, or not active
+            # (expired/inactive) -- nothing left to stop paying for.
+            continue
+
+        raw = "|".join(
+            (
+                str(dl.listing_id),
+                str(dl.views_in_window),
+                listing.state,
+                str(listing.should_auto_renew),
+                str(dl.days_observed),
+            )
+        )
+        inputs_hash = hashlib.sha256(raw.encode()).hexdigest()
+        action_id = compute_action_id(
+            "listing.autorenew_off", str(dl.listing_id), inputs_hash, cfg_hash, today
+        )
+        out[str(dl.listing_id)] = ProposedAction(
+            action_id=action_id,
+            capability="listing.autorenew_off",
+            target_type="listing",
+            target_id=str(dl.listing_id),
+            tier=Tier.PROPOSE,  # overwritten by the runner with the effective tier
+            reason=(
+                f"0 sales & {dl.views_in_window} views in {dl.days_observed}d; "
+                "auto-renew on -- stop paying to renew."
+            ),
+            inputs_hash=inputs_hash,
+            estimated_cost_usd=0.0,
+            undo_available=True,
+            expires_at=expires_at,
+        )
+    return out
+
+
 class ListingAutorenewOff:
     key = "listing.autorenew_off"
     max_tier = Tier.NOTIFY  # T1 ceiling -- ships at T2 (PROPOSE) per the chassis default.
@@ -60,54 +123,12 @@ class ListingAutorenewOff:
     def propose(
         self, conn: sqlite3.Connection, user_id: int, cfg: OpsConfig
     ) -> list[ProposedAction]:
-        candidates = analytics.dead_listings(conn, user_id, cfg)
-        if not candidates:
-            return []
+        return list(_candidates(conn, user_id, cfg).values())
 
-        today_date = datetime.now(UTC).date()
-        today = today_date.isoformat()
-        cfg_hash = ops_config_hash(cfg)
-        expires_at = (today_date + timedelta(days=cfg.autonomy.proposal_ttl_days)).isoformat()
-
-        actions: list[ProposedAction] = []
-        for dl in candidates:
-            listing = _latest_observed(conn, user_id, dl.listing_id)
-            if listing is None or not listing.should_auto_renew or listing.state != "active":
-                # Never observed, already auto-renew-off, or not active
-                # (expired/inactive) -- nothing left to stop paying for.
-                continue
-
-            raw = "|".join(
-                (
-                    str(dl.listing_id),
-                    str(dl.views_in_window),
-                    listing.state,
-                    str(listing.should_auto_renew),
-                    str(dl.days_observed),
-                )
-            )
-            inputs_hash = hashlib.sha256(raw.encode()).hexdigest()
-            action_id = compute_action_id(
-                self.key, str(dl.listing_id), inputs_hash, cfg_hash, today
-            )
-            actions.append(
-                ProposedAction(
-                    action_id=action_id,
-                    capability=self.key,
-                    target_type="listing",
-                    target_id=str(dl.listing_id),
-                    tier=Tier.PROPOSE,  # overwritten by the runner with the effective tier
-                    reason=(
-                        f"0 sales & {dl.views_in_window} views in {dl.days_observed}d; "
-                        "auto-renew on -- stop paying to renew."
-                    ),
-                    inputs_hash=inputs_hash,
-                    estimated_cost_usd=0.0,
-                    undo_available=True,
-                    expires_at=expires_at,
-                )
-            )
-        return actions
+    def materialize(
+        self, conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, intent: ProposalIntent
+    ) -> ProposedAction | None:
+        return _candidates(conn, user_id, cfg).get(intent.target_id)
 
     def execute(
         self, conn: sqlite3.Connection, user_id: int, action: ProposedAction
