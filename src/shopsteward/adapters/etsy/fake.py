@@ -73,9 +73,38 @@ class FakeEtsyWriteAdapter:
             "state": "draft",
             "images": [],
             "files": [],
+            "should_auto_renew": spec.should_auto_renew,
         }
         self.calls.append(("create_draft_listing", {"listing_id": listing_id, "spec": spec}))
         return EtsyListingRef(listing_id=listing_id, state="draft")
+
+    def seed_listing(
+        self,
+        listing_id: int,
+        *,
+        should_auto_renew: bool = True,
+        state: str = "active",
+        title: str = "seeded listing",
+        price: float = 20.0,
+        quantity: int = 1,
+        tags: list[str] | None = None,
+    ) -> None:
+        """Test-only preload of a listing the fake didn't create itself (e.g.
+        one M8a autonomy tests need `execute()`/`undo()` to be able to
+        `update_listing` against). Not part of EtsyWriteAdapter; not
+        recorded in `calls` -- it stands in for "Etsy already has this
+        listing", not an adapter call this code path made."""
+        self.listings[listing_id] = {
+            "title": title,
+            "description": "",
+            "price": price,
+            "quantity": quantity,
+            "tags": list(tags or []),
+            "state": state,
+            "images": [],
+            "files": [],
+            "should_auto_renew": should_auto_renew,
+        }
 
     def upload_listing_image(self, listing_id: int, image: bytes, *, rank: int) -> EtsyImageRef:
         row = self._require(listing_id)
@@ -107,7 +136,13 @@ class FakeEtsyWriteAdapter:
         # create_draft_listing time (EtsyListingUpdate doesn't carry one).
         row = self._require(listing_id)
         updates = fields.model_dump(exclude_none=True)
-        row.update({k: v for k, v in updates.items() if k in ("title", "description", "tags")})
+        row.update(
+            {
+                k: v
+                for k, v in updates.items()
+                if k in ("title", "description", "tags", "should_auto_renew")
+            }
+        )
         self.calls.append(("update_listing", {"listing_id": listing_id, "fields": updates}))
         return self._to_listing(listing_id, row)
 
@@ -148,4 +183,5 @@ class FakeEtsyWriteAdapter:
             quantity=row["quantity"],
             price=Money(amount=round(row["price"] * 100), divisor=100, currency_code="USD"),
             tags=row["tags"],
+            should_auto_renew=row.get("should_auto_renew", True),
         )
