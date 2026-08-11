@@ -28,7 +28,13 @@ def test_generate_brief_assembles_every_section(tmp_path):
     assert report.size_breakdown
 
 
-def test_render_text_contains_the_shop_section_and_no_chassis_sections(tmp_path):
+def test_render_text_contains_the_shop_section_and_the_shop_section_is_unaffected_by_chassis(
+    tmp_path,
+):
+    # PR3 (M8a spec §8) added the NEEDS YOU/DONE/REFUSED/AUTONOMY chassis
+    # sections on top of THE SHOP -- this scenario seeds no action.* events,
+    # so those sections render "(0)"/empty, but THE SHOP's own wording is
+    # byte-for-byte what slice 1 shipped.
     text = render_text(_built_brief(tmp_path))
     assert "THE SHOP" in text
     assert "Revenue" in text
@@ -36,10 +42,13 @@ def test_render_text_contains_the_shop_section_and_no_chassis_sections(tmp_path)
     assert "Dying" in text
     assert "Trending" in text
     assert "Shoot more" in text
-    # design §7's exclusion list -- slice 1 has no chassis, so these must
-    # never appear even by accident.
-    for forbidden in ("NEEDS YOU", "DONE OVERNIGHT", "REFUSED", "AUTONOMY", "autonomy: ON"):
-        assert forbidden not in text
+    assert "NEEDS YOU (0)" in text
+    assert "DONE (0)" in text
+    assert "REFUSED (0)" in text
+    assert "autonomy: OFF" in text  # shipped default: autonomy.enabled=False
+    # DONE OVERNIGHT was the draft mockup's literal label; the shipped
+    # section header is "DONE" (see draft §6 vs the PR3 contract's §8).
+    assert "DONE OVERNIGHT" not in text
 
 
 def test_render_text_reflects_actual_titles(tmp_path):

@@ -13,6 +13,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
     "Brief",
+    "BriefAction",
+    "BriefAutonomy",
+    "BriefLadderRow",
+    "BriefProposal",
+    "BriefRefusal",
     "CapabilityState",
     "DeadListing",
     "ExecutionResult",
@@ -50,6 +55,7 @@ class _OpsBriefSections(BaseModel):
     dying: bool = True
     shoot_more: bool = True
     data_quality: bool = True
+    autonomy: bool = True
 
 
 class _OpsLadder(BaseModel):
@@ -212,6 +218,63 @@ class ShootMoreSuggestion(BaseModel):
     revenue_usd: float
 
 
+# --- operator surface (PR3, M8a spec §8 PR3 / draft §6) ---------------------
+# Deterministic reads over proj_actions/proj_capability_state -- no LLM, no
+# network. Every field the operator needs to copy an action_id into
+# `ops approve`/`ops reject`/`ops undo` lives on these models.
+
+
+class BriefProposal(BaseModel):
+    """One OPEN action.proposed the operator has not yet resolved."""
+
+    action_id: str
+    capability: str
+    target_type: str
+    target_id: str
+    tier: Tier
+    reason: str
+    expires_at: str  # ISO date
+
+
+class BriefAction(BaseModel):
+    """One action.executed in the recent window, not since undone."""
+
+    action_id: str
+    capability: str
+    target_id: str
+    reason: str
+    tier: Tier
+    undo_available: bool
+
+
+class BriefRefusal(BaseModel):
+    """One action.refused in the recent window -- reason is the governor's
+    RefusalReason wire string (e.g. "daily_cap"), not the proposal's own
+    business reason."""
+
+    capability: str
+    target_id: str
+    reason: str
+
+
+class BriefLadderRow(BaseModel):
+    capability: str
+    tier: Tier
+    approvals: int
+    rejections: int
+    executions: int
+    undos: int
+    tier_since: str  # ISO date
+
+
+class BriefAutonomy(BaseModel):
+    enabled: bool
+    halted: bool
+    month_spend_usd: float
+    monthly_spend_cap_usd: float
+    ladder: list[BriefLadderRow] = Field(default_factory=list)
+
+
 class Brief(BaseModel):
     generated_at: date
     window_days: int
@@ -224,3 +287,10 @@ class Brief(BaseModel):
     size_breakdown: list[SizeStat] = Field(default_factory=list)
     shoot_more: list[ShootMoreSuggestion] = Field(default_factory=list)
     data_quality_notes: list[str] = Field(default_factory=list)
+    # PR3 chassis sections -- default-empty so slice-1 Brief construction
+    # (generate_brief() with brief_sections.autonomy=False, or any caller
+    # that never touches these) stays valid without passing them.
+    needs_you: list[BriefProposal] = Field(default_factory=list)
+    done_recent: list[BriefAction] = Field(default_factory=list)
+    refused_recent: list[BriefRefusal] = Field(default_factory=list)
+    autonomy: BriefAutonomy | None = None

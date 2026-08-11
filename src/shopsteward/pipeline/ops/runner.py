@@ -20,6 +20,13 @@ _AUTO_EXECUTE_TIERS = (Tier.AUTO, Tier.NOTIFY)
 
 _TERMINAL = {"executed", "refused", "rejected", "undone"}
 
+# Terminal for a *manual* re-approve (approve_action only): a "refused" id is
+# deliberately NOT here -- an operator retrying the same action_id after a
+# refusal (e.g. the halt that caused it has since been resumed) must still
+# be able to re-govern it. Only a genuinely resolved id (something already
+# executed/rejected/undone/failed) is a no-op on a second approve.
+_APPROVE_RESOLVED = {"executed", "rejected", "undone", "failed"}
+
 
 class RunReport(BaseModel):
     proposed: int = 0
@@ -222,6 +229,14 @@ def approve_action(
     cap = _find_capability(capabilities, action.capability)
 
     report = RunReport()
+    if _action_status(conn, user_id, action_id) in _APPROVE_RESOLVED:
+        # Already resolved (a prior execute/reject/undo/failure) -- a
+        # second `ops approve` on the same id must not re-approve/re-
+        # execute (it would double the ladder's approvals counter and
+        # could self-promote a capability on operator error/replay).
+        report.skipped_idempotent += 1
+        return report
+
     decision = govern(conn, user_id, action, cap, cfg, today)
     if not decision.approved:
         report.refused += 1
@@ -287,12 +302,16 @@ def undo_action(
     action = _load_proposed_action(conn, user_id, action_id)
     cap = _find_capability(capabilities, action.capability)
 
+    if _action_status(conn, user_id, action_id) != "executed":
+        # Nothing to reverse -- never executed, or a repeat `ops undo` on an
+        # id already undone. A second undo must not double cap.undo() the
+        # capability or double-demote/reset its ladder counters.
+        return
+
     executed_before: dict | None = None
     for e in read_all(conn, "action.executed"):
         if e.user_id == user_id and e.payload.get("action_id") == action_id:
             executed_before = e.payload["before"]
-    if executed_before is None:
-        raise KeyError(f"action_id={action_id!r} was never executed; nothing to undo")
 
     cap.undo(conn, user_id, action)
     append(
