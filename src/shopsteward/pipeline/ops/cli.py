@@ -165,6 +165,7 @@ def run_cmd(
     from shopsteward.pipeline.ops import config as ops_config
     from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
     from shopsteward.pipeline.ops.capabilities.reprice import ListingReprice
+    from shopsteward.pipeline.ops.capabilities.seo_edit import ListingSeoEdit
     from shopsteward.pipeline.ops.capabilities.tune_threshold import OpsTuneThreshold
     from shopsteward.pipeline.ops.models import ProposedAction
     from shopsteward.pipeline.ops.projections import rebuild_ops
@@ -181,6 +182,7 @@ def run_cmd(
         typer.echo("offline (fake adapter) -- no live Etsy calls will be made.")
     register(ListingAutorenewOff(adapter))
     register(ListingReprice(adapter))
+    register(ListingSeoEdit(adapter))
     register(OpsTuneThreshold())  # no adapter -- registers regardless of --live-autonomy
 
     db = db_path()
@@ -339,6 +341,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
     from shopsteward.pipeline.listings.push import build_etsy_write_adapter
     from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
     from shopsteward.pipeline.ops.capabilities.reprice import ListingReprice
+    from shopsteward.pipeline.ops.capabilities.seo_edit import ListingSeoEdit
     from shopsteward.pipeline.ops.capabilities.tune_threshold import OpsTuneThreshold
     from shopsteward.pipeline.ops.registry import register
 
@@ -347,6 +350,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
         typer.echo("offline (fake adapter) -- no live Etsy calls will be made.")
     register(ListingAutorenewOff(adapter))
     register(ListingReprice(adapter))
+    register(ListingSeoEdit(adapter))
     register(OpsTuneThreshold())
 
 

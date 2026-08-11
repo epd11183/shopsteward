@@ -4,6 +4,7 @@ prohibited/hallucinated action must be dropped BEFORE it can become an
 `action.proposed`, and every drop is logged as `planner.intent_dropped`.
 Entirely on fakes -- zero network."""
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -151,6 +152,7 @@ def test_valid_intent_produces_one_proposed_action_that_lands_at_t2(conn):
 
 
 def test_policy_unverified_intent_is_dropped(conn):
+    rebuild_core(conn)
     rebuild_ops(conn)
     cfg = _cfg(enabled=True)
     cap = StubCapability(key="stub.unverified", policy_verified=False)
@@ -169,6 +171,7 @@ def test_policy_unverified_intent_is_dropped(conn):
 
 
 def test_per_capability_cap_keeps_the_llms_first_and_drops_the_rest(conn):
+    rebuild_core(conn)
     rebuild_ops(conn)
     cfg = _cfg(enabled=True)
     cfg.autonomy.planner_max_per_capability_per_run = 1
@@ -209,6 +212,7 @@ def test_over_monthly_cost_cap_returns_empty_with_no_plan_call(conn):
 
 
 def test_transport_error_in_plan_returns_empty_no_crash(conn):
+    rebuild_core(conn)
     rebuild_ops(conn)
     cfg = _cfg(enabled=True)
     cap = StubCapability()
@@ -219,6 +223,39 @@ def test_transport_error_in_plan_returns_empty_no_crash(conn):
 
     assert proposals == []
     assert read_all(conn, "llm.call") == []
+
+
+def test_facts_json_includes_viewed_not_sold_for_seo_edit_target_discovery(conn):
+    """listing.seo_edit's propose() always returns [] (planner-only) -- the
+    only way the LLM can ever name a target for it is a real-data block in
+    facts_json. Same signal listing.reprice's own eligibility keys on."""
+    LISTING_VIEWED_NOT_SOLD = 701
+    seed_listing_observed_on(
+        conn,
+        listing_id=LISTING_VIEWED_NOT_SOLD,
+        title="Loon at Dusk Digital Download",
+        day=TODAY - timedelta(days=1),
+        views=42,
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cfg = _cfg(enabled=True)
+    adapter = FakePlannerAdapter(plan=[])
+
+    plan_proposals(conn, USER_ID, cfg, adapter, [], soft_cap_usd=10.0)
+
+    (facts_json,) = adapter.plan_calls
+    facts = json.loads(facts_json)
+    assert facts["viewed_not_sold"] == [
+        {
+            "listing_id": LISTING_VIEWED_NOT_SOLD,
+            "title": "Loon at Dusk Digital Download",
+            "views_lifetime": 42,
+        }
+    ]
+    # deterministic Brief/other blocks unaffected -- still present, unchanged shape.
+    assert "dead_listings" in facts
+    assert "trending" in facts
 
 
 def test_materialize_and_propose_share_grounding_and_agree(conn):

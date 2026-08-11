@@ -45,6 +45,7 @@ def seed_listing_observed_on(
     price_usd: float = 87.00,
     state: str = "active",
     should_auto_renew: bool = True,
+    tags: list[str] | None = None,
     user_id: int = USER_ID,
 ) -> None:
     payload = {
@@ -55,7 +56,7 @@ def seed_listing_observed_on(
         "views": views,
         "num_favorers": num_favorers,
         "price": _money(price_usd),
-        "tags": [],
+        "tags": list(tags or []),
         "should_auto_renew": should_auto_renew,
     }
     created_at = f"{day.isoformat()}T00:00:00.000000Z"
