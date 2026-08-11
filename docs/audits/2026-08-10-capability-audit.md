@@ -167,6 +167,24 @@ MISSING (verified by grep + in-code "slices 2+" docstrings):
   SEO re-tag, renew, pause-underperformer, gap-fill, A/B copy.
 - **R15. Promotion loop** — wire the Meta/IG adapter (blocked on policy Qs).
 
+## Remediation status update (2026-08-11)
+
+- **R1 (Gelato price)** — ✅ resolved by correcting the model: verified Gelato's
+  `create-from-template` has no price field; retail price is a Gelato *template*
+  setting. Our margin-cleared price is a recommendation surfaced by
+  `pod build --dry-run`; misleading "price at create" comments fixed. (PR #28)
+- **R2 / R3 (white balance/temperature + tint)** — ✅ colorimetric auto-WB/tint
+  (McCamy CCT + Planckian tint), written as absolute `crs:Temperature`/`crs:Tint`,
+  **default-OFF** + per-camera calibration + Lightroom verify; dead nudge path
+  removed. (PR #29)
+- **R6 (store_id placeholder)** — ✅ store_id via `GELATO_STORE_ID`, enforced at
+  the live gate; `pod template show` helper added to fill canvas variant IDs. (PR #28)
+- Canvas `template_id` filled (`f7a159e5…`).
+- **Still open:** R4/R5/R7 (live Etsy / Gelato+R2 / Lightroom smokes — operator
+  credentials), R8 (fill canvas/canvas_portrait variant IDs via `pod template
+  show`), R9 (active-only listing visibility), and P3/R10–R15 (autonomy program —
+  v2, needs approval + Etsy/Meta policy verification).
+
 ## Bottom line
 Pillars 1–4 are **built and fixture-green**; the real blockers are (a) one POD
 pricing defect (R1), (b) two editing color-correction gaps the requirement names
