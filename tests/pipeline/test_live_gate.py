@@ -12,6 +12,8 @@ from shopsteward.pipeline.live_gate import (
     live_etsy_write_open,
     live_gelato_error,
     live_gelato_open,
+    live_planner_error,
+    live_planner_open,
     live_printfile_error,
     live_printfile_open,
     live_vision_error,
@@ -94,6 +96,37 @@ def test_live_copy_error_names_env_vars() -> None:
     message = live_copy_error()
     assert "SHOPSTEWARD_LIVE_COPY" in message
     assert "OPENROUTER_API_KEY" in message
+
+
+def _clear_planner(monkeypatch) -> None:
+    monkeypatch.delenv("SHOPSTEWARD_LIVE_PLANNER", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+
+def test_live_planner_closed_when_flag_unset(monkeypatch) -> None:
+    _clear_planner(monkeypatch)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "some-key")
+    assert live_planner_open() is False
+
+
+def test_live_planner_closed_when_key_unset(monkeypatch) -> None:
+    _clear_planner(monkeypatch)
+    monkeypatch.setenv("SHOPSTEWARD_LIVE_PLANNER", "1")
+    assert live_planner_open() is False
+
+
+def test_live_planner_open_when_flag_and_key_set(monkeypatch) -> None:
+    _clear_planner(monkeypatch)
+    monkeypatch.setenv("SHOPSTEWARD_LIVE_PLANNER", "1")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "some-key")
+    assert live_planner_open() is True
+
+
+def test_live_planner_error_names_env_vars_and_flag() -> None:
+    message = live_planner_error()
+    assert "SHOPSTEWARD_LIVE_PLANNER" in message
+    assert "OPENROUTER_API_KEY" in message
+    assert "--narrate" in message
 
 
 def _clear_gelato(monkeypatch) -> None:

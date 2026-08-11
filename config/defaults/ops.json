@@ -18,6 +18,12 @@
     "canvas": ["canvas"],
     "digital": ["digital download", "printable"]
   },
+  "planner": {
+    "model": "google/gemini-2.5-flash-lite",
+    "est_cost_per_mtok": {
+      "google/gemini-2.5-flash-lite": { "in": 0.10, "out": 0.40 }
+    }
+  },
   "brief_sections": {
     "revenue": true,
     "selling": true,

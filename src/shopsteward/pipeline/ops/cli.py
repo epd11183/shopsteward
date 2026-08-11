@@ -30,6 +30,7 @@ spec §4) unconditionally -- it holds no adapter (pure `conn` reads/writes of
 coexists in the registry alongside `listing.autorenew_off` regardless of
 that flag."""
 
+import os
 from typing import Annotated
 
 import typer
@@ -40,13 +41,25 @@ ops_app.add_typer(config_app, name="config")
 
 
 @ops_app.command("brief")
-def brief() -> None:
+def brief(
+    narrate: Annotated[
+        bool,
+        typer.Option(
+            "--narrate/--no-narrate",
+            help="Also print an LLM narration of the brief below it (default off, gated)",
+        ),
+    ] = False,
+) -> None:
     """Print the shop brief: revenue vs the prior window, what's selling,
     product/size mix, what's dying, what's trending, what to shoot more of,
     and any data-quality caveats. Deterministic SQL only -- no LLM, no
-    network call, of any kind."""
+    network call, of any kind. The deterministic brief is ALWAYS printed as
+    the source of truth; --narrate only adds commentary below it (M8b slice
+    1, design §5) -- gated on SHOPSTEWARD_LIVE_PLANNER + OPENROUTER_API_KEY,
+    and skipped/unavailable are never hard failures."""
     from shopsteward.core.db import connect, migrate
     from shopsteward.core.projections import rebuild as rebuild_core
+    from shopsteward.pipeline.live_gate import live_planner_error, live_planner_open
     from shopsteward.pipeline.ops import config as ops_config
     from shopsteward.pipeline.ops.brief import generate_brief, render_text
     from shopsteward.pipeline.ops.projections import rebuild_ops
@@ -62,7 +75,45 @@ def brief() -> None:
         rebuild_ops(conn)
         cfg = ops_config.get_ops_config(conn, DEFAULT_USER_ID)
         report = generate_brief(conn, DEFAULT_USER_ID, cfg)
-        typer.echo(render_text(report))
+        brief_text = render_text(report)
+        typer.echo(brief_text)
+
+        if not narrate:
+            return
+
+        if not live_planner_open():
+            typer.echo("")
+            typer.echo(live_planner_error())
+            return
+
+        from shopsteward.adapters.planner.openrouter import OpenRouterPlannerAdapter
+        from shopsteward.pipeline.ops.planner import narrate_brief
+        from shopsteward.pipeline.tuning import get_profile
+
+        soft_cap_usd = get_profile(conn, DEFAULT_USER_ID).vision.monthly_soft_cap_usd
+        adapter = OpenRouterPlannerAdapter(
+            model=cfg.planner.model,
+            api_key=os.environ["OPENROUTER_API_KEY"],
+            est_cost_per_mtok=cfg.planner.est_cost_per_mtok,
+        )
+        narration = narrate_brief(
+            conn,
+            DEFAULT_USER_ID,
+            adapter,
+            brief_text,
+            soft_cap_usd=soft_cap_usd,
+            model=cfg.planner.model,
+        )
+        typer.echo("")
+        if narration is None:
+            # ponytail: narrate_brief() collapses "over cap" and "transport
+            # error" to the same None -- distinguishing them would need a
+            # richer return type; not worth it while this is prose commentary
+            # only. Upgrade if the operator ever needs to tell them apart.
+            typer.echo("narration skipped: LLM monthly cap reached, or narration unavailable.")
+        else:
+            typer.echo("-- Claude's read --")
+            typer.echo(narration)
     finally:
         conn.close()
 

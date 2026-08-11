@@ -52,6 +52,22 @@ def live_copy_error() -> str:
     )
 
 
+def live_planner_open() -> bool:
+    """True iff SHOPSTEWARD_LIVE_PLANNER=1 and OPENROUTER_API_KEY are both set
+    (the planner adapter is OpenRouter-only, PRD §13 decision 36 provider)."""
+    return os.environ.get("SHOPSTEWARD_LIVE_PLANNER") == "1" and bool(
+        os.environ.get("OPENROUTER_API_KEY")
+    )
+
+
+def live_planner_error() -> str:
+    return (
+        "Live Brief narration is gated on operator approval (PRD §8.4): set "
+        "SHOPSTEWARD_LIVE_PLANNER=1 and OPENROUTER_API_KEY in the environment, "
+        "then re-run with --narrate."
+    )
+
+
 def live_etsy_read_open() -> bool:
     """True iff SHOPSTEWARD_LIVE_ETSY_READ=1, ETSY_API_KEY is set, and Etsy
     tokens are on disk with the listings_r scope (read analogue of
