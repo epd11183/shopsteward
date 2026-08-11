@@ -320,7 +320,10 @@ def test_cli_ops_run_planner_disabled_uses_the_deterministic_path(tmp_path, monk
     assert "planner: off (deterministic)" in result.output
 
     conn = connect(db)
-    assert len(read_all(conn, "action.proposed")) == 1
+    # autorenew_off + deactivate both target the dead/active listing (reprice
+    # excludes it as non-digital-titled; seo_edit proposes nothing
+    # deterministically; tune_threshold has nothing to trigger it).
+    assert len(read_all(conn, "action.proposed")) == 2
 
 
 def test_cli_ops_run_planner_enabled_but_gate_closed_never_builds_an_adapter(tmp_path, monkeypatch):
@@ -354,4 +357,6 @@ def test_cli_ops_run_planner_enabled_but_gate_closed_never_builds_an_adapter(tmp
     assert "planner: off (deterministic)" in result.output
 
     conn = connect(db)
-    assert len(read_all(conn, "action.proposed")) == 1
+    # autorenew_off + deactivate both target the dead/active listing -- see
+    # the sibling test's comment above.
+    assert len(read_all(conn, "action.proposed")) == 2
