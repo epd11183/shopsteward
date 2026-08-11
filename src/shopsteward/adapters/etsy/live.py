@@ -181,6 +181,18 @@ class LiveEtsyWriteAdapter:
             products.append(out)
         self._request("PUT", f"/listings/{listing_id}/inventory", json={"products": products})
 
+    def update_listing_state(self, listing_id: int, state: str) -> None:
+        # Dedicated method, not a field on EtsyListingUpdate (M8b slice 4b,
+        # draft #7 write-safety invariant) -- only listing.deactivate calls
+        # this. Etsy E4 routes state changes through updateListing itself
+        # (form-urlencoded PATCH, same endpoint update_listing/
+        # publish_listing use) -- just a different, single field.
+        if state not in ("active", "inactive"):
+            raise ValueError(f"update_listing_state: unsupported state {state!r}")
+        self._request(
+            "PATCH", f"/shops/{self._shop_id}/listings/{listing_id}", data={"state": state}
+        )
+
     def publish_listing(self, listing_id: int) -> EtsyListing:
         # The sole caller anywhere in this codebase is the Gate 3 endpoint
         # (M5a slice 4, PRD §13 decision 41). state is the only field this

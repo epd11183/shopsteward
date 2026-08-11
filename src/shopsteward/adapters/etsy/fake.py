@@ -154,6 +154,16 @@ class FakeEtsyWriteAdapter:
         row["price"] = price
         self.calls.append(("update_listing_price", {"listing_id": listing_id, "price": price}))
 
+    def update_listing_state(self, listing_id: int, state: str) -> None:
+        # Dedicated method, not a field on EtsyListingUpdate (M8b slice 4b,
+        # draft #7 write-safety invariant) -- only listing.deactivate calls
+        # this. Mirrors update_listing_price's separate-call shape.
+        if state not in ("active", "inactive"):
+            raise ValueError(f"update_listing_state: unsupported state {state!r}")
+        row = self._require(listing_id)
+        row["state"] = state
+        self.calls.append(("update_listing_state", {"listing_id": listing_id, "state": state}))
+
     def publish_listing(self, listing_id: int) -> EtsyListing:
         row = self._require(listing_id)
         if not row["images"]:
