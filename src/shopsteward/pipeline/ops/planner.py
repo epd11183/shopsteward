@@ -111,6 +111,7 @@ def _build_facts_json(
     dead = analytics.dead_listings(conn, user_id, cfg)
     trend = analytics.trending(conn, user_id, cfg)
     viewed_not_sold = analytics.viewed_not_sold(conn, user_id)
+    sellers = analytics.top_sellers(conn, user_id, cfg)
     facts = {
         "dead_listings": [dl.model_dump(mode="json") for dl in dead],
         "trending": [t.model_dump(mode="json") for t in trend],
@@ -120,6 +121,11 @@ def _build_facts_json(
         # signal listing.reprice keys on. materialize() still re-grounds and
         # drops anything ineligible -- this is target discovery, not trust.
         "viewed_not_sold": [vns.model_dump(mode="json") for vns in viewed_not_sold],
+        # social.caption_draft is ALSO planner-only (propose() always []) --
+        # without this block the LLM has no target ids for it either (M8b
+        # slice 6). materialize() still re-grounds against the SAME
+        # analytics.top_sellers() and drops anything ineligible.
+        "top_sellers": [s.model_dump(mode="json") for s in sellers],
         "candidate_target_ids": {
             cap.key: [a.target_id for a in cap.propose(conn, user_id, cfg)] for cap in capabilities
         },

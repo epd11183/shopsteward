@@ -15,6 +15,7 @@ __all__ = [
     "Brief",
     "BriefAction",
     "BriefAutonomy",
+    "BriefCaption",
     "BriefLadderRow",
     "BriefProposal",
     "BriefRefusal",
@@ -65,6 +66,7 @@ class _OpsBriefSections(BaseModel):
     shoot_more: bool = True
     data_quality: bool = True
     autonomy: bool = True
+    captions: bool = True
 
 
 class _OpsLadder(BaseModel):
@@ -95,6 +97,12 @@ class _OpsSeoEdit(BaseModel):
     # kept as its own knob since the two capabilities' signal thresholds
     # aren't required to track each other.
     min_lifetime_views: int = Field(gt=0)
+
+
+class _OpsCaption(BaseModel):
+    # `social.caption_draft` (M8b slice 6, draft §3.3 #26) -- Instagram's
+    # real caption character limit (config-over-code, not a tuning knob).
+    max_len: int = Field(gt=0)
 
 
 class _OpsAutonomy(BaseModel):
@@ -135,6 +143,7 @@ class OpsConfig(BaseModel):
     autonomy: _OpsAutonomy
     reprice: _OpsReprice
     seo_edit: _OpsSeoEdit
+    caption: _OpsCaption
 
 
 # --- autonomy chassis (PR1) --------------------------------------------------
@@ -317,6 +326,16 @@ class BriefLadderRow(BaseModel):
     tier_since: str  # ISO date
 
 
+class BriefCaption(BaseModel):
+    """One recent `social.caption_drafted` -- the operator copy-pastes
+    `caption` to IG/FB and posts manually (M8b slice 6). No publish, ever."""
+
+    listing_id: int
+    title: str
+    caption: str
+    drafted_at: str  # ISO datetime, from the event payload
+
+
 class BriefAutonomy(BaseModel):
     enabled: bool
     halted: bool
@@ -344,3 +363,7 @@ class Brief(BaseModel):
     done_recent: list[BriefAction] = Field(default_factory=list)
     refused_recent: list[BriefRefusal] = Field(default_factory=list)
     autonomy: BriefAutonomy | None = None
+    # `social.caption_draft` (M8b slice 6) -- default-empty so slice-1 Brief
+    # construction (or any caller that never touches this) stays valid
+    # without passing it. Gated on brief_sections.captions.
+    caption_drafts: list[BriefCaption] = Field(default_factory=list)

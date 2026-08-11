@@ -30,7 +30,8 @@
     "dying": true,
     "shoot_more": true,
     "data_quality": true,
-    "autonomy": true
+    "autonomy": true,
+    "captions": true
   },
   "reprice": {
     "min_price_usd": 3.0,
@@ -40,6 +41,9 @@
   },
   "seo_edit": {
     "min_lifetime_views": 25
+  },
+  "caption": {
+    "max_len": 2200
   },
   "autonomy": {
     "enabled": false,
