@@ -8,10 +8,14 @@ PR3 -- the runner functions they call (runner.approve_action,
 it, editing config/defaults/ops.json on disk has no effect on what
 get_ops_config() returns, once seeded once.
 
-`ops run` always iterates `registry.REGISTRY.values()`, which is empty
-until a later PR registers `listing.autorenew_off/_on` -- PR1 ships ZERO
-real capabilities. With `autonomy.enabled=false` (the shipped default) it
-no-ops regardless of what is registered."""
+`ops run` registers `listing.autorenew_off` (PR2, M8a spec §4) against a
+FakeEtsyWriteAdapter by default -- offline, no live Etsy call, ever, unless
+the caller passes `--live-autonomy` AND `live_autonomy_open()` is true, in
+which case it registers the same capability against a
+LiveEtsyWriteAdapter built via `pipeline.listings.push.build_etsy_write_adapter`
+(the M5a write path's own token store/construction, reused rather than
+duplicated). With `autonomy.enabled=false` (the shipped default) it no-ops
+regardless of what is registered."""
 
 from typing import Annotated
 
@@ -81,14 +85,19 @@ def run_cmd(
     ] = False,
 ) -> None:
     """Run the autonomy chassis once: propose -> govern -> execute for every
-    registered capability. Defaults to --dry-run for safety. PR1 registers
-    no real capability, so this proposes/executes nothing regardless of
-    flags; the mechanics are proven by tests against a stub capability."""
+    registered capability. Defaults to --dry-run for safety. Registers
+    `listing.autorenew_off` against a FakeEtsyWriteAdapter (offline) unless
+    `--live-autonomy` is passed AND the gate is open, in which case it is
+    registered against a LiveEtsyWriteAdapter instead -- never both, never a
+    live adapter constructed on the default path."""
     from shopsteward.core.db import connect, migrate
+    from shopsteward.core.projections import rebuild as rebuild_core
+    from shopsteward.pipeline.listings.push import build_etsy_write_adapter
     from shopsteward.pipeline.live_gate import live_autonomy_error, live_autonomy_open
     from shopsteward.pipeline.ops import config as ops_config
+    from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
     from shopsteward.pipeline.ops.projections import rebuild_ops
-    from shopsteward.pipeline.ops.registry import REGISTRY
+    from shopsteward.pipeline.ops.registry import REGISTRY, register
     from shopsteward.pipeline.ops.runner import run
     from shopsteward.settings import DEFAULT_USER_ID, db_path
 
@@ -96,12 +105,21 @@ def run_cmd(
         typer.secho(live_autonomy_error(), fg="red")
         raise typer.Exit(code=1)
 
+    adapter = build_etsy_write_adapter(live=live_autonomy)
+    if not live_autonomy:
+        typer.echo("offline (fake adapter) -- no live Etsy calls will be made.")
+    register(ListingAutorenewOff(adapter))
+
     db = db_path()
     db.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(db)
     try:
         migrate(conn)
         ops_config.seed(conn, DEFAULT_USER_ID)
+        # dead_listings() (called by listing.autorenew_off.propose()) reads
+        # proj_listings for listing titles -- that table only exists once
+        # core's own projection has run (`ops brief` precedent above).
+        rebuild_core(conn)
         rebuild_ops(conn)
         cfg = ops_config.get_ops_config(conn, DEFAULT_USER_ID)
         if not cfg.autonomy.enabled:

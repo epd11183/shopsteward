@@ -29,6 +29,7 @@ class EtsyListing(BaseModel):
     num_favorers: int = 0
     price: Money
     tags: list[str] = Field(default_factory=list)
+    should_auto_renew: bool = True
 
     @property
     def price_usd(self) -> float:
@@ -98,8 +99,13 @@ class EtsyListingUpdate(BaseModel):
     Etsy's real updateListing schema has no `price` field -- price is only
     set at create_draft_listing time; a later price change is a M5a slice-4
     concern (not modeled here). state is never a field here either -- the
-    only way to flip state=active is publish_listing (PRD §13 decision 41)."""
+    only way to flip state=active is publish_listing (PRD §13 decision 41).
+    should_auto_renew IS legitimately carried here (Etsy E1, M8a
+    `listing.autorenew_off` capability, listings_w scope, no new scope) --
+    it is not a state flip, it only toggles whether Etsy renews an already-
+    active listing automatically."""
 
     title: str | None = None
     description: str | None = None
     tags: list[str] | None = None
+    should_auto_renew: bool | None = None
