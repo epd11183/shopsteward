@@ -157,10 +157,15 @@ def run_cmd(
     from shopsteward.core.db import connect, migrate
     from shopsteward.core.projections import rebuild as rebuild_core
     from shopsteward.pipeline.listings.push import build_etsy_write_adapter
-    from shopsteward.pipeline.live_gate import live_autonomy_error, live_autonomy_open
+    from shopsteward.pipeline.live_gate import (
+        live_autonomy_error,
+        live_autonomy_open,
+        live_planner_open,
+    )
     from shopsteward.pipeline.ops import config as ops_config
     from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
     from shopsteward.pipeline.ops.capabilities.tune_threshold import OpsTuneThreshold
+    from shopsteward.pipeline.ops.models import ProposedAction
     from shopsteward.pipeline.ops.projections import rebuild_ops
     from shopsteward.pipeline.ops.registry import REGISTRY, register
     from shopsteward.pipeline.ops.runner import run
@@ -191,7 +196,42 @@ def run_cmd(
         if not cfg.autonomy.enabled:
             typer.echo("autonomy.enabled is false -- ops run is a no-op.")
             return
-        report = run(conn, DEFAULT_USER_ID, cfg, list(REGISTRY.values()), dry_run=dry_run)
+
+        proposals: list[ProposedAction] | None = None
+        if cfg.autonomy.planner_enabled and live_planner_open():
+            # Default-off + gated (M8b slice 2, design §7): only here is a
+            # planner adapter ever built/called -- the default path above
+            # never imports OpenRouter or touches the network.
+            from shopsteward.adapters.planner.openrouter import OpenRouterPlannerAdapter
+            from shopsteward.pipeline.ops.planner import plan_proposals
+            from shopsteward.pipeline.tuning import get_profile
+
+            soft_cap_usd = get_profile(conn, DEFAULT_USER_ID).vision.monthly_soft_cap_usd
+            planner_adapter = OpenRouterPlannerAdapter(
+                model=cfg.planner.model,
+                api_key=os.environ["OPENROUTER_API_KEY"],
+                est_cost_per_mtok=cfg.planner.est_cost_per_mtok,
+            )
+            proposals = plan_proposals(
+                conn,
+                DEFAULT_USER_ID,
+                cfg,
+                planner_adapter,
+                list(REGISTRY.values()),
+                soft_cap_usd=soft_cap_usd,
+            )
+            typer.echo(f"planner: on ({len(proposals)} proposals)")
+        else:
+            typer.echo("planner: off (deterministic)")
+
+        report = run(
+            conn,
+            DEFAULT_USER_ID,
+            cfg,
+            list(REGISTRY.values()),
+            dry_run=dry_run,
+            proposals=proposals,
+        )
         typer.echo(f"ops run: {report.model_dump()}")
     finally:
         conn.close()

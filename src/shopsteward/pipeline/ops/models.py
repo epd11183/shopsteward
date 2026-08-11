@@ -85,6 +85,13 @@ class _OpsAutonomy(BaseModel):
     monthly_spend_cap_usd: float = Field(ge=0)
     proposal_ttl_days: int = Field(gt=0)
     ladder: _OpsLadder
+    # LLM planner (M8b slice 2, design §7): default-off master switch --
+    # False -> `ops run` uses today's deterministic propose() path,
+    # unchanged. Also gated at runtime on live_planner_open() (flag+env+key).
+    planner_enabled: bool = False
+    # Per-capability cap on materialized proposals per `plan_proposals()` run
+    # (design §10 CPO improvement) -- keeps NEEDS YOU short and high-signal.
+    planner_max_per_capability_per_run: int = Field(gt=0, default=1)
 
 
 class OpsConfig(BaseModel):

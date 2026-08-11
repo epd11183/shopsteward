@@ -10,6 +10,12 @@ Brief -- planner.py calls the PlannerAdapter (network, gated on
 live_planner_open()) and cli.py constructs the live adapter for `--narrate`.
 The deterministic generate_brief()/render_text() in brief.py itself stays
 untouched by that addition, which the behavioural test below still proves.
+`registry.py` is exempt too (M8b slice 2, design §2): it imports
+`adapters.planner.interface.ProposalIntent` for the `Capability.materialize()`
+type hint only -- a pure-Pydantic boundary shape with zero httpx/transport
+of its own, not a network call. The import-linter contract (pyproject.toml)
+is the actual one-way-import enforcement; this test's job is narrower --
+proving no ops module reaches for a transport it doesn't need.
 
 Behavioural: after seeding a synthetic shop and generating the full brief,
 the event log contains only the event types this slice is allowed to
@@ -31,7 +37,7 @@ from tests.pipeline.ops.helpers import AS_OF, USER_ID, seed_two_year_shop
 
 _OPS_DIR = Path(brief_module.__file__).parent
 _FORBIDDEN_MODULES = ("httpx", "requests", "shopsteward.adapters")
-_NARRATION_FILES = {"planner.py", "cli.py"}
+_NARRATION_FILES = {"planner.py", "cli.py", "registry.py"}
 
 
 def _imported_modules(py_file: Path) -> set[str]:

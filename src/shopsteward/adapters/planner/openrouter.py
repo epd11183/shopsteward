@@ -2,17 +2,23 @@
 22, 36). NOT wired to any default path; live use is triple-gated (flag + env
 + key) by the caller, mirroring OpenRouterCopyAdapter.
 
-Free-text response -- no JSON schema is needed, this is prose narration of
-the deterministic Brief, never structured data the pipeline parses."""
+narrate() is free-text (prose narration of the deterministic Brief). plan()
+uses OpenRouter `response_format: json_schema, strict: true` (the
+`adapters/copy/openrouter.py` pattern) -- its output is structured data the
+pipeline-side validation gate parses and re-grounds, never trusted as-is."""
 
 import json
 
 import httpx
+from pydantic import ValidationError
 
 from shopsteward.adapters.planner.interface import (
+    CapabilityDescriptor,
     PlannerNarration,
     PlannerParseError,
+    PlannerPlan,
     PlannerUsage,
+    ProposalIntent,
 )
 
 BASE = "https://openrouter.ai/api/v1/chat/completions"
@@ -23,6 +29,35 @@ _SYSTEM_PROMPT = (
     "what needs attention, and why. Cite the actual figures from the brief. "
     "DO NOT invent any number or listing that is not in the brief."
 )
+
+_PLAN_SYSTEM_PROMPT = (
+    "You are the shop's business manager. From the facts and the list of "
+    "allowed actions, choose the actions worth taking. You may ONLY use a "
+    "capability_key and a target_id that appear in the inputs. Give one "
+    "grounded sentence per action. Propose nothing if nothing is worth doing."
+)
+
+_INTENTS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "intents": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "capability_key": {"type": "string"},
+                    "target_id": {"type": "string"},
+                    "params": {"type": "object", "additionalProperties": True},
+                    "reason": {"type": "string"},
+                },
+                "required": ["capability_key", "target_id", "params", "reason"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["intents"],
+    "additionalProperties": False,
+}
 
 _MAX_ERROR_LEN = 500
 
@@ -66,6 +101,39 @@ class OpenRouterPlannerAdapter:
             ) from exc
 
         return PlannerNarration(text=text, usage=self._build_usage(payload))
+
+    def plan(self, facts_json: str, catalog: list[CapabilityDescriptor]) -> PlannerPlan:
+        catalog_json = json.dumps([c.model_dump() for c in catalog])
+        user_content = f"FACTS:\n{facts_json}\n\nALLOWED CAPABILITIES:\n{catalog_json}"
+        body = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": _PLAN_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "planner_intents",
+                    "strict": True,
+                    "schema": _INTENTS_SCHEMA,
+                },
+            },
+        }
+        resp = self._client.post(BASE, json=body)
+        resp.raise_for_status()
+        payload = resp.json()
+
+        try:
+            text = payload["choices"][0]["message"]["content"]
+            parsed = json.loads(text)
+            intents = [ProposalIntent.model_validate(i) for i in parsed["intents"]]
+        except (KeyError, IndexError, json.JSONDecodeError, ValidationError) as exc:
+            raise PlannerParseError(
+                f"could not parse OpenRouter response: {resp.text[:_MAX_ERROR_LEN]!r}"
+            ) from exc
+
+        return PlannerPlan(intents=intents, usage=self._build_usage(payload))
 
     def _build_usage(self, payload: dict) -> PlannerUsage:
         meta = payload.get("usage", {})

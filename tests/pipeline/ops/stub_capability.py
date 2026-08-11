@@ -6,6 +6,7 @@ touching Etsy or any other adapter."""
 
 from datetime import UTC, datetime, timedelta
 
+from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.pipeline.ops.config import ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, ProposedAction, Tier
 from shopsteward.pipeline.ops.registry import compute_action_id
@@ -35,34 +36,43 @@ class StubCapability:
         if not undoable:
             self.undo = None  # type: ignore[assignment]  -- registry() must refuse this above T2
 
-    def propose(self, conn: object, user_id: int, cfg: object) -> list[ProposedAction]:
+    def _candidates(self, cfg: object) -> dict[str, ProposedAction]:
         # UTC, matching the DB's own strftime('...','now') created_at on
         # every event -- keeps this in sync with runner.py's day-bucketed
         # governor checks (daily cap, budget month, portfolio week).
         today_date = datetime.now(UTC).date()
         today = today_date.isoformat()
         cfg_hash = ops_config_hash(cfg)
-        actions = []
+        out: dict[str, ProposedAction] = {}
         for target_id in self.store:
             inputs_hash = "fixed-inputs"
             action_id = compute_action_id(self.key, target_id, inputs_hash, cfg_hash, today)
-            actions.append(
-                ProposedAction(
-                    action_id=action_id,
-                    capability=self.key,
-                    target_type="stub",
-                    target_id=target_id,
-                    tier=Tier.PROPOSE,  # overwritten by the runner with the effective tier
-                    reason="stub proposes a no-op change for testing.",
-                    inputs_hash=inputs_hash,
-                    estimated_cost_usd=self.cost_usd,
-                    undo_available=self.undo is not None,
-                    expires_at=(
-                        today_date + timedelta(days=cfg.autonomy.proposal_ttl_days)
-                    ).isoformat(),
-                )
+            out[target_id] = ProposedAction(
+                action_id=action_id,
+                capability=self.key,
+                target_type="stub",
+                target_id=target_id,
+                tier=Tier.PROPOSE,  # overwritten by the runner with the effective tier
+                reason="stub proposes a no-op change for testing.",
+                inputs_hash=inputs_hash,
+                estimated_cost_usd=self.cost_usd,
+                undo_available=self.undo is not None,
+                expires_at=(
+                    today_date + timedelta(days=cfg.autonomy.proposal_ttl_days)
+                ).isoformat(),
             )
-        return actions
+        return out
+
+    def propose(self, conn: object, user_id: int, cfg: object) -> list[ProposedAction]:
+        return list(self._candidates(cfg).values())
+
+    def materialize(
+        self, conn: object, user_id: int, cfg: object, intent: ProposalIntent
+    ) -> ProposedAction | None:
+        # A canned action for a known target_id, else None -- same grounding
+        # function propose() uses, so a hallucinated/unknown target_id can
+        # never be materialized (the planner-safety-gate contract).
+        return self._candidates(cfg).get(intent.target_id)
 
     def execute(self, conn: object, user_id: int, action: ProposedAction) -> ExecutionResult:
         self.execute_calls.append(action.target_id)
