@@ -16,7 +16,7 @@ an intent can become a `ProposedAction`."""
 
 from typing import Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PlannerUsage(BaseModel):
@@ -35,6 +35,13 @@ class ProposalIntent(BaseModel):
     a target the deterministic grounding already blessed (design §2). `reason`
     is carried through only as commentary; the pipeline never trusts it as an
     audit reason (materialize() sets that from real data)."""
+
+    # allow_inf_nan=False (M8b slice 3 B1 fix): a money-moving capability's
+    # params can carry a price -- reject NaN/inf at parse time so a
+    # malformed LLM response can never even construct an intent that later
+    # slips a non-finite number past a capability's own bounds check
+    # (belt-and-suspenders; capabilities validate again themselves).
+    model_config = ConfigDict(allow_inf_nan=False)
 
     capability_key: str
     target_id: str

@@ -74,6 +74,21 @@ class _OpsLadder(BaseModel):
     t1_min_days: int = Field(gt=0)
 
 
+class _OpsReprice(BaseModel):
+    # `listing.reprice` (M8b slice 3, draft #9/#9b) thresholds. min_price_usd
+    # is the absolute floor propose()/materialize() will never go below;
+    # max_pct_change bounds how far even an LLM-proposed price may move from
+    # the current price in either direction; default_reduction_pct is
+    # propose()'s own deterministic default (a price DECREASE -- there is no
+    # demand model yet, so this only ever proposes trying a lower price on a
+    # viewed-but-not-selling listing, never a raise); min_lifetime_views is
+    # the "enough traffic to judge this overpriced, not just new" floor.
+    min_price_usd: float = Field(gt=0)
+    max_pct_change: float = Field(gt=0, lt=1)
+    default_reduction_pct: float = Field(gt=0, lt=1)
+    min_lifetime_views: int = Field(gt=0)
+
+
 class _OpsAutonomy(BaseModel):
     # Chassis master switch + caps (M8a spec §3, draft §5). enabled and
     # monthly_spend_cap_usd MUST default false/0.00 -- nothing auto-executes,
@@ -110,6 +125,7 @@ class OpsConfig(BaseModel):
     planner: _OpsPlanner
     brief_sections: _OpsBriefSections
     autonomy: _OpsAutonomy
+    reprice: _OpsReprice
 
 
 # --- autonomy chassis (PR1) --------------------------------------------------
@@ -136,6 +152,13 @@ class ProposedAction(BaseModel):
     estimated_cost_usd: float = 0.0
     undo_available: bool
     expires_at: str  # ISO date (proposed day + proposal_ttl_days)
+    # A capability's own concrete decision (M8b slice 3, `listing.reprice`'s
+    # target price) -- carried on the action itself so execute() applies
+    # EXACTLY what was proposed/approved, never a recompute at execute time.
+    # Additive/default-empty: autorenew/tune_threshold never set this, so
+    # their action_id/inputs_hash are unchanged. Round-trips automatically
+    # through the action.proposed event (model_dump()/model_validate()).
+    params: dict[str, str | int | float | bool] = Field(default_factory=dict)
 
 
 class ExecutionResult(BaseModel):
