@@ -40,9 +40,18 @@ def seed(conn: sqlite3.Connection, user_id: int, defaults_dir: Path) -> int:
         prior = existing.get(profile.name)
         if prior is not None and prior.get("profile") == profile.model_dump():
             continue
-        append(conn, Event(user_id=user_id, type="look.seeded",
-                           payload={"name": profile.name, "profile": profile.model_dump(),
-                                    "source": "defaults"}))
+        append(
+            conn,
+            Event(
+                user_id=user_id,
+                type="look.seeded",
+                payload={
+                    "name": profile.name,
+                    "profile": profile.model_dump(),
+                    "source": "defaults",
+                },
+            ),
+        )
         seeded += 1
     return seeded
 
@@ -61,9 +70,14 @@ def get_look(conn: sqlite3.Connection, user_id: int, name: str) -> LookProfile:
 
 
 def save_look(conn: sqlite3.Connection, user_id: int, profile: LookProfile) -> None:
-    append(conn, Event(user_id=user_id, type="look.updated",
-                       payload={"name": profile.name, "profile": profile.model_dump(),
-                                "source": "generated"}))
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="look.updated",
+            payload={"name": profile.name, "profile": profile.model_dump(), "source": "generated"},
+        ),
+    )
 
 
 def _desc_key(description: str) -> str:
@@ -107,8 +121,9 @@ def resolve_look(
                 "raise look_llm.monthly_soft_cap_usd to continue"
             )
 
-    profile = _generate_gated(conn, user_id, look_arg, key, adapter, model,
-                              guard_knobs, fallback_look)
+    profile = _generate_gated(
+        conn, user_id, look_arg, key, adapter, model, guard_knobs, fallback_look
+    )
     save_look(conn, user_id, profile)
     return profile
 
@@ -133,7 +148,9 @@ def _generate_gated(
     # Both attempts tripped the guard. Cache the seed under this description's key
     # so repeats reload it cheaply; the operator can force a fresh try with --regenerate.
     seed = get_look(conn, user_id, fallback_look)
-    return seed.model_copy(update={
-        "name": key,
-        "description": f"{look_arg} (fell back to {fallback_look})",
-    })
+    return seed.model_copy(
+        update={
+            "name": key,
+            "description": f"{look_arg} (fell back to {fallback_look})",
+        }
+    )

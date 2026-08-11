@@ -32,9 +32,7 @@ class RawpyDecoder:
             wb = tuple(float(x) for x in raw.camera_whitebalance[:4])
             # First 3 rows of the libraw rgb_xyz_matrix; estimator orients it.
             xyz_matrix = np.array(raw.rgb_xyz_matrix, dtype=np.float64)[:3]
-            rgb16 = raw.postprocess(
-                output_bps=16, no_auto_bright=True, use_camera_wb=True
-            )
+            rgb16 = raw.postprocess(output_bps=16, no_auto_bright=True, use_camera_wb=True)
         rgb = rgb16.astype(np.float32) / 65535.0
         rgb = _downscale(rgb, _ANALYSIS_LONG_EDGE)
         return DecodedImage(rgb=rgb, wb_multipliers=wb, xyz_matrix=xyz_matrix, exif={})

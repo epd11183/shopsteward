@@ -14,20 +14,30 @@ _LOOK_LLM_TYPE = "llm.call"
 def append_llm_call(
     conn: sqlite3.Connection, user_id: int, usage: LookUsage, *, description: str
 ) -> None:
-    append(conn, Event(user_id=user_id, type=_LOOK_LLM_TYPE, payload={
-        "feature": "look",
-        "model": usage.model,
-        "input_tokens": usage.input_tokens,
-        "output_tokens": usage.output_tokens,
-        "est_cost_usd": usage.est_cost_usd,
-        "description": description,
-    }))
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type=_LOOK_LLM_TYPE,
+            payload={
+                "feature": "look",
+                "model": usage.model,
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+                "est_cost_usd": usage.est_cost_usd,
+                "description": description,
+            },
+        ),
+    )
 
 
 def month_look_cost(conn: sqlite3.Connection, user_id: int, month_prefix: str) -> float:
     total = 0.0
     for e in read_all(conn, _LOOK_LLM_TYPE):
-        if (e.user_id == user_id and e.payload.get("feature") == "look"
-                and (e.created_at or "").startswith(month_prefix)):
+        if (
+            e.user_id == user_id
+            and e.payload.get("feature") == "look"
+            and (e.created_at or "").startswith(month_prefix)
+        ):
             total += e.payload.get("est_cost_usd") or 0.0
     return total

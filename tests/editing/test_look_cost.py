@@ -14,8 +14,12 @@ def _conn():
 
 def test_append_and_sum_current_month():
     c = _conn()
-    append_llm_call(c, USER, LookUsage(model="m", input_tokens=10, output_tokens=20,
-                                       est_cost_usd=0.03), description="a look")
+    append_llm_call(
+        c,
+        USER,
+        LookUsage(model="m", input_tokens=10, output_tokens=20, est_cost_usd=0.03),
+        description="a look",
+    )
     append_llm_call(c, USER, LookUsage(model="m", est_cost_usd=0.05), description="b look")
     month = read_all(c, "llm.call")[0].created_at[:7]
     assert round(month_look_cost(c, USER, month), 2) == 0.08

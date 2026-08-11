@@ -32,8 +32,14 @@ def _already_scored(conn: sqlite3.Connection, user_id: int) -> set[str]:
 
 
 def run_vision_copy(
-    conn: sqlite3.Connection, user_id: int, *, adapter: VisionAdapter, model: str,
-    soft_cap_usd: float, month_prefix: str, regenerate: bool = False,
+    conn: sqlite3.Connection,
+    user_id: int,
+    *,
+    adapter: VisionAdapter,
+    model: str,
+    soft_cap_usd: float,
+    month_prefix: str,
+    regenerate: bool = False,
 ) -> dict:
     rebuild_pipeline(conn)
     rows = conn.execute(
@@ -60,12 +66,31 @@ def run_vision_copy(
             continue
         usage = result.usage
         if usage is not None:
-            append(conn, Event(user_id=user_id, type="llm.call", payload={
-                "feature": "vision_copy", "model": usage.model,
-                "est_cost_usd": usage.est_cost_usd}))
-        append(conn, Event(user_id=user_id, type="photo.scored", payload={
-            "photo_id": sid, "composite": 0.0, "scores": {},
-            "vision": {"triage": {"verdict": result.verdict.model_dump()}}}))
+            append(
+                conn,
+                Event(
+                    user_id=user_id,
+                    type="llm.call",
+                    payload={
+                        "feature": "vision_copy",
+                        "model": usage.model,
+                        "est_cost_usd": usage.est_cost_usd,
+                    },
+                ),
+            )
+        append(
+            conn,
+            Event(
+                user_id=user_id,
+                type="photo.scored",
+                payload={
+                    "photo_id": sid,
+                    "composite": 0.0,
+                    "scores": {},
+                    "vision": {"triage": {"verdict": result.verdict.model_dump()}},
+                },
+            ),
+        )
         scored += 1
 
     rebuild_pipeline(conn)

@@ -17,9 +17,18 @@ def test_preview_writes_candidate_and_seed(tmp_path: Path):
     decoder = FakeRawDecoder({str(raw): DecodedImage(rgb=np.full((8, 8, 3), 0.3, np.float32))})
     conn = connect(":memory:")
     migrate(conn)
-    out = run_preview(conn, USER, tmp_path, "bright-and-true", against="national-geographic",
-                      decoder=decoder, look_adapter=FixtureLookAdapter(), model="fixture",
-                      knobs=load_correction_knobs(), looks_dir=LOOKS_DIR)
+    out = run_preview(
+        conn,
+        USER,
+        tmp_path,
+        "bright-and-true",
+        against="national-geographic",
+        decoder=decoder,
+        look_adapter=FixtureLookAdapter(),
+        model="fixture",
+        knobs=load_correction_knobs(),
+        looks_dir=LOOKS_DIR,
+    )
     assert (tmp_path / "_preview" / "bright-and-true" / "A.xmp").exists()
     assert (tmp_path / "_preview" / "national-geographic" / "A.xmp").exists()
     assert out["candidate"] == "bright-and-true"

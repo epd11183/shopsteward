@@ -23,10 +23,17 @@ def test_run_edit_then_rebuild_editing_does_not_crash(tmp_path: Path):
     conn = connect(":memory:")
     migrate(conn)
     report = run_edit(
-        conn, USER, tmp_path, "bright-and-true",
-        decoder=decoder, look_adapter=FixtureLookAdapter(),
-        model="m", knobs=load_correction_knobs(),
-        regenerate=False, overwrite=False, batch_lock=False,
+        conn,
+        USER,
+        tmp_path,
+        "bright-and-true",
+        decoder=decoder,
+        look_adapter=FixtureLookAdapter(),
+        model="m",
+        knobs=load_correction_knobs(),
+        regenerate=False,
+        overwrite=False,
+        batch_lock=False,
     )
     assert report.written == 1
 
