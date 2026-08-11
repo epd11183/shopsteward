@@ -102,13 +102,10 @@ def compose(correction: CorrectionSettings, look: LookProfile) -> str:
 
 def _tone_curve(points: list[list[int]]) -> str:
     lis = "".join(
-        f"     <rdf:li>{int(p[0])}, {int(p[1])}</rdf:li>\n"
-        for p in points if len(p) == 2
+        f"     <rdf:li>{int(p[0])}, {int(p[1])}</rdf:li>\n" for p in points if len(p) == 2
     )
     return (
-        "   <crs:ToneCurvePV2012>\n    <rdf:Seq>\n"
-        f"{lis}"
-        "    </rdf:Seq>\n   </crs:ToneCurvePV2012>"
+        f"   <crs:ToneCurvePV2012>\n    <rdf:Seq>\n{lis}    </rdf:Seq>\n   </crs:ToneCurvePV2012>"
     )
 
 

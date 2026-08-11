@@ -9,9 +9,23 @@ USER = 1
 
 
 def _landing_winner(conn, file_id="abc123def456", path="/w/A.jpg"):
-    append(conn, Event(user_id=USER, type="landing.file_observed", payload={
-        "file_id": file_id, "path": path, "base_name": "A", "photo_id": None,
-        "format": "JPEG", "width": 4000, "height": 3000, "color_space": "sRGB"}))
+    append(
+        conn,
+        Event(
+            user_id=USER,
+            type="landing.file_observed",
+            payload={
+                "file_id": file_id,
+                "path": path,
+                "base_name": "A",
+                "photo_id": None,
+                "format": "JPEG",
+                "width": 4000,
+                "height": 3000,
+                "color_space": "sRGB",
+            },
+        ),
+    )
     rebuild_pipeline(conn)
 
 
@@ -24,21 +38,34 @@ def _conn():
 def _verdict_result():
     return VisionResult(
         verdict=VisionVerdict(
-            commercial_score=80, subject="trail runner", strongest_room_style="modern",
-            one_risk="busy background", rationale="dynamic motion"),
-        usage=VisionUsage(model="m", est_cost_usd=0.01))
+            commercial_score=80,
+            subject="trail runner",
+            strongest_room_style="modern",
+            one_risk="busy background",
+            rationale="dynamic motion",
+        ),
+        usage=VisionUsage(model="m", est_cost_usd=0.01),
+    )
 
 
 def test_scores_photoless_winner_under_synthetic_id(monkeypatch):
     c = _conn()
     _landing_winner(c)
     monkeypatch.setattr("shopsteward.pipeline.listings.vision_copy._read_bytes", lambda p: b"jpg")
-    out = run_vision_copy(c, USER, adapter=FakeVisionAdapter([_verdict_result()]),
-                          model="m", soft_cap_usd=5.0, month_prefix="2026-08")
+    out = run_vision_copy(
+        c,
+        USER,
+        adapter=FakeVisionAdapter([_verdict_result()]),
+        model="m",
+        soft_cap_usd=5.0,
+        month_prefix="2026-08",
+    )
     assert out["scored"] == 1
     rebuild_pipeline(c)
-    row = c.execute("SELECT subject FROM proj_scores WHERE user_id=? AND photo_id=?",
-                    (USER, "file-abc123def456")).fetchone()
+    row = c.execute(
+        "SELECT subject FROM proj_scores WHERE user_id=? AND photo_id=?",
+        (USER, "file-abc123def456"),
+    ).fetchone()
     assert row["subject"] == "trail runner"
 
 
@@ -46,19 +73,36 @@ def test_idempotent_skip(monkeypatch):
     c = _conn()
     _landing_winner(c)
     monkeypatch.setattr("shopsteward.pipeline.listings.vision_copy._read_bytes", lambda p: b"jpg")
-    run_vision_copy(c, USER, adapter=FakeVisionAdapter([_verdict_result()]),
-                    model="m", soft_cap_usd=5.0, month_prefix="2026-08")
-    out = run_vision_copy(c, USER, adapter=FakeVisionAdapter([]),
-                          model="m", soft_cap_usd=5.0, month_prefix="2026-08")
+    run_vision_copy(
+        c,
+        USER,
+        adapter=FakeVisionAdapter([_verdict_result()]),
+        model="m",
+        soft_cap_usd=5.0,
+        month_prefix="2026-08",
+    )
+    out = run_vision_copy(
+        c, USER, adapter=FakeVisionAdapter([]), model="m", soft_cap_usd=5.0, month_prefix="2026-08"
+    )
     assert out["scored"] == 0 and out["skipped"] == 1
 
 
 def test_soft_cap_stops_scoring_without_raising(monkeypatch):
     c = _conn()
     _landing_winner(c)
-    append(c, Event(user_id=USER, type="llm.call",
-                    payload={"feature": "vision_copy", "est_cost_usd": 5.0}))
+    append(
+        c,
+        Event(
+            user_id=USER, type="llm.call", payload={"feature": "vision_copy", "est_cost_usd": 5.0}
+        ),
+    )
     monkeypatch.setattr("shopsteward.pipeline.listings.vision_copy._read_bytes", lambda p: b"jpg")
-    out = run_vision_copy(c, USER, adapter=FakeVisionAdapter([_verdict_result()]),
-                          model="m", soft_cap_usd=5.0, month_prefix="2026-08")
+    out = run_vision_copy(
+        c,
+        USER,
+        adapter=FakeVisionAdapter([_verdict_result()]),
+        model="m",
+        soft_cap_usd=5.0,
+        month_prefix="2026-08",
+    )
     assert out["scored"] == 0 and out["cap_hit"] is True

@@ -91,7 +91,9 @@ def test_create_poll_link_succeeds_and_never_leaks_print_file_url(conn, tmp_path
 
     # provider_created must record variant_count, never a print_file_url.
     created_payload = next(
-        e.payload for e in events if e.type == "listingdraft.provider_created"
+        e.payload
+        for e in events
+        if e.type == "listingdraft.provider_created"
         and e.payload["draft_id"] == acrylic["draft_id"]
     )
     assert "print_file_url" not in created_payload
@@ -143,7 +145,8 @@ def test_poll_exhaustion_fails_without_raising_and_other_drafts_still_process(co
         assert acrylic["provider_product_id"] is not None  # create succeeded, only linking failed
 
         events = [
-            e for e in read_all(conn, "listingdraft.provider_")
+            e
+            for e in read_all(conn, "listingdraft.provider_")
             if e.payload["draft_id"] == acrylic["draft_id"]
         ]
         assert [e.type for e in events] == [

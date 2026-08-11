@@ -51,8 +51,12 @@ def test_no_shadow_lift_omits_mask():
 
 
 def test_contrast_is_clamped():
-    xmp = compose(CorrectionSettings(), LookProfile.model_construct(name="x", contrast=999,
-        tone_curve=[], hsl={}, split_toning={}, vibrance=0, saturation=0))
+    xmp = compose(
+        CorrectionSettings(),
+        LookProfile.model_construct(
+            name="x", contrast=999, tone_curve=[], hsl={}, split_toning={}, vibrance=0, saturation=0
+        ),
+    )
     desc = _parse(xmp).find(".//{http://www.w3.org/1999/02/22-rdf-syntax-ns#}Description")
     assert desc.get(f"{{{CRS}}}Contrast2012") == "100"
 
@@ -74,8 +78,12 @@ def test_malformed_hsl_key_is_skipped_not_emitted():
 
 
 def test_split_toning_hue_passthrough_and_clamp():
-    xmp = compose(CorrectionSettings(), LookProfile(name="x",
-        split_toning={"SplitToningShadowHue": 45, "SplitToningHighlightHue": 400}))
+    xmp = compose(
+        CorrectionSettings(),
+        LookProfile(
+            name="x", split_toning={"SplitToningShadowHue": 45, "SplitToningHighlightHue": 400}
+        ),
+    )
     assert 'crs:SplitToningShadowHue="45"' in xmp
     assert 'crs:SplitToningHighlightHue="360"' in xmp
 
@@ -88,9 +96,19 @@ def test_negative_exposure_formatting():
 
 def test_presence_sliders_land_and_clamp():
     look = LookProfile.model_construct(
-        name="x", contrast=0, highlights=-55, whites=8, blacks=-20, clarity=14,
-        dehaze=18, texture=999, tone_curve=[], hsl={}, split_toning={},
-        vibrance=0, saturation=0,
+        name="x",
+        contrast=0,
+        highlights=-55,
+        whites=8,
+        blacks=-20,
+        clarity=14,
+        dehaze=18,
+        texture=999,
+        tone_curve=[],
+        hsl={},
+        split_toning={},
+        vibrance=0,
+        saturation=0,
     )
     desc = _parse(compose(CorrectionSettings(), look)).find(
         ".//{http://www.w3.org/1999/02/22-rdf-syntax-ns#}Description"

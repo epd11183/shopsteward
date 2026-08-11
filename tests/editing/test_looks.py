@@ -45,9 +45,7 @@ def test_resolve_named_look_does_not_call_llm():
 def test_resolve_description_generates_then_reloads():
     c = _conn()
     adapter = FixtureLookAdapter()
-    first = looks.resolve_look(
-        c, USER, "cinematic mexico", adapter, model="m", regenerate=False
-    )
+    first = looks.resolve_look(c, USER, "cinematic mexico", adapter, model="m", regenerate=False)
     reload_adapter = FakeLookAdapter([])
     again = looks.resolve_look(
         c, USER, "cinematic mexico", reload_adapter, model="m", regenerate=False

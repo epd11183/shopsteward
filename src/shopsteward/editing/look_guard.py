@@ -29,8 +29,14 @@ def sanitize_look(profile: LookProfile, knobs: dict) -> LookVerdict:
     if contrast_tone > knobs.get("max_contrast_tone", 140):
         return LookVerdict(ok=False, reason=f"contrast+tone {contrast_tone} over cap")
 
-    presence = (abs(profile.clarity) + abs(profile.dehaze) + abs(profile.texture)
-                + abs(profile.highlights) + abs(profile.whites) + abs(profile.blacks))
+    presence = (
+        abs(profile.clarity)
+        + abs(profile.dehaze)
+        + abs(profile.texture)
+        + abs(profile.highlights)
+        + abs(profile.whites)
+        + abs(profile.blacks)
+    )
     if presence > knobs.get("max_presence_load", 200):
         return LookVerdict(ok=False, reason=f"presence load {presence} over cap")
 

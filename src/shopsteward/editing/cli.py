@@ -164,10 +164,17 @@ def run(
         guard = load_look_guard()
         try:
             report = run_edit(
-                conn, DEFAULT_USER_ID, Path(path), look,
-                decoder=_default_decoder(), look_adapter=adapter,
-                model=llm.get("model", model), knobs=load_correction_knobs(),
-                regenerate=regenerate, overwrite=overwrite, batch_lock=batch_lock,
+                conn,
+                DEFAULT_USER_ID,
+                Path(path),
+                look,
+                decoder=_default_decoder(),
+                look_adapter=adapter,
+                model=llm.get("model", model),
+                knobs=load_correction_knobs(),
+                regenerate=regenerate,
+                overwrite=overwrite,
+                batch_lock=batch_lock,
                 guard_knobs=guard if is_live else None,
                 soft_cap_usd=llm.get("monthly_soft_cap_usd") if is_live else None,
                 fallback_look=guard.get("fallback_look", "bright-and-true"),
@@ -209,9 +216,15 @@ def look_preview(
         guard = load_look_guard()
         try:
             out = run_preview(
-                conn, DEFAULT_USER_ID, Path(sample_dir), look, against=against,
-                decoder=_default_decoder(), look_adapter=adapter,
-                model=llm.get("model", "fixture"), knobs=load_correction_knobs(),
+                conn,
+                DEFAULT_USER_ID,
+                Path(sample_dir),
+                look,
+                against=against,
+                decoder=_default_decoder(),
+                look_adapter=adapter,
+                model=llm.get("model", "fixture"),
+                knobs=load_correction_knobs(),
                 looks_dir=LOOKS_DIR,
                 guard_knobs=guard if is_live else None,
                 soft_cap_usd=llm.get("monthly_soft_cap_usd") if is_live else None,
@@ -221,7 +234,9 @@ def look_preview(
         except (LookCostCapError, LookParseError) as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(1) from exc
-        typer.echo(f"preview: candidate={out['candidate']} vs {out['against']} "
-                   f"— {out['frames']} frames in {out['dir']}")
+        typer.echo(
+            f"preview: candidate={out['candidate']} vs {out['against']} "
+            f"— {out['frames']} frames in {out['dir']}"
+        )
     finally:
         conn.close()

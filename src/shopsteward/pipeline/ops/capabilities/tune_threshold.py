@@ -42,8 +42,7 @@ def _observation_span(conn: sqlite3.Connection, user_id: int, as_of: date) -> tu
     """(longest days-observed span across the user's listings, listing
     count). (0, 0) with no listings observed yet."""
     rows = conn.execute(
-        "SELECT MIN(day) AS first_day FROM proj_listing_daily WHERE user_id=? "
-        "GROUP BY listing_id",
+        "SELECT MIN(day) AS first_day FROM proj_listing_daily WHERE user_id=? GROUP BY listing_id",
         (user_id,),
     ).fetchall()
     if not rows:

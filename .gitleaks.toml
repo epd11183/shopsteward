@@ -1,0 +1,19 @@
+# gitleaks config for ShopSteward.
+# Extends the default ruleset (so all real secret detections stay on) and adds
+# a narrow allowlist for a single false-positive pattern: autonomy *capability
+# keys* (e.g. "listing.autorenew_off", "ops.tune_threshold", "stub.noop") are
+# dotted lowercase slugs assigned to a field/kwarg named `key`. gitleaks'
+# generic-api-key rule flags them as secrets; they are not. The allowlist regex
+# matches only a `key` token followed shortly by a quoted dotted-lowercase slug,
+# a shape no real high-entropy credential takes -- so real secrets are still caught.
+title = "ShopSteward gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Autonomy capability keys are dotted lowercase slugs, not secrets"
+regexTarget = "line"
+regexes = [
+  '''\bkey\b.{0,12}["'][a-z][a-z0-9_]*(\.[a-z0-9_]+)+["']''',
+]

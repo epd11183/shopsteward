@@ -40,16 +40,33 @@ def run_edit(
     #    sidecar is written, so a batch is never half-graded.
     looks.seed(conn, user_id, _looks_dir())
     look = looks.resolve_look(
-        conn, user_id, look_arg, look_adapter, model=model, regenerate=regenerate,
-        guard_knobs=guard_knobs, soft_cap_usd=soft_cap_usd,
-        fallback_look=fallback_look, month_prefix=month_prefix,
+        conn,
+        user_id,
+        look_arg,
+        look_adapter,
+        model=model,
+        regenerate=regenerate,
+        guard_knobs=guard_knobs,
+        soft_cap_usd=soft_cap_usd,
+        fallback_look=fallback_look,
+        month_prefix=month_prefix,
     )
 
     edit_job_id = str(uuid.uuid4())
     report = EditReport(edit_job_id=edit_job_id, look=look.name)
-    append(conn, Event(user_id=user_id, type="editjob.started",
-                       payload={"edit_job_id": edit_job_id, "path": str(path), "look": look.name,
-                                "batch_lock": batch_lock}))
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="editjob.started",
+            payload={
+                "edit_job_id": edit_job_id,
+                "path": str(path),
+                "look": look.name,
+                "batch_lock": batch_lock,
+            },
+        ),
+    )
 
     # Ingest for event-sourced tracking (identity, exif, dedup bookkeeping);
     # the edit pass itself processes every RAW physically present in the
@@ -66,9 +83,14 @@ def run_edit(
             corrections[str(rp)] = analyze_raw(img, knobs)
         except Exception as exc:  # noqa: BLE001 - decode errors are per-frame, non-fatal
             report.failed += 1
-            append(conn, Event(user_id=user_id, type="sidecar.failed",
-                               payload={"edit_job_id": edit_job_id, "raw_path": str(rp),
-                                        "error": repr(exc)}))
+            append(
+                conn,
+                Event(
+                    user_id=user_id,
+                    type="sidecar.failed",
+                    payload={"edit_job_id": edit_job_id, "raw_path": str(rp), "error": repr(exc)},
+                ),
+            )
 
     # batch_lock: consistent exposure/shadow across a burst. WB is always As Shot,
     # so nothing WB to lock.
@@ -87,23 +109,43 @@ def run_edit(
         except OSError as exc:
             report.failed += 1
             report.processed -= 1  # not a completed process attempt
-            append(conn, Event(user_id=user_id, type="sidecar.failed",
-                               payload={"edit_job_id": edit_job_id, "raw_path": str(rp),
-                                        "error": repr(exc)}))
+            append(
+                conn,
+                Event(
+                    user_id=user_id,
+                    type="sidecar.failed",
+                    payload={"edit_job_id": edit_job_id, "raw_path": str(rp), "error": repr(exc)},
+                ),
+            )
             continue
         if wrote:
             report.written += 1
             report.sidecar_paths.append(str(rp.with_suffix(".xmp")))
-            append(conn, Event(user_id=user_id, type="sidecar.written",
-                               payload={"edit_job_id": edit_job_id, "raw_path": str(rp)}))
+            append(
+                conn,
+                Event(
+                    user_id=user_id,
+                    type="sidecar.written",
+                    payload={"edit_job_id": edit_job_id, "raw_path": str(rp)},
+                ),
+            )
         else:
             report.skipped_existing += 1
 
-    append(conn, Event(user_id=user_id, type="editjob.completed",
-                       payload={"edit_job_id": edit_job_id, "processed": report.processed,
-                                "written": report.written,
-                                "skipped_existing": report.skipped_existing,
-                                "failed": report.failed}))
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="editjob.completed",
+            payload={
+                "edit_job_id": edit_job_id,
+                "processed": report.processed,
+                "written": report.written,
+                "skipped_existing": report.skipped_existing,
+                "failed": report.failed,
+            },
+        ),
+    )
     return report
 
 
