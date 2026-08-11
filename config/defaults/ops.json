@@ -24,5 +24,19 @@
     "dying": true,
     "shoot_more": true,
     "data_quality": true
+  },
+  "autonomy": {
+    "enabled": false,
+    "daily_action_cap": 10,
+    "per_capability_daily_cap": 5,
+    "weekly_catalog_pct_cap": 0.10,
+    "monthly_spend_cap_usd": 0.00,
+    "proposal_ttl_days": 14,
+    "ladder": {
+      "promote_approvals": 20,
+      "promote_min_days": 14,
+      "t1_executions": 30,
+      "t1_min_days": 30
+    }
   }
 }

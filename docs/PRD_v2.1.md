@@ -97,6 +97,19 @@ that never touches Etsy.
 
 ### 3.2 Non-Goals (v1 release)
 
+> **Amended 2026-08-11 (operator-approved).** Autonomous AI revenue management
+> (post-publish shop operations) is designated a **v2 program (M8)**, with its
+> minimum-viable slice **M8a** approved for build: the autonomy chassis, one
+> narrow objective (revenue per active listing), and an analytics→tuning
+> feedback loop as a T2 proposal. This resolves the prior contradiction between
+> this section and the requested "AI as shop owner" scope (flagged in
+> `docs/designs/2026-08-03-m8-autonomous-operations-draft.md` §0(c)). The
+> customer-facing items below (order management, customer service, buyer
+> messaging) remain **out of scope and un-automatable** — confirmed against live
+> Etsy/Meta policy in `docs/policy/2026-08-11-autonomy-platform-policy.md`
+> (no API exists, or it is affirmatively barred). Spec:
+> `docs/designs/2026-08-11-m8a-autonomy-spec.md`.
+
 - Full automation of artistic edit decisions — the finishing pass is
   deliberate and stays for hero mode.
 - Multi-tenant SaaS deployment. The schema keeps `user_id` foreign keys, but
