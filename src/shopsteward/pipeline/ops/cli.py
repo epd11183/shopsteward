@@ -36,7 +36,12 @@ gap-fill step 2) unconditionally against the OFFLINE `build_print_file_host
 `print_file_hosted` stop, never Gelato/Etsy, so it needs no `--live-autonomy`
 gate at all. The resulting reprint POD draft reaches Gate 3 (and any live
 Gelato/Etsy call) only when the operator next runs the existing, separately
-gated `shop build` link step."""
+gated `shop build` link step.
+
+`ops run`/`approve`/`undo` also register `social.caption_draft` (M8b slice
+6) unconditionally -- it holds NO adapter at all (execute() only ever
+appends `social.caption_drafted`; no Meta/IG/FB call of any kind), so it is
+never gated on `--live-autonomy` either."""
 
 import os
 from typing import Annotated
@@ -173,6 +178,7 @@ def run_cmd(
     )
     from shopsteward.pipeline.ops import config as ops_config
     from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
+    from shopsteward.pipeline.ops.capabilities.caption_draft import SocialCaptionDraft
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
     from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
     from shopsteward.pipeline.ops.capabilities.reprice import ListingReprice
@@ -199,6 +205,9 @@ def run_cmd(
     # Always the offline print-file host -- this capability's execute() never
     # reaches Gelato/Etsy, so it is never gated on --live-autonomy.
     register(ListingGapfillReprint(build_print_file_host(live=False)))
+    # No adapter at all -- execute() only ever appends an event, so this is
+    # never gated on --live-autonomy either (no Meta/IG/FB call anywhere).
+    register(SocialCaptionDraft())
 
     db = db_path()
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -356,6 +365,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
     from shopsteward.pipeline.listings.pod.factory import build_print_file_host
     from shopsteward.pipeline.listings.push import build_etsy_write_adapter
     from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
+    from shopsteward.pipeline.ops.capabilities.caption_draft import SocialCaptionDraft
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
     from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
     from shopsteward.pipeline.ops.capabilities.reprice import ListingReprice
@@ -372,6 +382,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
     register(ListingDeactivate(adapter))
     register(OpsTuneThreshold())
     register(ListingGapfillReprint(build_print_file_host(live=False)))
+    register(SocialCaptionDraft())
 
 
 @ops_app.command("approve")
