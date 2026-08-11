@@ -1,8 +1,15 @@
 """`shopsteward ops brief`: the read-only shop brief (M8a slice 1, design
 §6/§9), plus the autonomy chassis verbs added in PR1 (M8a spec §3):
-`run`/`halt`/`resume`/`status`. `approve`/`reject`/`undo` are CLI verbs for
-PR3 -- the runner functions they call (runner.approve_action,
-.reject_action, .undo_action) already exist and are unit-tested here.
+`run`/`halt`/`resume`/`status`, and the operator surface added in PR3 (M8a
+spec §8 PR3): `approve`/`reject`/`undo`, wiring runner.approve_action/
+.reject_action/.undo_action (already unit-tested against the runner
+directly in test_e2e_autonomy.py/test_autorenew_capability.py).
+
+`ops approve`/`ops undo` EXECUTE a capability (approve runs the governor
+then cap.execute(); undo runs cap.undo()) -- both are adapter-gated exactly
+like `ops run`: FakeEtsyWriteAdapter unless --live-autonomy is passed AND
+live_autonomy_open() is true. `ops reject` never executes anything, so it
+needs no adapter and no gate.
 
 `ops config apply` mirrors `pod config apply` (pod/cli.py) exactly: without
 it, editing config/defaults/ops.json on disk has no effect on what
@@ -218,5 +225,163 @@ def status() -> None:
                 f"rejections={st.rejections} undos={st.undos} executions={st.executions} "
                 f"tier_since={st.tier_since}"
             )
+    finally:
+        conn.close()
+
+
+def _register_autorenew(live_autonomy: bool) -> None:
+    """Shared by `approve`/`undo`: same fake-vs-live construction as `ops
+    run` (module docstring). Registers into the module-global REGISTRY so
+    approve_action/undo_action can look the capability up by key."""
+    from shopsteward.pipeline.listings.push import build_etsy_write_adapter
+    from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
+    from shopsteward.pipeline.ops.registry import register
+
+    adapter = build_etsy_write_adapter(live=live_autonomy)
+    if not live_autonomy:
+        typer.echo("offline (fake adapter) -- no live Etsy calls will be made.")
+    register(ListingAutorenewOff(adapter))
+
+
+@ops_app.command("approve")
+def approve_cmd(
+    action_id: Annotated[str, typer.Argument(help="action_id from `ops brief`'s NEEDS YOU")],
+    live_autonomy: Annotated[
+        bool,
+        typer.Option(
+            "--live-autonomy/--no-live-autonomy", help="Permit real (non-fake) capability writes"
+        ),
+    ] = False,
+) -> None:
+    """Operator approval of a T2 proposal: runs it through the governor and,
+    if approved, executes it (draft §2.4 -- approval is a request to
+    execute, not a bypass of the caps). EXECUTES -> adapter-gated exactly
+    like `ops run`."""
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.core.projections import rebuild as rebuild_core
+    from shopsteward.pipeline.live_gate import live_autonomy_error, live_autonomy_open
+    from shopsteward.pipeline.ops import config as ops_config
+    from shopsteward.pipeline.ops.projections import rebuild_ops
+    from shopsteward.pipeline.ops.registry import REGISTRY
+    from shopsteward.pipeline.ops.runner import approve_action
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    if live_autonomy and not live_autonomy_open():
+        typer.secho(live_autonomy_error(), fg="red")
+        raise typer.Exit(code=1)
+
+    _register_autorenew(live_autonomy)
+
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        ops_config.seed(conn, DEFAULT_USER_ID)
+        rebuild_core(conn)
+        rebuild_ops(conn)
+        cfg = ops_config.get_ops_config(conn, DEFAULT_USER_ID)
+        try:
+            report = approve_action(
+                conn, DEFAULT_USER_ID, action_id, list(REGISTRY.values()), cfg=cfg
+            )
+        except KeyError as exc:
+            typer.secho(f"approve failed: {exc}", fg="red")
+            raise typer.Exit(code=1) from exc
+
+        if report.executed:
+            typer.echo(f"approved and executed: {action_id}")
+        elif report.failed:
+            typer.echo(f"approved but execution failed: {action_id}")
+        elif report.refused:
+            typer.echo(f"approved but refused by the governor: {action_id}")
+        else:
+            typer.echo(f"no-op: {action_id}")
+    finally:
+        conn.close()
+
+
+@ops_app.command("reject")
+def reject_cmd(
+    action_id: Annotated[str, typer.Argument(help="action_id from `ops brief`'s NEEDS YOU")],
+) -> None:
+    """Operator rejection of a T2 proposal: records action.rejected, demotes
+    the capability one tier, and resets its ladder counters (draft §2.4,
+    asymmetric/immediate). Never executes anything -- no adapter, no
+    live-write gate."""
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.core.projections import rebuild as rebuild_core
+    from shopsteward.pipeline.ops import config as ops_config
+    from shopsteward.pipeline.ops.projections import rebuild_ops
+    from shopsteward.pipeline.ops.runner import reject_action
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        ops_config.seed(conn, DEFAULT_USER_ID)
+        rebuild_core(conn)
+        rebuild_ops(conn)
+        try:
+            reject_action(conn, DEFAULT_USER_ID, action_id)
+        except KeyError as exc:
+            typer.secho(f"reject failed: {exc}", fg="red")
+            raise typer.Exit(code=1) from exc
+        typer.echo(f"rejected: {action_id}")
+    finally:
+        conn.close()
+
+
+@ops_app.command("undo")
+def undo_cmd(
+    action_id: Annotated[str, typer.Argument(help="action_id from `ops brief`'s DONE")],
+    live_autonomy: Annotated[
+        bool,
+        typer.Option(
+            "--live-autonomy/--no-live-autonomy", help="Permit real (non-fake) capability writes"
+        ),
+    ] = False,
+) -> None:
+    """Undo a previously-executed action: runs cap.undo(), records
+    action.undone, and demotes the capability one tier with counters reset
+    (runner.undo_action). EXECUTES cap.undo() -> adapter-gated exactly like
+    `ops run`/`ops approve`."""
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.core.events import read_all
+    from shopsteward.core.projections import rebuild as rebuild_core
+    from shopsteward.pipeline.live_gate import live_autonomy_error, live_autonomy_open
+    from shopsteward.pipeline.ops import config as ops_config
+    from shopsteward.pipeline.ops.projections import rebuild_ops
+    from shopsteward.pipeline.ops.registry import REGISTRY
+    from shopsteward.pipeline.ops.runner import undo_action
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    if live_autonomy and not live_autonomy_open():
+        typer.secho(live_autonomy_error(), fg="red")
+        raise typer.Exit(code=1)
+
+    _register_autorenew(live_autonomy)
+
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        ops_config.seed(conn, DEFAULT_USER_ID)
+        rebuild_core(conn)
+        rebuild_ops(conn)
+        try:
+            undo_action(conn, DEFAULT_USER_ID, action_id, list(REGISTRY.values()))
+        except KeyError as exc:
+            typer.secho(f"undo failed: {exc}", fg="red")
+            raise typer.Exit(code=1) from exc
+
+        restored_to = None
+        for e in read_all(conn, "action.undone"):
+            if e.user_id == DEFAULT_USER_ID and e.payload.get("action_id") == action_id:
+                restored_to = e.payload["restored_to"]
+        typer.echo(f"undone: {action_id} -- restored to {restored_to}")
     finally:
         conn.close()

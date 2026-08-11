@@ -278,3 +278,60 @@ def test_promotion_t2_to_t1_fires_after_enough_approvals_and_elapsed_days(conn):
 
     state = capability_states(conn, USER_ID)["stub.promotable"]
     assert state.tier == Tier.NOTIFY
+
+
+def test_re_approving_an_already_executed_action_is_a_noop(conn):
+    """Regression: approve_action had no terminal-state guard, so a second
+    `ops approve <id>` on an already-executed action appended a SECOND
+    action.approved{operator}/action.executed, double-counting the ladder's
+    approvals counter (and could self-promote the capability on operator
+    replay)."""
+    cfg = _cfg()
+    cap = StubCapability(
+        key="stub.dead_listing", max_tier=Tier.NOTIFY, targets={"111": {"on": True}}
+    )
+    run(conn, USER_ID, cfg, [cap], today=TODAY)
+    action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
+
+    first = approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
+    second = approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
+
+    assert first.executed == 1
+    assert second.executed == 0
+    assert second.skipped_idempotent == 1
+    assert cap.execute_calls == ["111"]  # not called twice
+
+    executed = [e for e in read_all(conn, "action.executed") if e.payload["action_id"] == action_id]
+    approved = [
+        e
+        for e in read_all(conn, "action.approved")
+        if e.payload["action_id"] == action_id and e.payload["by"] == "operator"
+    ]
+    assert len(executed) == 1
+    assert len(approved) == 1
+
+    from shopsteward.pipeline.ops.projections import capability_states
+
+    assert capability_states(conn, USER_ID)["stub.dead_listing"].approvals == 1
+
+
+def test_re_undoing_an_already_undone_action_is_a_noop(conn):
+    """Regression: undo_action had no terminal-state guard, so a second
+    `ops undo <id>` re-ran cap.undo() and appended a SECOND action.undone +
+    a SECOND capability.demoted (double-demotion)."""
+    cfg = _cfg()
+    cap = StubCapability(
+        key="stub.dead_listing", max_tier=Tier.NOTIFY, targets={"111": {"on": True}}
+    )
+    run(conn, USER_ID, cfg, [cap], today=TODAY)
+    action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
+    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
+
+    undo_action(conn, USER_ID, action_id, [cap])
+    undo_action(conn, USER_ID, action_id, [cap])  # second call: no-op
+
+    assert cap.undo_calls == ["111"]  # not called twice
+    undone = [e for e in read_all(conn, "action.undone") if e.payload["action_id"] == action_id]
+    assert len(undone) == 1
+    demoted = [e for e in read_all(conn, "capability.") if e.type == "capability.demoted"]
+    assert len(demoted) == 1  # not double-demoted

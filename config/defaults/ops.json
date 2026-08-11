@@ -23,7 +23,8 @@
     "selling": true,
     "dying": true,
     "shoot_more": true,
-    "data_quality": true
+    "data_quality": true,
+    "autonomy": true
   },
   "autonomy": {
     "enabled": false,
