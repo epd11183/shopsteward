@@ -28,7 +28,15 @@ regardless of what is registered.
 spec §4) unconditionally -- it holds no adapter (pure `conn` reads/writes of
 `opsconfig.updated` events), so it is never gated on `--live-autonomy` and
 coexists in the registry alongside `listing.autorenew_off` regardless of
-that flag."""
+that flag.
+
+`ops run`/`approve`/`undo` also register `listing.gapfill_reprint` (M8b,
+gap-fill step 2) unconditionally against the OFFLINE `build_print_file_host
+(live=False)` -- its `execute()` only reaches `build_pod_reprint`'s local
+`print_file_hosted` stop, never Gelato/Etsy, so it needs no `--live-autonomy`
+gate at all. The resulting reprint POD draft reaches Gate 3 (and any live
+Gelato/Etsy call) only when the operator next runs the existing, separately
+gated `shop build` link step."""
 
 import os
 from typing import Annotated
@@ -156,6 +164,7 @@ def run_cmd(
     live adapter constructed on the default path."""
     from shopsteward.core.db import connect, migrate
     from shopsteward.core.projections import rebuild as rebuild_core
+    from shopsteward.pipeline.listings.pod.factory import build_print_file_host
     from shopsteward.pipeline.listings.push import build_etsy_write_adapter
     from shopsteward.pipeline.live_gate import (
         live_autonomy_error,
@@ -165,6 +174,7 @@ def run_cmd(
     from shopsteward.pipeline.ops import config as ops_config
     from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
+    from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
     from shopsteward.pipeline.ops.capabilities.reprice import ListingReprice
     from shopsteward.pipeline.ops.capabilities.seo_edit import ListingSeoEdit
     from shopsteward.pipeline.ops.capabilities.tune_threshold import OpsTuneThreshold
@@ -186,6 +196,9 @@ def run_cmd(
     register(ListingSeoEdit(adapter))
     register(ListingDeactivate(adapter))
     register(OpsTuneThreshold())  # no adapter -- registers regardless of --live-autonomy
+    # Always the offline print-file host -- this capability's execute() never
+    # reaches Gelato/Etsy, so it is never gated on --live-autonomy.
+    register(ListingGapfillReprint(build_print_file_host(live=False)))
 
     db = db_path()
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -340,9 +353,11 @@ def _register_autorenew(live_autonomy: bool) -> None:
     approve_action/undo_action can look the capability up by key. Also
     registers `ops.tune_threshold`, which holds no adapter and so is never
     gated on `live_autonomy`."""
+    from shopsteward.pipeline.listings.pod.factory import build_print_file_host
     from shopsteward.pipeline.listings.push import build_etsy_write_adapter
     from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
+    from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
     from shopsteward.pipeline.ops.capabilities.reprice import ListingReprice
     from shopsteward.pipeline.ops.capabilities.seo_edit import ListingSeoEdit
     from shopsteward.pipeline.ops.capabilities.tune_threshold import OpsTuneThreshold
@@ -356,6 +371,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
     register(ListingSeoEdit(adapter))
     register(ListingDeactivate(adapter))
     register(OpsTuneThreshold())
+    register(ListingGapfillReprint(build_print_file_host(live=False)))
 
 
 @ops_app.command("approve")
@@ -489,7 +505,10 @@ def undo_cmd(
         rebuild_ops(conn)
         try:
             undo_action(conn, DEFAULT_USER_ID, action_id, list(REGISTRY.values()))
-        except KeyError as exc:
+        except (KeyError, ValueError) as exc:
+            # KeyError: unknown action_id/capability. ValueError: a
+            # no-undo capability (runner.undo_action's guard) -- both are
+            # clean, non-zero-exit messages, never a traceback.
             typer.secho(f"undo failed: {exc}", fg="red")
             raise typer.Exit(code=1) from exc
 
