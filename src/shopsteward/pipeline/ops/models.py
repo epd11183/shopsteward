@@ -1,25 +1,30 @@
-"""Pydantic v2 boundary models for M8a slice 1: ops.json config (schema
-shopsteward.ops/1, ListingConfig/PodConfig alias convention) and the pure
-analytics/brief output shapes (design §6/§7/§9 slice 1).
-
-No autonomy-chassis models here (Tier, ProposedAction, CapabilitySpec,
-Brief section toggles for NEEDS YOU/DONE OVERNIGHT/REFUSED/AUTONOMY) --
-those need the registry/governor/runner from slices 2+ and are explicitly
-out of scope for slice 1 (design §9, §7's exclusion list)."""
+"""Pydantic v2 boundary models for M8a slice 1 (ops.json config, analytics/
+brief output shapes -- design §6/§7/§9 slice 1) plus the autonomy-chassis
+models added in PR1 of the chassis slice (M8a spec §3/§8.1): Tier,
+ProposedAction, ExecutionResult, RefusalReason, CapabilityState. The
+Capability Protocol itself lives in registry.py, not here (it needs
+sqlite3.Connection in its method signatures, which models.py -- a pure
+boundary-shape module -- has no other reason to import)."""
 
 from datetime import date
+from enum import IntEnum, StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
     "Brief",
+    "CapabilityState",
     "DeadListing",
+    "ExecutionResult",
     "ListingSales",
     "OpsConfig",
     "ProductTypeStat",
+    "ProposedAction",
+    "RefusalReason",
     "RevenueWindow",
     "ShootMoreSuggestion",
     "SizeStat",
+    "Tier",
     "TrendingListing",
     "ViewedNotSold",
 ]
@@ -47,6 +52,26 @@ class _OpsBriefSections(BaseModel):
     data_quality: bool = True
 
 
+class _OpsLadder(BaseModel):
+    promote_approvals: int = Field(gt=0)
+    promote_min_days: int = Field(gt=0)
+    t1_executions: int = Field(gt=0)
+    t1_min_days: int = Field(gt=0)
+
+
+class _OpsAutonomy(BaseModel):
+    # Chassis master switch + caps (M8a spec §3, draft §5). enabled and
+    # monthly_spend_cap_usd MUST default false/0.00 -- nothing auto-executes,
+    # nothing spends, until the operator opts in in config.
+    enabled: bool = False
+    daily_action_cap: int = Field(gt=0)
+    per_capability_daily_cap: int = Field(gt=0)
+    weekly_catalog_pct_cap: float = Field(gt=0, le=1)
+    monthly_spend_cap_usd: float = Field(ge=0)
+    proposal_ttl_days: int = Field(gt=0)
+    ladder: _OpsLadder
+
+
 class OpsConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -61,6 +86,70 @@ class OpsConfig(BaseModel):
     # substring match => product_type "unknown" (never guessed).
     product_type_keywords: dict[str, list[str]]
     brief_sections: _OpsBriefSections
+    autonomy: _OpsAutonomy
+
+
+# --- autonomy chassis (PR1) --------------------------------------------------
+
+
+class Tier(IntEnum):
+    """T0..T3 == 0..3. LOWER number is MORE autonomous (draft §2.1/§2.4):
+    promotion moves the number down (PROPOSE=2 -> NOTIFY=1 -> AUTO=0)."""
+
+    AUTO = 0
+    NOTIFY = 1
+    PROPOSE = 2
+    OPERATOR = 3
+
+
+class ProposedAction(BaseModel):
+    action_id: str  # sha256(capability|target_id|inputs_hash|ops_config_hash|day)
+    capability: str
+    target_type: str
+    target_id: str  # str for uniformity (e.g. listing_id as str)
+    tier: Tier  # effective tier at proposal time
+    reason: str  # one human sentence (draft §2.3 invariant 4)
+    inputs_hash: str
+    estimated_cost_usd: float = 0.0
+    undo_available: bool
+    expires_at: str  # ISO date (proposed day + proposal_ttl_days)
+
+
+class ExecutionResult(BaseModel):
+    before: dict
+    after: dict
+    cost_usd: float = 0.0
+    duration_ms: int = 0
+
+
+class RefusalReason(StrEnum):
+    """Exact wire strings (draft §5); governor precedence order matches
+    this declaration order top-to-bottom."""
+
+    HALTED = "halted"
+    EXPIRED = "expired"
+    POLICY_UNVERIFIED = "policy_unverified"
+    PRECONDITION = "precondition"
+    BUDGET = "budget"
+    DAILY_CAP = "daily_cap"
+    PER_CAPABILITY_CAP = "per_capability_cap"
+    PORTFOLIO_CAP = "portfolio_cap"
+
+
+class CapabilityState(BaseModel):
+    """The promotion-ladder state for one capability (folds into
+    proj_capability_state). Never constructed by hand outside
+    projections.capability_states()/tiers.py tests -- it is derived from
+    the event log, never written directly."""
+
+    capability: str
+    tier: Tier = Tier.PROPOSE
+    approvals: int = 0
+    rejections: int = 0
+    undos: int = 0
+    executions: int = 0
+    tier_since: str  # ISO date
+    last_action_at: str | None = None
 
 
 # --- analytics/brief output (pure, no LLM, no network) ----------------------

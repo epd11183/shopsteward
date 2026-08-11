@@ -167,6 +167,36 @@ MISSING (verified by grep + in-code "slices 2+" docstrings):
   SEO re-tag, renew, pause-underperformer, gap-fill, A/B copy.
 - **R15. Promotion loop** — wire the Meta/IG adapter (blocked on policy Qs).
 
+## Remediation status update (2026-08-11)
+
+- **R1 (Gelato price)** — ✅ resolved by correcting the model: verified Gelato's
+  `create-from-template` has no price field; retail price is a Gelato *template*
+  setting. Our margin-cleared price is a recommendation surfaced by
+  `pod build --dry-run`; misleading "price at create" comments fixed. (PR #28)
+- **R2 / R3 (white balance/temperature + tint)** — ✅ colorimetric auto-WB/tint
+  (McCamy CCT + Planckian tint), written as absolute `crs:Temperature`/`crs:Tint`,
+  **default-OFF** + per-camera calibration + Lightroom verify; dead nudge path
+  removed. (PR #29)
+- **R6 (store_id placeholder)** — ✅ store_id via `GELATO_STORE_ID`, enforced at
+  the live gate; `pod template show` helper added to fill canvas variant IDs. (PR #28)
+- Canvas `template_id` filled (`f7a159e5…`).
+- **Still open:** R4/R5/R7 (live Etsy / Gelato+R2 / Lightroom smokes — operator
+  credentials), R8 (fill canvas/canvas_portrait variant IDs via `pod template
+  show`), and P3/R10–R15 (autonomy program — v2).
+- **R9 (active-only listing visibility) — ✅ CORRECTION (2026-08-11):** the
+  "active-only" finding was **stale**. `adapters/etsy/live.py:66-75` already uses
+  `getListingsByShop` over `("active","expired")` (on `main` since `a385595`),
+  and `proj_listing_daily` records per-listing `state`. Active+expired is exactly
+  what the M8a auto-renew objective and `dead_listings()` need; draft/sold_out/
+  inactive are unused by any M8a capability. **R9 is closed as already-resolved
+  for M8a** (spec `docs/designs/2026-08-11-m8a-autonomy-spec.md` §6); widen
+  `_LISTING_STATES` only if a later capability requires it (YAGNI).
+- **P3/R10 (approve + scope M8a) — ✅ 2026-08-11:** operator-approved as a v2
+  program; PRD §3.2 amended. Platform policy verified
+  (`docs/policy/2026-08-11-autonomy-platform-policy.md`): prohibited actions
+  (coupons, Etsy Ads, buyer messaging, refunds, review responses/solicitation,
+  relist-churn) cut; Meta deferred behind App Review + Business Verification.
+
 ## Bottom line
 Pillars 1–4 are **built and fixture-green**; the real blockers are (a) one POD
 pricing defect (R1), (b) two editing color-correction gaps the requirement names

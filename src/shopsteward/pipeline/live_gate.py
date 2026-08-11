@@ -101,6 +101,32 @@ def live_etsy_write_error() -> str:
     )
 
 
+def live_autonomy_open() -> bool:
+    """True iff SHOPSTEWARD_LIVE_AUTONOMY=1, ETSY_API_KEY is set, and Etsy
+    tokens are on disk with the listings_w scope (M8a spec §3/§9 -- same
+    shape as live_etsy_write_open(), the write path the autonomy runner
+    ultimately calls through). PR1 registers no real capability, so nothing
+    exercises this gate's true-path yet; it exists so `ops run
+    --live-autonomy` refuses correctly from day one."""
+    if os.environ.get("SHOPSTEWARD_LIVE_AUTONOMY") != "1":
+        return False
+    if not os.environ.get("ETSY_API_KEY"):
+        return False
+
+    from shopsteward.adapters.etsy.auth import EtsyTokenStore
+
+    tokens = EtsyTokenStore().load()
+    return tokens is not None and "listings_w" in tokens.scopes
+
+
+def live_autonomy_error() -> str:
+    return (
+        "Live autonomous execution is gated on operator approval (PRD §8.4): set "
+        "SHOPSTEWARD_LIVE_AUTONOMY=1 and ETSY_API_KEY, run `shopsteward etsy "
+        "auth` with the listings_w scope, then re-run with --live-autonomy."
+    )
+
+
 _R2_ENV_VARS = (
     "CLOUDFLARE_R2_KEY",
     "CLOUDFLARE_R2_SECRET",
