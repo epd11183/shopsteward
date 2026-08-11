@@ -325,3 +325,63 @@ def test_force_never_re_hosts_a_published_draft(conn, tmp_path):
 
     assert report.drafts_built == 2  # poster + canvas rebuilt, acrylic (published) left alone
     assert len(host.calls) == 2  # one re-publish per rebuilt draft -- none for acrylic
+
+
+def test_asset_archiving_is_purely_additive_to_pod_build_output(conn, tmp_path):
+    # Source-asset head (design 2026-08-11-source-asset-head): the archive is
+    # a side table. Whether asset_store.enabled is True (default) or False,
+    # proj_listing_drafts must come out byte-identical -- the archive never
+    # changes the existing draft/push/Gate 3 outputs.
+    from shopsteward.pipeline.listings import asset_store_config
+
+    # Hard guardrail: point BOTH runs' archive root at tmp_path, never the
+    # real `data/`.
+    enabled_cfg = asset_store_config.load_asset_store_config().model_dump(by_alias=True)
+    enabled_cfg["root"] = str(tmp_path / "archive")
+    enabled_path = tmp_path / "enabled_asset_store.json"
+    enabled_path.write_text(json.dumps(enabled_cfg))
+    asset_store_config.apply(conn, USER_ID, enabled_path)
+    rebuild_listings(conn)
+
+    _land(conn, tmp_path, file_id="f1", photo_id="p1", width=_W, height=_H)
+    report_enabled = build_pod_drafts(conn, USER_ID, print_file_host=FakePrintFileHost())
+    rows_enabled = [
+        {k: v for k, v in dict(r).items() if k != "created_at"}
+        for r in conn.execute(
+            "SELECT * FROM proj_listing_drafts WHERE user_id=? ORDER BY draft_id", (USER_ID,)
+        ).fetchall()
+    ]
+
+    conn2 = connect(tmp_path / "t2.db")
+    migrate(conn2)
+    edited = asset_store_config.load_asset_store_config().model_dump(by_alias=True)
+    edited["root"] = str(tmp_path / "archive2")
+    edited["enabled"] = False
+    edited_path = tmp_path / "disabled_asset_store.json"
+    edited_path.write_text(json.dumps(edited))
+    asset_store_config.apply(conn2, USER_ID, edited_path)
+    rebuild_listings(conn2)
+    _land(conn2, tmp_path, file_id="f1", photo_id="p1", width=_W, height=_H)
+    report_disabled = build_pod_drafts(conn2, USER_ID, print_file_host=FakePrintFileHost())
+    rows_disabled = [
+        {k: v for k, v in dict(r).items() if k != "created_at"}
+        for r in conn2.execute(
+            "SELECT * FROM proj_listing_drafts WHERE user_id=? ORDER BY draft_id", (USER_ID,)
+        ).fetchall()
+    ]
+
+    assert report_enabled.drafts_built == report_disabled.drafts_built == 3
+    assert rows_enabled == rows_disabled
+
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM proj_asset_store WHERE user_id=?", (USER_ID,)
+        ).fetchone()["n"]
+        > 0
+    )
+    assert (
+        conn2.execute(
+            "SELECT COUNT(*) AS n FROM proj_asset_store WHERE user_id=?", (USER_ID,)
+        ).fetchone()["n"]
+        == 0
+    )

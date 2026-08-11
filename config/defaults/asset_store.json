@@ -1,0 +1,6 @@
+{
+  "schema": "shopsteward.asset_store/1",
+  "name": "default",
+  "root": "data/asset_store",
+  "enabled": true
+}

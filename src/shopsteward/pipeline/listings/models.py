@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from shopsteward.adapters.copy.interface import CopyInputs
 
 __all__ = [
+    "AssetStoreConfig",
     "BuildReport",
     "CopyInputs",
     "Economics",
@@ -80,6 +81,22 @@ class ListingConfig(BaseModel):
     image_order: list[str]
     image_cap: int
     etsy: _ListingConfigEtsy
+
+
+class AssetStoreConfig(BaseModel):
+    """Config for the managed local archive (source-asset head, design
+    2026-08-11): where the untouched original master bytes are copied so a
+    reprint can resolve them after the landing folder is cleared. `root` is
+    resolved relative to the repo root by asset_store_config.resolve_root --
+    tests override it to a tmp dir, NEVER the real `data/` (CLAUDE.md hard
+    guardrail)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_version: str = Field(alias="schema")
+    name: str
+    root: str
+    enabled: bool
 
 
 class ListingImage(BaseModel):
