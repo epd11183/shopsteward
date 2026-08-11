@@ -36,6 +36,8 @@ from datetime import date
 from shopsteward.adapters.printfile.fake import FakePrintFileHost
 from shopsteward.adapters.printfile.interface import PrintFileHost
 from shopsteward.core.events import Event, append
+from shopsteward.pipeline.listings import archive as asset_archive
+from shopsteward.pipeline.listings import asset_store_config
 from shopsteward.pipeline.listings import config as listing_config
 from shopsteward.pipeline.listings.models import PricingRules
 from shopsteward.pipeline.listings.pod import catalog, printfile
@@ -237,6 +239,7 @@ def build_pod_drafts(
 ) -> PodBuildReport:
     pod_config.seed(conn, user_id)
     listing_config.seed(conn, user_id)
+    asset_store_config.seed(conn, user_id)
     rebuild_pipeline(conn)
     rebuild_pod_config(conn)
     rebuild_listings(conn)
@@ -248,6 +251,7 @@ def build_pod_drafts(
 
     cfg_hash = pod_config.pod_config_hash(cfg)
     listing_cfg = listing_config.get_config(conn, user_id)
+    asset_cfg = asset_store_config.get_asset_store_config(conn, user_id)
     host = print_file_host if print_file_host is not None else FakePrintFileHost()
     host_name = _host_name(host)
     cost_stale = _cost_stale(cfg)
@@ -396,6 +400,57 @@ def build_pod_drafts(
                     },
                 ),
             )
+
+            # Source-asset head (design 2026-08-11-source-asset-head, slice 2):
+            # archive the UNTOUCHED original master (never the sellable
+            # re-encode below) before it is read for hosting -- a pure
+            # side-archive, config-gated + idempotent, so this never changes
+            # the draft/push/Gate 3 outputs that follow. Only archives when a
+            # real photo_id is known -- resolve_source and the retrieval
+            # fallback both key on photo_id (never photo_key, an unmatched
+            # manual drop's landing_file_id), so archiving under photo_key
+            # would be unreachable dead storage.
+            if asset_cfg.enabled:
+                source_row = printfile.resolve_print_source_row(
+                    conn, user_id, landing_file_id, cfg.print_file.prefer
+                )
+                if source_row["photo_id"] is not None:
+                    try:
+                        asset_archive.archive_master(
+                            conn,
+                            user_id,
+                            asset_cfg,
+                            photo_id=source_row["photo_id"],
+                            source_landing_file_id=landing_file_id,
+                            path=source_row["path"],
+                            format=source_row["format"],
+                            width=source_row["width"],
+                            height=source_row["height"],
+                        )
+                    except OSError as exc:
+                        # The archive must never break the operator's actual
+                        # listing build (disk-full/permission on mkdir/
+                        # copyfile) -- record it and continue; a later
+                        # reprint just sees archived=False and reports "not
+                        # reprintable". No path/filename in the payload
+                        # (OSError.strerror, never str(exc), which can embed
+                        # the destination path).
+                        append(
+                            conn,
+                            Event(
+                                user_id=user_id,
+                                type="asset.archive_failed",
+                                payload={
+                                    "photo_id": source_row["photo_id"],
+                                    "format": source_row["format"],
+                                    "error": (
+                                        f"{type(exc).__name__}: {exc.strerror}"
+                                        if exc.strerror
+                                        else type(exc).__name__
+                                    ),
+                                },
+                            ),
+                        )
 
             data, sellable = printfile.prepare_print_file(
                 conn, user_id, landing_file_id, cfg.print_file.prefer, cfg.print_file.max_bytes

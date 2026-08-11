@@ -54,6 +54,13 @@ Phase C slice 4 (pod/enrich.py) adds listingdraft.enriched/.enrich_failed
 create->poll->link cycle writes) and makes listingdraft.images_selected's
 `sellable_file` payload key optional -- POD enrichment reuses the event for
 its own image plan but has no digital sellable file.
+
+Source-asset head (design 2026-08-11-source-asset-head) adds two tables that
+fold their own event namespaces, independent of proj_listing_drafts:
+proj_asset_store_config (assetstoreconfig.seeded/.updated, asset_store_
+config.py precedent) and proj_asset_store (asset.archived, archive.py) --
+the managed local archive of untouched original masters, keyed by
+(user_id, photo_id, format) so a TIFF+JPEG pair coexists.
 """
 
 import json
@@ -81,6 +88,19 @@ CREATE TABLE proj_listing_drafts (
     variants_json TEXT NOT NULL DEFAULT '[]', unit_cost REAL,
     print_file_sha256 TEXT, print_file_key TEXT,
     PRIMARY KEY (user_id, draft_id)
+);
+DROP TABLE IF EXISTS proj_asset_store_config;
+CREATE TABLE proj_asset_store_config (
+    user_id INTEGER NOT NULL, name TEXT NOT NULL, config_json TEXT NOT NULL,
+    PRIMARY KEY (user_id, name)
+);
+DROP TABLE IF EXISTS proj_asset_store;
+CREATE TABLE proj_asset_store (
+    user_id INTEGER NOT NULL, photo_id TEXT NOT NULL, format TEXT NOT NULL,
+    sha256 TEXT NOT NULL, stored_key TEXT NOT NULL,
+    width INTEGER, height INTEGER, bytes INTEGER NOT NULL,
+    source_landing_file_id TEXT, archived_at TEXT,
+    PRIMARY KEY (user_id, photo_id, format)
 );
 """
 
@@ -342,6 +362,29 @@ def rebuild_listings(conn: sqlite3.Connection) -> None:
                 "UPDATE proj_listing_drafts SET state='publish_failed' "
                 "WHERE user_id=? AND draft_id=?",
                 (e.user_id, p["draft_id"]),
+            )
+
+        elif e.type in ("assetstoreconfig.seeded", "assetstoreconfig.updated"):
+            conn.execute(
+                "INSERT OR REPLACE INTO proj_asset_store_config VALUES (?,?,?)",
+                (e.user_id, p["name"], json.dumps(p["config"])),
+            )
+
+        elif e.type == "asset.archived":
+            conn.execute(
+                "INSERT OR REPLACE INTO proj_asset_store VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    e.user_id,
+                    p["photo_id"],
+                    p["format"],
+                    p["sha256"],
+                    p["stored_key"],
+                    p.get("width"),
+                    p.get("height"),
+                    p["bytes"],
+                    p.get("source_landing_file_id"),
+                    e.created_at,
+                ),
             )
 
     conn.commit()
