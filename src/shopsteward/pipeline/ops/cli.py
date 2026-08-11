@@ -22,7 +22,13 @@ which case it registers the same capability against a
 LiveEtsyWriteAdapter built via `pipeline.listings.push.build_etsy_write_adapter`
 (the M5a write path's own token store/construction, reused rather than
 duplicated). With `autonomy.enabled=false` (the shipped default) it no-ops
-regardless of what is registered."""
+regardless of what is registered.
+
+`ops run`/`approve`/`undo` also register `ops.tune_threshold` (PR4, M8a
+spec §4) unconditionally -- it holds no adapter (pure `conn` reads/writes of
+`opsconfig.updated` events), so it is never gated on `--live-autonomy` and
+coexists in the registry alongside `listing.autorenew_off` regardless of
+that flag."""
 
 from typing import Annotated
 
@@ -103,6 +109,7 @@ def run_cmd(
     from shopsteward.pipeline.live_gate import live_autonomy_error, live_autonomy_open
     from shopsteward.pipeline.ops import config as ops_config
     from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
+    from shopsteward.pipeline.ops.capabilities.tune_threshold import OpsTuneThreshold
     from shopsteward.pipeline.ops.projections import rebuild_ops
     from shopsteward.pipeline.ops.registry import REGISTRY, register
     from shopsteward.pipeline.ops.runner import run
@@ -116,6 +123,7 @@ def run_cmd(
     if not live_autonomy:
         typer.echo("offline (fake adapter) -- no live Etsy calls will be made.")
     register(ListingAutorenewOff(adapter))
+    register(OpsTuneThreshold())  # no adapter -- registers regardless of --live-autonomy
 
     db = db_path()
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -232,15 +240,19 @@ def status() -> None:
 def _register_autorenew(live_autonomy: bool) -> None:
     """Shared by `approve`/`undo`: same fake-vs-live construction as `ops
     run` (module docstring). Registers into the module-global REGISTRY so
-    approve_action/undo_action can look the capability up by key."""
+    approve_action/undo_action can look the capability up by key. Also
+    registers `ops.tune_threshold`, which holds no adapter and so is never
+    gated on `live_autonomy`."""
     from shopsteward.pipeline.listings.push import build_etsy_write_adapter
     from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
+    from shopsteward.pipeline.ops.capabilities.tune_threshold import OpsTuneThreshold
     from shopsteward.pipeline.ops.registry import register
 
     adapter = build_etsy_write_adapter(live=live_autonomy)
     if not live_autonomy:
         typer.echo("offline (fake adapter) -- no live Etsy calls will be made.")
     register(ListingAutorenewOff(adapter))
+    register(OpsTuneThreshold())
 
 
 @ops_app.command("approve")
