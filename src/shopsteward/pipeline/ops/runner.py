@@ -326,6 +326,18 @@ def undo_action(
         # capability or double-demote/reset its ladder counters.
         return
 
+    if not callable(getattr(cap, "undo", None)):
+        # No undo path at all (e.g. listing.gapfill_reprint -- its reversal
+        # is Gate 3, declining to publish the draft). Must never crash with
+        # a bare `None(...)` TypeError; the caller (ops undo CLI) surfaces
+        # this as a clean, non-zero-exit message, same as an unknown
+        # action_id (_find_capability's KeyError precedent) -- no partial
+        # state change, no action.undone.
+        raise ValueError(
+            f"{cap.key} has no undo -- its reversal happens outside the autonomy "
+            "chassis (e.g. decline to publish at Gate 3)."
+        )
+
     executed_before: dict | None = None
     for e in read_all(conn, "action.executed"):
         if e.user_id == user_id and e.payload.get("action_id") == action_id:
