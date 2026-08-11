@@ -28,6 +28,29 @@ def test_ops_brief_after_a_real_fixture_sync(tmp_path, monkeypatch):
     assert "Product mix" in result.output
 
 
+def test_ops_brief_no_narrate_is_byte_identical_to_plain_brief(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHOPSTEWARD_DB", str(tmp_path / "t.db"))
+
+    plain = runner.invoke(app, ["ops", "brief"])
+    explicit = runner.invoke(app, ["ops", "brief", "--no-narrate"])
+    assert plain.exit_code == 0
+    assert explicit.exit_code == 0
+    assert plain.output == explicit.output
+
+
+def test_ops_brief_narrate_with_gate_closed_prints_brief_and_gate_note(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHOPSTEWARD_DB", str(tmp_path / "t.db"))
+    monkeypatch.delenv("SHOPSTEWARD_LIVE_PLANNER", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    result = runner.invoke(app, ["ops", "brief", "--narrate"])
+
+    assert result.exit_code == 0
+    assert "THE SHOP" in result.output
+    assert "SHOPSTEWARD_LIVE_PLANNER" in result.output
+    assert "--narrate" in result.output
+
+
 def test_ops_brief_is_idempotent_and_seeds_config_only_once(tmp_path, monkeypatch):
     monkeypatch.setenv("SHOPSTEWARD_DB", str(tmp_path / "t.db"))
 

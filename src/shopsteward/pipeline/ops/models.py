@@ -49,6 +49,15 @@ class _OpsShootMore(BaseModel):
     max_listing_count: int = Field(gt=0)
 
 
+class _OpsPlanner(BaseModel):
+    # LLM narration of the deterministic Brief (M8b slice 1, design §5) --
+    # OpenRouter-only (PRD §13 decision 36). No spend cap here: narration
+    # reuses the shared llm_ledger monthly soft cap (tuning
+    # vision.monthly_soft_cap_usd), see pipeline/ops/planner.py.
+    model: str
+    est_cost_per_mtok: dict[str, dict[str, float]]
+
+
 class _OpsBriefSections(BaseModel):
     revenue: bool = True
     selling: bool = True
@@ -91,6 +100,7 @@ class OpsConfig(BaseModel):
     # "configuration over code" -- never hardcoded in analytics.py. No
     # substring match => product_type "unknown" (never guessed).
     product_type_keywords: dict[str, list[str]]
+    planner: _OpsPlanner
     brief_sections: _OpsBriefSections
     autonomy: _OpsAutonomy
 

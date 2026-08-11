@@ -1,10 +1,15 @@
-"""Structural + behavioural proof that M8a slice 1 makes zero network calls
-and zero llm.call events (task instructions; design §7's "the brief is SQL
-and a template, not a language model").
+"""Structural + behavioural proof that the DETERMINISTIC brief (M8a slice 1,
+design §7's "the brief is SQL and a template, not a language model") makes
+zero network calls and zero llm.call events.
 
-Static: none of pipeline/ops's own source files import httpx, requests, or
-any adapters package -- there is no transport to call out over in the first
-place, so there is nothing to fake in a test.
+Static: none of pipeline/ops's deterministic-only source files import httpx,
+requests, or any adapters package -- there is no transport to call out over
+in the first place, so there is nothing to fake in a test. `planner.py` and
+`cli.py` are exempt: M8b slice 1 (design §5) intentionally adds a narrated
+Brief -- planner.py calls the PlannerAdapter (network, gated on
+live_planner_open()) and cli.py constructs the live adapter for `--narrate`.
+The deterministic generate_brief()/render_text() in brief.py itself stays
+untouched by that addition, which the behavioural test below still proves.
 
 Behavioural: after seeding a synthetic shop and generating the full brief,
 the event log contains only the event types this slice is allowed to
@@ -26,6 +31,7 @@ from tests.pipeline.ops.helpers import AS_OF, USER_ID, seed_two_year_shop
 
 _OPS_DIR = Path(brief_module.__file__).parent
 _FORBIDDEN_MODULES = ("httpx", "requests", "shopsteward.adapters")
+_NARRATION_FILES = {"planner.py", "cli.py"}
 
 
 def _imported_modules(py_file: Path) -> set[str]:
@@ -40,7 +46,12 @@ def _imported_modules(py_file: Path) -> set[str]:
 
 
 @pytest.mark.parametrize(
-    "py_file", sorted(p for p in _OPS_DIR.glob("*.py") if p.name != "__pycache__")
+    "py_file",
+    sorted(
+        p
+        for p in _OPS_DIR.glob("*.py")
+        if p.name != "__pycache__" and p.name not in _NARRATION_FILES
+    ),
 )
 def test_ops_module_imports_no_network_or_adapter_transport(py_file):
     imported = _imported_modules(py_file)

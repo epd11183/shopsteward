@@ -55,6 +55,7 @@ forbidden_modules = [
   "shopsteward.adapters.copy",
   "shopsteward.adapters.pod",
   "shopsteward.adapters.printfile",
+  "shopsteward.adapters.planner",
   "shopsteward.pipeline",
 ]
 
@@ -64,7 +65,7 @@ type = "forbidden"
 source_modules = ["shopsteward.core", "shopsteward.editing",
                   "shopsteward.adapters.lightroom", "shopsteward.adapters.vision",
                   "shopsteward.adapters.copy", "shopsteward.adapters.pod",
-                  "shopsteward.adapters.printfile"]
+                  "shopsteward.adapters.printfile", "shopsteward.adapters.planner"]
 forbidden_modules = ["shopsteward.pipeline"]
 
 [[tool.importlinter.contracts]]
