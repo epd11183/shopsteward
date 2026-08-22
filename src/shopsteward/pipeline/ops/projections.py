@@ -39,6 +39,7 @@ import sqlite3
 from datetime import UTC, datetime
 
 from shopsteward.core.events import read_all
+from shopsteward.core.sync import read_live_observed
 from shopsteward.pipeline.ops.config import OPS_CONFIG_EVENT_TYPES
 from shopsteward.pipeline.ops.models import CapabilityState, Tier
 
@@ -216,7 +217,7 @@ def capability_states(conn: sqlite3.Connection, user_id: int) -> dict[str, Capab
 def rebuild_ops(conn: sqlite3.Connection) -> None:
     conn.executescript(PROJECTION_SCHEMA)
 
-    for e in read_all(conn, "etsy.listing.observed"):
+    for e in read_live_observed(conn, "etsy.listing.observed"):
         if e.created_at is None:
             continue  # defensive -- the events table default always sets this
         day = e.created_at[:10]
@@ -234,7 +235,7 @@ def rebuild_ops(conn: sqlite3.Connection) -> None:
             ),
         )
 
-    for e in read_all(conn, "etsy.sale.observed"):
+    for e in read_live_observed(conn, "etsy.sale.observed"):
         p = e.payload
         sale_date = datetime.fromtimestamp(p["created_timestamp"], tz=UTC).date().isoformat()
         for t in p.get("transactions", []):

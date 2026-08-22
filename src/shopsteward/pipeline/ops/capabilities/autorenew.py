@@ -26,7 +26,7 @@ import pydantic
 from shopsteward.adapters.etsy.interface import EtsyWriteAdapter
 from shopsteward.adapters.etsy.models import EtsyListing, EtsyListingUpdate
 from shopsteward.adapters.planner.interface import ProposalIntent
-from shopsteward.core.events import read_all
+from shopsteward.core.sync import read_live_observed
 from shopsteward.pipeline.ops import analytics
 from shopsteward.pipeline.ops.config import ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
@@ -40,7 +40,7 @@ def _latest_observed(conn: sqlite3.Connection, user_id: int, listing_id: int) ->
     malformed historical row must be skipped, not crash the whole `ops run`,
     so a bad sync write can't take down an unattended autonomy pass."""
     latest: EtsyListing | None = None
-    for e in read_all(conn, "etsy.listing.observed"):
+    for e in read_live_observed(conn, "etsy.listing.observed"):
         if e.user_id != user_id or e.payload.get("listing_id") != listing_id:
             continue
         try:

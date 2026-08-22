@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
-from shopsteward.core.events import read_all
+from shopsteward.core.sync import read_live_observed
 
 PROJECTION_SCHEMA = """
 DROP TABLE IF EXISTS proj_listings;
@@ -41,7 +41,7 @@ class Summary(BaseModel):
 
 def rebuild(conn: sqlite3.Connection) -> None:
     conn.executescript(PROJECTION_SCHEMA)
-    for e in read_all(conn, "etsy.listing.observed"):
+    for e in read_live_observed(conn, "etsy.listing.observed"):
         p = e.payload
         conn.execute(
             "INSERT OR REPLACE INTO proj_listings VALUES (?,?,?,?,?,?,?)",
@@ -55,7 +55,7 @@ def rebuild(conn: sqlite3.Connection) -> None:
                 p["price"]["amount"] / p["price"]["divisor"],
             ),
         )
-    for e in read_all(conn, "etsy.sale.observed"):
+    for e in read_live_observed(conn, "etsy.sale.observed"):
         p = e.payload
         day = datetime.fromtimestamp(p["created_timestamp"], tz=UTC).date().isoformat()
         conn.execute(
