@@ -9,7 +9,10 @@ seed() appends opsconfig.seeded once per user; get_ops_config() reads the
 last-write-wins row from proj_ops_config (ops/projections.py's
 rebuild_ops() must have run first). apply() re-reads the file and appends
 opsconfig.updated only when its hash actually changed -- an unchanged file
-is a no-op, so it is safe to call on every `ops config apply` invocation.
+is a no-op, so it is safe to call on every `ops config apply` invocation. A
+stored config that no longer validates under the current OpsConfig schema
+(e.g. seeded before a field was added) is treated as changed, since it
+cannot be hash-compared to begin with.
 A caller must always hash the OpsConfig object it actually reads
 (get_ops_config()'s return value), never re-derive the hash from the file
 while other code reads the DB -- the two can silently diverge the moment
@@ -17,8 +20,11 @@ the file is edited without a matching apply()."""
 
 import hashlib
 import json
+import logging
 import sqlite3
 from pathlib import Path
+
+from pydantic import ValidationError
 
 from shopsteward.core.events import Event, append, read_all
 from shopsteward.pipeline.ops.models import OpsConfig
@@ -27,6 +33,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 OPS_CONFIG_PATH = _REPO_ROOT / "config" / "defaults" / "ops.json"
 
 OPS_CONFIG_EVENT_TYPES = ("opsconfig.seeded", "opsconfig.updated")
+
+_logger = logging.getLogger(__name__)
 
 
 def load_ops_config(path: Path = OPS_CONFIG_PATH) -> OpsConfig:
@@ -73,8 +81,11 @@ def apply(conn: sqlite3.Connection, user_id: int, path: Path = OPS_CONFIG_PATH) 
     """Re-read `path`; if nothing has been seeded yet for this config name,
     seed it. Otherwise append opsconfig.updated only when the file's
     ops_config_hash differs from the last seeded/updated config for that
-    name -- an unchanged file is a no-op. Caller must rebuild_ops()
-    afterwards; get_ops_config() reads the projection, not events."""
+    name -- an unchanged file is a no-op. A stored config that no longer
+    validates under the current OpsConfig schema is treated as changed
+    (it cannot be hash-compared, and the mismatch itself proves it differs
+    from the freshly loaded config). Caller must rebuild_ops() afterwards;
+    get_ops_config() reads the projection, not events."""
     cfg = load_ops_config(path)
 
     last_config: dict | None = None
@@ -89,7 +100,27 @@ def apply(conn: sqlite3.Connection, user_id: int, path: Path = OPS_CONFIG_PATH) 
     if last_config is None:
         return seed(conn, user_id, path)
 
-    if ops_config_hash(cfg) == ops_config_hash(OpsConfig.model_validate(last_config)):
+    try:
+        last_cfg_model = OpsConfig.model_validate(last_config)
+    except ValidationError:
+        # The stored config no longer validates under the current OpsConfig
+        # schema (e.g. seeded before a field like `autonomy` was added).
+        # That mismatch itself proves it has changed relative to `cfg` --
+        # skip the hash comparison and fall through to append
+        # opsconfig.updated, same as an ordinary hash difference below.
+        # This also discards any operator customization the old config held
+        # (apply()'s existing contract on any hash mismatch: the file wins) --
+        # log it so a schema-drift revert isn't silent.
+        _logger.warning(
+            "ops config '%s' for user %s no longer validates under the current "
+            "OpsConfig schema; replacing with config/defaults/ops.json (any "
+            "prior customization in the stored config is discarded)",
+            cfg.name,
+            user_id,
+        )
+        last_cfg_model = None
+
+    if last_cfg_model is not None and ops_config_hash(cfg) == ops_config_hash(last_cfg_model):
         return False
 
     append(

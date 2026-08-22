@@ -138,6 +138,29 @@ def test_seed_then_edit_then_apply_then_rebuild_reflects_the_edit(conn, tmp_path
     assert ops_config.ops_config_hash(after) != hash_before
 
 
+def test_apply_treats_a_stored_config_that_no_longer_validates_as_changed(conn):
+    """A config seeded before `autonomy` (and friends) became required
+    fields must not crash apply() -- it can't validate under the current
+    schema, which itself proves it has changed relative to the freshly
+    loaded config."""
+    from shopsteward.core.events import Event, append
+
+    old_shaped = ops_config.load_ops_config().model_dump(by_alias=True)
+    del old_shaped["autonomy"]
+    append(
+        conn,
+        Event(
+            user_id=USER_ID,
+            type="opsconfig.seeded",
+            payload={"name": old_shaped["name"], "config": old_shaped, "source": "defaults"},
+        ),
+    )
+
+    assert ops_config.apply(conn, USER_ID) is True
+    rebuild_ops(conn)
+    assert ops_config.get_ops_config(conn, USER_ID).autonomy.enabled is False
+
+
 def test_ops_config_apply_cli_seeds_then_is_a_noop(tmp_path, monkeypatch):
     db = tmp_path / "t.db"
     monkeypatch.setenv("SHOPSTEWARD_DB", str(db))
