@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from shopsteward.adapters.planner.interface import (
     CapabilityDescriptor,
+    PlannerLimits,
     PlannerNarration,
     PlannerParseError,
     PlannerPlan,
@@ -30,12 +31,59 @@ _SYSTEM_PROMPT = (
     "DO NOT invent any number or listing that is not in the brief."
 )
 
-_PLAN_SYSTEM_PROMPT = (
-    "You are the shop's business manager. From the facts and the list of "
-    "allowed actions, choose the actions worth taking. You may ONLY use a "
-    "capability_key and a target_id that appear in the inputs. Give one "
-    "grounded sentence per action. Propose nothing if nothing is worth doing."
-)
+# Etsy's real tag/title field limits (not tuning knobs -- kept as local
+# constants here, mirroring pipeline/ops/capabilities/seo_edit.py's own
+# _MAX_TITLE_LEN/_MAX_TAGS/_MAX_TAG_LEN, rather than imported: no adapter may
+# import `pipeline` (see adapters/planner/interface.py's module docstring)).
+_MAX_TITLE_LEN = 140
+_MAX_TAGS = 13
+_MAX_TAG_LEN = 20
+
+
+def _plan_system_prompt(limits: PlannerLimits) -> str:
+    """Built per-call from `limits` (never a fixed module constant) so the
+    numeric bounds quoted to the model can never drift out of sync with what
+    `_validate_params()`/`_is_in_bounds_price()`/`_valid_caption()` actually
+    enforce server-side if an operator changes `config/defaults/ops.json`.
+
+    Known gap (`_build_facts_json`, pipeline/ops/planner.py): the facts JSON
+    surfaces a listing's current `title` (dead_listings/viewed_not_sold/
+    trending/top_sellers all carry it) but never its current `price_usd` or
+    `tags` -- the model can propose a genuinely different title because it
+    can see the old one, but it is guessing blind on price/tags. The
+    re-validation below (min/max/diff) still happens server-side either way
+    (`_validate_params`/`_is_in_bounds_price`), so an out-of-bounds or
+    accidentally-unchanged guess is dropped, never silently accepted -- this
+    is a prompt-quality gap, not a safety one."""
+    return (
+        "You are the shop's business manager. From the facts and the list of "
+        "allowed actions, choose the actions worth taking. You may ONLY use a "
+        "capability_key and a target_id that appear in the inputs. Give one "
+        "grounded sentence per action. Propose nothing if nothing is worth "
+        "doing.\n\n"
+        "For capabilities that need generated content, `params` MUST contain "
+        "the following real fields (any other proposal is silently dropped):\n"
+        '- listing.seo_edit: optionally "title" (string, 1-140 chars) and/or '
+        f'"tags" (list of 1-{_MAX_TAGS} strings, each 1-{_MAX_TAG_LEN} chars -- '
+        "Etsy's real tag length limit). At least one of title/tags must "
+        "actually differ from the listing's current value (its current title "
+        "is in the facts; its current tags are not, so pick tags you believe "
+        "are new) or the proposal is a no-op and is dropped.\n"
+        '- listing.reprice: "price_usd" (a real, finite number) that is '
+        f">= {limits.reprice_min_price_usd}, within +/-"
+        f"{limits.reprice_max_pct_change * 100:.0f}% of the listing's current "
+        "price, and different from it (the current price is not in the "
+        "facts -- propose a value you believe satisfies these bounds; an "
+        "out-of-bounds or unchanged guess is dropped, never adjusted).\n"
+        '- social.caption_draft: "caption" (a non-empty string, at most '
+        f"{limits.caption_max_len} characters).\n"
+        "listing.autorenew_off and listing.deactivate take no params -- do "
+        "not invent any for them.\n"
+        "(listing.seo_edit's eligible targets already only include listings "
+        f"with at least {limits.seo_edit_min_lifetime_views} lifetime views -- "
+        "you never need to check this yourself, it's given for context.)"
+    )
+
 
 _INTENTS_SCHEMA = {
     "type": "object",
@@ -102,13 +150,15 @@ class OpenRouterPlannerAdapter:
 
         return PlannerNarration(text=text, usage=self._build_usage(payload))
 
-    def plan(self, facts_json: str, catalog: list[CapabilityDescriptor]) -> PlannerPlan:
+    def plan(
+        self, facts_json: str, catalog: list[CapabilityDescriptor], limits: PlannerLimits
+    ) -> PlannerPlan:
         catalog_json = json.dumps([c.model_dump() for c in catalog])
         user_content = f"FACTS:\n{facts_json}\n\nALLOWED CAPABILITIES:\n{catalog_json}"
         body = {
             "model": self._model,
             "messages": [
-                {"role": "system", "content": _PLAN_SYSTEM_PROMPT},
+                {"role": "system", "content": _plan_system_prompt(limits)},
                 {"role": "user", "content": user_content},
             ],
             "response_format": {

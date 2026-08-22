@@ -35,6 +35,7 @@ import httpx
 from shopsteward.adapters.planner.interface import (
     CapabilityDescriptor,
     PlannerAdapter,
+    PlannerLimits,
     PlannerParseError,
 )
 from shopsteward.core.events import Event, append
@@ -174,9 +175,15 @@ def plan_proposals(
         for cap in capabilities
     ]
     facts_json = _build_facts_json(conn, user_id, cfg, capabilities)
+    limits = PlannerLimits(
+        reprice_min_price_usd=cfg.reprice.min_price_usd,
+        reprice_max_pct_change=cfg.reprice.max_pct_change,
+        seo_edit_min_lifetime_views=cfg.seo_edit.min_lifetime_views,
+        caption_max_len=cfg.caption.max_len,
+    )
 
     try:
-        plan = adapter.plan(facts_json, catalog)
+        plan = adapter.plan(facts_json, catalog, limits)
     except (PlannerParseError, httpx.HTTPError) as exc:
         logger.warning("planner.plan() unavailable: %s", type(exc).__name__)
         return []

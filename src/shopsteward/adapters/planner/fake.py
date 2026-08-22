@@ -3,6 +3,7 @@ FakeCopyAdapter precedent). No network, ever."""
 
 from shopsteward.adapters.planner.interface import (
     CapabilityDescriptor,
+    PlannerLimits,
     PlannerNarration,
     PlannerPlan,
     PlannerUsage,
@@ -43,7 +44,9 @@ class FakePlannerAdapter:
             raise result
         return result
 
-    def plan(self, facts_json: str, catalog: list[CapabilityDescriptor]) -> PlannerPlan:
+    def plan(
+        self, facts_json: str, catalog: list[CapabilityDescriptor], limits: PlannerLimits
+    ) -> PlannerPlan:
         self.plan_calls.append(facts_json)
         if isinstance(self._plan, Exception):
             raise self._plan

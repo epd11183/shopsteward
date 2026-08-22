@@ -53,6 +53,22 @@ class ProposalIntent(BaseModel):
     reason: str = Field(min_length=1)
 
 
+class PlannerLimits(BaseModel):
+    """The configurable numeric bounds `plan()`'s prompt must tell the model
+    about for the content-generating capabilities (`listing.reprice`,
+    `listing.seo_edit`, `social.caption_draft`) -- plain primitives, not
+    `pipeline.ops.models.OpsConfig` itself, so this stays adapter-owned (no
+    adapter may import `pipeline`, mirroring `ProposalIntent`/
+    `CapabilityDescriptor` above). The caller (`pipeline.ops.planner.
+    plan_proposals`) builds this from the real `OpsConfig` at call time, so
+    the prompt can never drift out of sync with what's actually enforced."""
+
+    reprice_min_price_usd: float
+    reprice_max_pct_change: float
+    seo_edit_min_lifetime_views: int
+    caption_max_len: int
+
+
 class CapabilityDescriptor(BaseModel):
     """A static catalog entry the planner is told it may choose from --
     adapter-owned, no pipeline import (design §1)."""
@@ -71,7 +87,9 @@ class PlannerPlan(BaseModel):
 class PlannerAdapter(Protocol):
     def narrate(self, deterministic_brief_text: str) -> PlannerNarration: ...
 
-    def plan(self, facts_json: str, catalog: list[CapabilityDescriptor]) -> PlannerPlan: ...
+    def plan(
+        self, facts_json: str, catalog: list[CapabilityDescriptor], limits: PlannerLimits
+    ) -> PlannerPlan: ...
 
 
 class PlannerParseError(RuntimeError):
