@@ -19,10 +19,16 @@
     "shadow_range_high": 35,
     "lens_profile_corrections": true,
     "remove_chromatic_aberration": true,
-    "auto_white_balance": false,
+    "auto_white_balance": true,
     "grayworld_blend": 0.0,
-    "wb_temp_offset_k": 0,
-    "wb_tint_offset": 0
+    "wb_temp_offset_k": -30,
+    "wb_tint_offset": -26,
+    "nr_iso_floor": 800,
+    "nr_iso_ceiling": 12800,
+    "nr_luminance_max": 30,
+    "nr_luminance_detail": 50,
+    "nr_color_base": 25,
+    "nr_color_max": 40
   },
   "look_llm": {
     "provider": "openrouter",

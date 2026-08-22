@@ -10,6 +10,12 @@ KNOBS = {
     "shadow_lift_max": 1.0,
     "shadow_range_low": 0,
     "shadow_range_high": 45,
+    "nr_iso_floor": 800,
+    "nr_iso_ceiling": 12800,
+    "nr_luminance_max": 30,
+    "nr_luminance_detail": 50,
+    "nr_color_base": 25,
+    "nr_color_max": 40,
 }
 
 # Verified Canon-ish libraw rgb_xyz_matrix (XYZ->camera); estimator inverts it.
@@ -119,3 +125,48 @@ def test_average_corrections_means_exposure():
     b = analyze_raw(_flat(0.75), KNOBS)
     avg = average_corrections([a, b])
     assert min(a.exposure, b.exposure) <= avg.exposure <= max(a.exposure, b.exposure)
+
+
+def _with_iso(iso):
+    img = DecodedImage(rgb=np.full((16, 16, 3), 0.4, dtype=np.float32))
+    if iso is not None:
+        img.exif["ISOSpeedRatings"] = iso
+    return img
+
+
+def test_denoise_iso_6400_curve_values():
+    cs = analyze_raw(_with_iso(6400), KNOBS)
+    # NOTE: the approved design's worked example states luminance_nr == 23 for
+    # ISO 6400, but its own formula (nr_luminance_max * t, t=0.75 exactly at
+    # ISO 6400) yields 30 * 0.75 == 22.5, and Python's round() (banker's
+    # rounding, ties-to-even) gives 22, not 23. Implemented the formula
+    # literally as specified; flagged this arithmetic inconsistency rather
+    # than silently picking a rounding rule to force 23.
+    assert cs.luminance_nr == 22
+    assert cs.color_nr == 36
+
+
+def test_denoise_iso_400_below_floor_is_baseline():
+    cs = analyze_raw(_with_iso(400), KNOBS)
+    assert (cs.luminance_nr, cs.color_nr) == (0, 25)
+
+
+def test_denoise_missing_iso_is_baseline():
+    cs = analyze_raw(_with_iso(None), KNOBS)
+    assert (cs.luminance_nr, cs.color_nr) == (0, 25)
+
+
+def test_denoise_curve_is_monotonic_and_capped():
+    isos = [100, 800, 1600, 3200, 6400, 12800, 51200]
+    lum_values = [analyze_raw(_with_iso(iso), KNOBS).luminance_nr for iso in isos]
+    assert lum_values == sorted(lum_values)
+    assert lum_values[-1] <= KNOBS["nr_luminance_max"]
+
+
+def test_average_corrections_averages_denoise_not_defaults():
+    a = analyze_raw(_with_iso(6400), KNOBS)
+    b = analyze_raw(_with_iso(400), KNOBS)
+    avg = average_corrections([a, b])
+    assert avg.luminance_nr == int(round((a.luminance_nr + b.luminance_nr) / 2))
+    assert avg.color_nr == int(round((a.color_nr + b.color_nr) / 2))
+    assert avg.luminance_nr != 0 or avg.color_nr != 25  # regression: not silently defaulted

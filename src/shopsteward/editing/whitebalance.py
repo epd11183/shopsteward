@@ -115,17 +115,25 @@ def _cct_tint(camrgb: np.ndarray, xyz_matrix: np.ndarray) -> tuple[float, float]
     return cct, tint
 
 
-def estimate_wb(decoded, knobs: dict) -> tuple[int, int]:
+def estimate_wb(decoded, knobs: dict) -> tuple[int | None, int | None]:
     """Estimate absolute ACR-style (temperature_k, tint).
 
     `decoded` needs `.wb_multipliers` (R,G,B,G2), `.xyz_matrix` (3x3), and
     `.rgb` (HxWx3 float) for the optional gray-world blend. `knobs` may carry
     `grayworld_blend` (0..1), `wb_temp_offset_k`, `wb_tint_offset`.
+
+    Falls back to "as shot" (`(None, None)`) if `xyz_matrix` is missing or
+    numerically degenerate (e.g. singular) rather than guessing or crashing.
     """
     knobs = knobs or {}
+    if decoded.xyz_matrix is None:
+        return None, None
     xyz_matrix = np.asarray(decoded.xyz_matrix, dtype=float)
 
-    cct, tint = _cct_tint(_camrgb_neutral(decoded.wb_multipliers), xyz_matrix)
+    try:
+        cct, tint = _cct_tint(_camrgb_neutral(decoded.wb_multipliers), xyz_matrix)
+    except (TypeError, ValueError, np.linalg.LinAlgError):
+        return None, None
 
     blend = float(knobs.get("grayworld_blend", 0.0))
     if blend > 0.0:

@@ -87,3 +87,21 @@ def test_grayworld_blend_runs_and_is_bounded():
     temp, tint = estimate_wb(_decoded(DAYLIGHT), {"grayworld_blend": 0.5})
     assert 2000 <= temp <= 50000
     assert -150 <= tint <= 150
+
+
+def test_missing_xyz_matrix_falls_back_to_as_shot():
+    decoded = SimpleNamespace(
+        wb_multipliers=DAYLIGHT,
+        xyz_matrix=None,
+        rgb=np.full((4, 4, 3), 0.4, dtype=np.float32),
+    )
+    assert estimate_wb(decoded, {}) == (None, None)
+
+
+def test_singular_xyz_matrix_falls_back_to_as_shot():
+    decoded = SimpleNamespace(
+        wb_multipliers=DAYLIGHT,
+        xyz_matrix=np.zeros((3, 3)),
+        rgb=np.full((4, 4, 3), 0.4, dtype=np.float32),
+    )
+    assert estimate_wb(decoded, {}) == (None, None)

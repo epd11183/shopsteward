@@ -63,6 +63,9 @@ class CorrectionSettings(BaseModel):
     shadow_range_high: int = 45  # upper bound, 0-100
     lens_profile: bool = False  # enable Lightroom auto lens-profile corrections
     remove_ca: bool = False  # enable auto lateral chromatic-aberration removal
+    luminance_nr: int = 0  # adaptive luminance noise reduction, scaled from ISO
+    color_nr: int = 25  # adaptive color noise reduction, scaled from ISO
+    luminance_detail: int = 50  # LuminanceNoiseReductionDetail, only emitted when luminance_nr > 0
 
 
 class EditReport(BaseModel):

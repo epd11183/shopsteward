@@ -6,17 +6,12 @@ import sqlite3
 import uuid
 from pathlib import Path
 
-from PIL import ExifTags, Image
-
 from shopsteward.core.events import Event, append
+from shopsteward.editing.exifread import JPEG_SUFFIXES, read_jpeg_exif
 from shopsteward.editing.models import IngestReport
 
 RAW_SUFFIXES = {".cr3"}
-JPEG_SUFFIXES = {".jpg", ".jpeg"}
 _CHUNK_SIZE = 64 * 1024
-
-# Reverse lookup: Pillow's ExifTags.TAGS maps numeric tag id -> name; we want name -> id.
-_EXIF_TAG_IDS = {name: tag_id for tag_id, name in ExifTags.TAGS.items()}
 
 
 def _sha256_file(path: Path) -> str:
@@ -25,28 +20,6 @@ def _sha256_file(path: Path) -> str:
         while chunk := f.read(_CHUNK_SIZE):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _extract_exif(jpeg_path: Path) -> dict:
-    try:
-        with Image.open(jpeg_path) as img:
-            exif = img.getexif()
-            width, height = img.size
-            fields = {"width": width, "height": height}
-            wanted = {
-                "DateTimeOriginal": 36867,
-                "DateTime": 306,
-                "Model": 272,
-                "LensModel": 42036,
-                "ISOSpeedRatings": 34855,
-            }
-            for name, tag_id in wanted.items():
-                value = exif.get(tag_id)
-                if value is not None:
-                    fields[name] = value
-            return fields
-    except Exception:
-        return {}
 
 
 def _known_raw_hashes(conn: sqlite3.Connection, user_id: int) -> dict[str, str]:
@@ -163,7 +136,7 @@ def ingest_folder(
             continue
 
         photo_id = raw_sha256
-        exif = _extract_exif(jpeg_path) if jpeg_path is not None else {}
+        exif = read_jpeg_exif(jpeg_path) if jpeg_path is not None else {}
         append(
             conn,
             Event(

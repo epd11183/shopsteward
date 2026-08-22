@@ -61,7 +61,11 @@ def compose(correction: CorrectionSettings, look: LookProfile) -> str:
         f'crs:Texture="{_clamp(look.texture, -100, 100)}"',
         f'crs:Vibrance="{_clamp(look.vibrance, -100, 100)}"',
         f'crs:Saturation="{_clamp(look.saturation, -100, 100)}"',
+        f'crs:LuminanceSmoothing="{correction.luminance_nr}"',
+        f'crs:ColorNoiseReduction="{correction.color_nr}"',
     ]
+    if correction.luminance_nr > 0:
+        attrs.append(f'crs:LuminanceNoiseReductionDetail="{correction.luminance_detail}"')
     if correction.lens_profile:
         # Auto-match the lens profile from EXIF (Setup=LensDefaults) and enable it.
         attrs += ['crs:LensProfileEnable="1"', 'crs:LensProfileSetup="LensDefaults"']

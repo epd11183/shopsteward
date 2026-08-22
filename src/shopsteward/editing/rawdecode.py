@@ -2,9 +2,12 @@
 so no RAW files are committed (CLAUDE.md hard guardrail)."""
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol
 
 import numpy as np
+
+from shopsteward.editing.exifread import read_jpeg_exif, sibling_jpeg
 
 # Downscale target for analysis; WB/exposure/shadow stats are stable well below
 # full resolution and this keeps decode fast. ponytail: fixed longest-edge box,
@@ -35,7 +38,9 @@ class RawpyDecoder:
             rgb16 = raw.postprocess(output_bps=16, no_auto_bright=True, use_camera_wb=True)
         rgb = rgb16.astype(np.float32) / 65535.0
         rgb = _downscale(rgb, _ANALYSIS_LONG_EDGE)
-        return DecodedImage(rgb=rgb, wb_multipliers=wb, xyz_matrix=xyz_matrix, exif={})
+        jpeg_path = sibling_jpeg(Path(raw_path))
+        exif = read_jpeg_exif(jpeg_path) if jpeg_path is not None else {}
+        return DecodedImage(rgb=rgb, wb_multipliers=wb, xyz_matrix=xyz_matrix, exif=exif)
 
 
 class FakeRawDecoder:

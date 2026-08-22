@@ -18,6 +18,12 @@ KNOBS = {
     "shadow_lift_max": 1.0,
     "shadow_range_low": 0,
     "shadow_range_high": 45,
+    "nr_iso_floor": 800,
+    "nr_iso_ceiling": 12800,
+    "nr_luminance_max": 30,
+    "nr_luminance_detail": 50,
+    "nr_color_base": 25,
+    "nr_color_max": 40,
 }
 
 

@@ -129,6 +129,24 @@ def test_lens_profile_and_ca_flags_emit_when_enabled():
     assert "LensProfileEnable" not in off
 
 
+def test_noise_reduction_high_iso_emits_detail():
+    xmp = compose(
+        CorrectionSettings(luminance_nr=22, color_nr=36, luminance_detail=50),
+        LookProfile(name="x"),
+    )
+    desc = _parse(xmp).find(".//{http://www.w3.org/1999/02/22-rdf-syntax-ns#}Description")
+    assert desc.get(f"{{{CRS}}}ColorNoiseReduction") == "36"
+    assert desc.get(f"{{{CRS}}}LuminanceSmoothing") == "22"
+    assert desc.get(f"{{{CRS}}}LuminanceNoiseReductionDetail") == "50"
+
+
+def test_noise_reduction_baseline_iso_omits_detail():
+    xmp = compose(CorrectionSettings(luminance_nr=0, color_nr=25), LookProfile(name="x"))
+    desc = _parse(xmp).find(".//{http://www.w3.org/1999/02/22-rdf-syntax-ns#}Description")
+    assert desc.get(f"{{{CRS}}}LuminanceSmoothing") == "0"
+    assert "LuminanceNoiseReductionDetail" not in xmp
+
+
 def test_tone_curve_content_lands():
     xmp = compose(
         CorrectionSettings(), LookProfile(name="x", tone_curve=[[0, 0], [128, 140], [255, 255]])

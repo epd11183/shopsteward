@@ -29,6 +29,8 @@ def analyze_raw(decoded: DecodedImage, knobs: dict) -> CorrectionSettings:
     if knobs.get("auto_white_balance"):
         temperature, tint = estimate_wb(decoded, knobs)
 
+    luminance_nr, color_nr = _denoise(decoded.exif, knobs)
+
     return CorrectionSettings(
         exposure=exposure,
         highlight_recovery=_highlight_recovery(luma, knobs),
@@ -40,6 +42,9 @@ def analyze_raw(decoded: DecodedImage, knobs: dict) -> CorrectionSettings:
         tint=tint,
         lens_profile=bool(knobs.get("lens_profile_corrections", False)),
         remove_ca=bool(knobs.get("remove_chromatic_aberration", False)),
+        luminance_nr=luminance_nr,
+        color_nr=color_nr,
+        luminance_detail=int(knobs.get("nr_luminance_detail", 50)),
     )
 
 
@@ -105,6 +110,25 @@ def _shadow(luma: np.ndarray, knobs: dict) -> tuple[float, int, int]:
     return lift, lo, hi
 
 
+def _denoise(exif: dict, knobs: dict) -> tuple[int, int]:
+    """ISO -> noise-reduction curve. Below the floor ISO, no luminance NR is
+    needed and color NR sits at its base; above the ceiling, luminance NR
+    saturates at its max on a log2 (stop-linear) ramp between the two."""
+    iso = exif.get("ISOSpeedRatings")
+    floor = float(knobs["nr_iso_floor"])
+    ceiling = float(knobs["nr_iso_ceiling"])
+    lum_max = float(knobs["nr_luminance_max"])
+    color_base = float(knobs["nr_color_base"])
+    color_max = float(knobs["nr_color_max"])
+    if not iso or iso <= 0:
+        return 0, int(round(color_base))
+    t = math.log2(iso / floor) / math.log2(ceiling / floor)
+    t = max(0.0, min(1.0, t))
+    luminance_nr = int(round(lum_max * t))
+    color_nr = int(round(color_base + (color_max - color_base) * t))
+    return luminance_nr, color_nr
+
+
 def average_corrections(items: list[CorrectionSettings]) -> CorrectionSettings:
     """Batch/sequence lock: mean of continuous corrections applied to all frames."""
     # Consistency over per-frame optimum: a single dark frame's lift is diluted across the batch.
@@ -123,4 +147,7 @@ def average_corrections(items: list[CorrectionSettings]) -> CorrectionSettings:
         tint=int(round(sum(c.tint for c in items) / n)) if all_wb else None,
         lens_profile=items[0].lens_profile,
         remove_ca=items[0].remove_ca,
+        luminance_nr=int(round(sum(c.luminance_nr for c in items) / n)),
+        color_nr=int(round(sum(c.color_nr for c in items) / n)),
+        luminance_detail=items[0].luminance_detail,
     )
