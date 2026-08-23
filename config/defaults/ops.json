@@ -42,6 +42,10 @@
   "seo_edit": {
     "min_lifetime_views": 25
   },
+  "renew": {
+    "min_lifetime_sales": 1,
+    "listing_fee_usd": 0.20
+  },
   "caption": {
     "max_len": 2200
   },

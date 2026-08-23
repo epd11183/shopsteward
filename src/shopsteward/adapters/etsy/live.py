@@ -217,8 +217,9 @@ class LiveEtsyWriteAdapter:
 
     def update_listing_state(self, listing_id: int, state: str) -> None:
         # Dedicated method, not a field on EtsyListingUpdate (M8b slice 4b,
-        # draft #7 write-safety invariant) -- only listing.deactivate calls
-        # this. Etsy E4 routes state changes through updateListing itself
+        # draft #7 write-safety invariant) -- only listing.deactivate and
+        # listing.renew call this. Etsy E4 routes state changes through
+        # updateListing itself
         # (form-urlencoded PATCH, same endpoint update_listing/
         # publish_listing use) -- just a different, single field.
         if state not in ("active", "inactive"):

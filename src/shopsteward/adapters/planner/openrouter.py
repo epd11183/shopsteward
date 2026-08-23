@@ -77,8 +77,8 @@ def _plan_system_prompt(limits: PlannerLimits) -> str:
         "out-of-bounds or unchanged guess is dropped, never adjusted).\n"
         '- social.caption_draft: "caption" (a non-empty string, at most '
         f"{limits.caption_max_len} characters).\n"
-        "listing.autorenew_off and listing.deactivate take no params -- do "
-        "not invent any for them.\n"
+        "listing.autorenew_off, listing.deactivate, and listing.renew take "
+        "no params -- do not invent any for them.\n"
         "(listing.seo_edit's eligible targets already only include listings "
         f"with at least {limits.seo_edit_min_lifetime_views} lifetime views -- "
         "you never need to check this yourself, it's given for context.)"

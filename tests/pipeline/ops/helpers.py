@@ -46,19 +46,23 @@ def seed_listing_observed_on(
     state: str = "active",
     should_auto_renew: bool = True,
     tags: list[str] | None = None,
+    quantity: int = 999,
     user_id: int = USER_ID,
+    description: str | None = None,
 ) -> None:
     payload = {
         "listing_id": listing_id,
         "title": title,
         "state": state,
-        "quantity": 999,
+        "quantity": quantity,
         "views": views,
         "num_favorers": num_favorers,
         "price": _money(price_usd),
         "tags": list(tags or []),
         "should_auto_renew": should_auto_renew,
     }
+    if description is not None:
+        payload["description"] = description
     created_at = f"{day.isoformat()}T00:00:00.000000Z"
     conn.execute(
         "INSERT INTO events (user_id, type, payload, created_at) VALUES (?, ?, ?, ?)",

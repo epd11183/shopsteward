@@ -47,9 +47,10 @@ class EtsyWriteAdapter(Protocol):
     goes through updateListingInventory instead (reviewer finding, M5a
     slice 4 fix-up). update_listing_state is likewise a DEDICATED method,
     not a `state` field on EtsyListingUpdate (M8b slice 4b, draft #7,
-    write-safety invariant): only `listing.deactivate` ever calls it, so
-    SEO edit / reprice -- both of which use EtsyListingUpdate -- can never
-    touch state. Accepts only "active"/"inactive"."""
+    write-safety invariant): only `listing.deactivate` and `listing.renew`
+    ever call it, so SEO edit / reprice -- both of which use
+    EtsyListingUpdate -- can never touch state. Accepts only
+    "active"/"inactive"."""
 
     def create_draft_listing(self, spec: EtsyDraftSpec) -> EtsyListingRef: ...
     def upload_listing_image(self, listing_id: int, image: bytes, *, rank: int) -> EtsyImageRef: ...

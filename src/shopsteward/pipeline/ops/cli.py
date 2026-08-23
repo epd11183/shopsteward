@@ -181,6 +181,7 @@ def run_cmd(
     from shopsteward.pipeline.ops.capabilities.caption_draft import SocialCaptionDraft
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
     from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
+    from shopsteward.pipeline.ops.capabilities.renew import ListingRenew
     from shopsteward.pipeline.ops.capabilities.reprice import ListingReprice
     from shopsteward.pipeline.ops.capabilities.seo_edit import ListingSeoEdit
     from shopsteward.pipeline.ops.capabilities.tune_threshold import OpsTuneThreshold
@@ -201,6 +202,7 @@ def run_cmd(
     register(ListingReprice(adapter))
     register(ListingSeoEdit(adapter))
     register(ListingDeactivate(adapter))
+    register(ListingRenew(adapter))
     register(OpsTuneThreshold())  # no adapter -- registers regardless of --live-autonomy
     # Always the offline print-file host -- this capability's execute() never
     # reaches Gelato/Etsy, so it is never gated on --live-autonomy.
@@ -368,6 +370,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
     from shopsteward.pipeline.ops.capabilities.caption_draft import SocialCaptionDraft
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
     from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
+    from shopsteward.pipeline.ops.capabilities.renew import ListingRenew
     from shopsteward.pipeline.ops.capabilities.reprice import ListingReprice
     from shopsteward.pipeline.ops.capabilities.seo_edit import ListingSeoEdit
     from shopsteward.pipeline.ops.capabilities.tune_threshold import OpsTuneThreshold
@@ -380,6 +383,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
     register(ListingReprice(adapter))
     register(ListingSeoEdit(adapter))
     register(ListingDeactivate(adapter))
+    register(ListingRenew(adapter))
     register(OpsTuneThreshold())
     register(ListingGapfillReprint(build_print_file_host(live=False)))
     register(SocialCaptionDraft())

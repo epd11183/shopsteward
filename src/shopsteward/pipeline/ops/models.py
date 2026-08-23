@@ -99,6 +99,20 @@ class _OpsSeoEdit(BaseModel):
     min_lifetime_views: int = Field(gt=0)
 
 
+class _OpsRenew(BaseModel):
+    # `listing.renew` (M8b slice 4c) -- min_lifetime_sales is the "has this
+    # ever actually sold" floor (a listing that never sold isn't worth
+    # spending $0.20 to bring back); listing_fee_usd is Etsy's real renewal
+    # charge, threaded through as estimated_cost_usd/ExecutionResult.cost_usd
+    # so the governor's monthly spend cap actually sees the spend.
+    min_lifetime_sales: int = Field(gt=0)
+    # gt=0, not ge=0 (matches _OpsReprice.min_price_usd) -- zero is never a
+    # legitimate value: Etsy always charges something on renewal, and a
+    # zero-cost config would let the governor's month_spend() silently
+    # undercount real spend while Etsy still charges the operator for it.
+    listing_fee_usd: float = Field(gt=0)
+
+
 class _OpsCaption(BaseModel):
     # `social.caption_draft` (M8b slice 6, draft §3.3 #26) -- Instagram's
     # real caption character limit (config-over-code, not a tuning knob).
@@ -143,6 +157,7 @@ class OpsConfig(BaseModel):
     autonomy: _OpsAutonomy
     reprice: _OpsReprice
     seo_edit: _OpsSeoEdit
+    renew: _OpsRenew
     caption: _OpsCaption
 
 

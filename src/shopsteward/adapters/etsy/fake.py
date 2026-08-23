@@ -156,8 +156,9 @@ class FakeEtsyWriteAdapter:
 
     def update_listing_state(self, listing_id: int, state: str) -> None:
         # Dedicated method, not a field on EtsyListingUpdate (M8b slice 4b,
-        # draft #7 write-safety invariant) -- only listing.deactivate calls
-        # this. Mirrors update_listing_price's separate-call shape.
+        # draft #7 write-safety invariant) -- only listing.deactivate and
+        # listing.renew call this. Mirrors update_listing_price's
+        # separate-call shape.
         if state not in ("active", "inactive"):
             raise ValueError(f"update_listing_state: unsupported state {state!r}")
         row = self._require(listing_id)
