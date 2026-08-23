@@ -178,6 +178,7 @@ def run_cmd(
     )
     from shopsteward.pipeline.ops import config as ops_config
     from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
+    from shopsteward.pipeline.ops.capabilities.autorenew_on import ListingAutorenewOn
     from shopsteward.pipeline.ops.capabilities.caption_draft import SocialCaptionDraft
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
     from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
@@ -199,6 +200,7 @@ def run_cmd(
     if not live_autonomy:
         typer.echo("offline (fake adapter) -- no live Etsy calls will be made.")
     register(ListingAutorenewOff(adapter))
+    register(ListingAutorenewOn(adapter))
     register(ListingReprice(adapter))
     register(ListingSeoEdit(adapter))
     register(ListingDeactivate(adapter))
@@ -367,6 +369,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
     from shopsteward.pipeline.listings.pod.factory import build_print_file_host
     from shopsteward.pipeline.listings.push import build_etsy_write_adapter
     from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
+    from shopsteward.pipeline.ops.capabilities.autorenew_on import ListingAutorenewOn
     from shopsteward.pipeline.ops.capabilities.caption_draft import SocialCaptionDraft
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
     from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
@@ -380,6 +383,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
     if not live_autonomy:
         typer.echo("offline (fake adapter) -- no live Etsy calls will be made.")
     register(ListingAutorenewOff(adapter))
+    register(ListingAutorenewOn(adapter))
     register(ListingReprice(adapter))
     register(ListingSeoEdit(adapter))
     register(ListingDeactivate(adapter))
