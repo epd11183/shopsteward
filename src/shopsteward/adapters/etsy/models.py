@@ -30,6 +30,12 @@ class EtsyListing(BaseModel):
     price: Money
     tags: list[str] = Field(default_factory=list)
     should_auto_renew: bool = True
+    # Additive, optional (M8b listing.seo_edit description slice) -- every
+    # already-stored `etsy.listing.observed` payload predates this field and
+    # has no `description` key at all; model_validate() on those old rows
+    # still succeeds and simply yields None (no migration, no touching
+    # immutable stored events).
+    description: str | None = None
 
     @property
     def price_usd(self) -> float:

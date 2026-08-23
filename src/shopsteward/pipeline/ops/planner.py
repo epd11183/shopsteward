@@ -41,6 +41,7 @@ from shopsteward.adapters.planner.interface import (
 from shopsteward.core.events import Event, append
 from shopsteward.pipeline.llm_ledger import monthly_spend
 from shopsteward.pipeline.ops import analytics
+from shopsteward.pipeline.ops.capabilities.seo_edit import _latest_observed
 from shopsteward.pipeline.ops.models import OpsConfig, ProposedAction
 from shopsteward.pipeline.ops.registry import Capability
 
@@ -100,6 +101,41 @@ def _is_customer_contact_barred(capability_key: str) -> bool:
     return any(term in lowered for term in _CUSTOMER_CONTACT_TERMS)
 
 
+def _expired_with_sales(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> list[dict]:
+    """listing_id/title/lifetime_sales for every EXPIRED listing meeting
+    `cfg.renew.min_lifetime_sales` real (non-fixture) sale line-items ever
+    recorded (proj_sale_items -- see renew.py's own module docstring) AND
+    `quantity >= 1` -- the same two-part bar both listing.seo_edit's
+    expired-with-sales branch and listing.renew use, so the LLM is never
+    handed a target either would silently drop as ineligible. `quantity`
+    isn't in proj_listings, so it's checked via the same `_latest_observed`
+    event-reconstruction seo_edit.py's own eligibility uses. materialize()'s
+    own `_eligible()` still re-grounds and drops anything ineligible; this
+    is a courtesy to the model, not the safety boundary (module docstring)."""
+    rows = conn.execute(
+        "SELECT pl.listing_id, pl.title, COUNT(si.transaction_id) AS lifetime_sales "
+        "FROM proj_listings pl JOIN proj_sale_items si "
+        "ON si.user_id=pl.user_id AND si.listing_id=pl.listing_id "
+        "WHERE pl.user_id=? AND pl.state='expired' "
+        "GROUP BY pl.listing_id, pl.title "
+        "HAVING COUNT(si.transaction_id) >= ?",
+        (user_id, cfg.renew.min_lifetime_sales),
+    ).fetchall()
+    out = []
+    for r in rows:
+        listing = _latest_observed(conn, user_id, r["listing_id"])
+        if listing is None or listing.quantity < 1:
+            continue
+        out.append(
+            {
+                "listing_id": r["listing_id"],
+                "title": r["title"],
+                "lifetime_sales": r["lifetime_sales"],
+            }
+        )
+    return out
+
+
 def _build_facts_json(
     conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, capabilities: list[Capability]
 ) -> str:
@@ -113,6 +149,7 @@ def _build_facts_json(
     trend = analytics.trending(conn, user_id, cfg)
     viewed_not_sold = analytics.viewed_not_sold(conn, user_id)
     sellers = analytics.top_sellers(conn, user_id, cfg)
+    expired_with_sales = _expired_with_sales(conn, user_id, cfg)
     facts = {
         "dead_listings": [dl.model_dump(mode="json") for dl in dead],
         "trending": [t.model_dump(mode="json") for t in trend],
@@ -122,6 +159,10 @@ def _build_facts_json(
         # signal listing.reprice keys on. materialize() still re-grounds and
         # drops anything ineligible -- this is target discovery, not trust.
         "viewed_not_sold": [vns.model_dump(mode="json") for vns in viewed_not_sold],
+        # listing.seo_edit's OTHER eligibility branch (expired + real
+        # historical sales -- same real target ids listing.renew proposes
+        # for reactivation). materialize()'s _eligible() still re-grounds.
+        "expired_with_sales": expired_with_sales,
         # social.caption_draft is ALSO planner-only (propose() always []) --
         # without this block the LLM has no target ids for it either (M8b
         # slice 6). materialize() still re-grounds against the SAME

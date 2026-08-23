@@ -1,10 +1,13 @@
-"""`listing.seo_edit` (M8b slice 4a, design §4/§8 slice 4) -- Claude rewrites
-a listing's title/tags, the operator approves each edit. T2/PROPOSE ceiling
+"""`listing.seo_edit` (M8b slice 4a, design §4/§8 slice 4; widened slice --
+description + expired-with-sales) -- Claude rewrites a listing's
+title/tags/description, the operator approves each edit. T2/PROPOSE ceiling
 only, NEVER promotable (draft #10). Planner-only: propose() always []. Both
 digital AND POD listings are eligible (update_listing never touches SKUs).
-`description` is deferred (no baseline in the sync model) -- only title/tags
-are ever read, validated, sent, or restored. Entirely on FakeEtsyWriteAdapter,
-zero network."""
+Eligible listings are either active/viewed-but-not-sold OR expired with real
+historical sales (the same bar `listing.renew` uses,
+`cfg.renew.min_lifetime_sales`). description edits require a non-None
+baseline (`current_description`) to keep undo always truthful. Entirely on
+FakeEtsyWriteAdapter, zero network."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -13,7 +16,7 @@ import pytest
 from shopsteward.adapters.etsy.fake import FakeEtsyWriteAdapter
 from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.core.db import connect, migrate
-from shopsteward.core.events import read_all
+from shopsteward.core.events import Event, append, read_all
 from shopsteward.core.projections import rebuild as rebuild_core
 from shopsteward.pipeline.ops import config as ops_config
 from shopsteward.pipeline.ops.capabilities.seo_edit import ListingSeoEdit
@@ -21,7 +24,7 @@ from shopsteward.pipeline.ops.models import ProposedAction, Tier
 from shopsteward.pipeline.ops.projections import capability_states, rebuild_ops
 from shopsteward.pipeline.ops.registry import REGISTRY, register
 from shopsteward.pipeline.ops.runner import approve_action, run, undo_action
-from tests.pipeline.ops.helpers import seed_listing_observed_on
+from tests.pipeline.ops.helpers import seed_listing_observed_on, seed_sale_observed
 
 USER_ID = 1
 TODAY = datetime.now(UTC).date()
@@ -52,6 +55,8 @@ def _seed_listing(
     views: int = 100,
     state: str = "active",
     tags: list[str] | None = None,
+    description: str | None = None,
+    quantity: int = 999,
 ) -> None:
     seed_listing_observed_on(
         conn,
@@ -61,6 +66,8 @@ def _seed_listing(
         views=views,
         state=state,
         tags=tags,
+        description=description,
+        quantity=quantity,
     )
     seed_listing_observed_on(
         conn,
@@ -70,6 +77,8 @@ def _seed_listing(
         views=views,
         state=state,
         tags=tags,
+        description=description,
+        quantity=quantity,
     )
 
 
@@ -156,6 +165,129 @@ def test_a_sale_in_the_revenue_window_is_not_eligible(conn):
     assert cap.materialize(conn, USER_ID, _cfg(), _intent(str(LISTING_DIGITAL), title="X")) is None
 
 
+# --- eligibility: expired listings with genuine historical sales -----------
+
+LISTING_EXPIRED_WITH_SALE = 931  # expired, >= cfg.renew.min_lifetime_sales real sales -- eligible
+LISTING_EXPIRED_NO_SALE = 932  # expired, 0 sales -- NOT eligible
+
+
+def test_expired_listing_with_enough_lifetime_sales_is_eligible(conn):
+    cfg = _cfg()
+    _seed_listing(
+        conn, LISTING_EXPIRED_WITH_SALE, "Old Print", views=0, state="expired", quantity=5
+    )
+    seed_sale_observed(
+        conn,
+        receipt_id=8101,
+        day=TODAY - timedelta(days=100),
+        transactions=[(LISTING_EXPIRED_WITH_SALE, 81011, 1, 40.0)] * cfg.renew.min_lifetime_sales,
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cap = ListingSeoEdit(FakeEtsyWriteAdapter())
+
+    action = cap.materialize(
+        conn, USER_ID, cfg, _intent(str(LISTING_EXPIRED_WITH_SALE), title="Old Print Restyled")
+    )
+    assert action is not None
+    assert action.target_id == str(LISTING_EXPIRED_WITH_SALE)
+
+
+def test_expired_listing_with_zero_sales_is_not_eligible(conn):
+    _seed_listing(conn, LISTING_EXPIRED_NO_SALE, "Never Sold", views=0, state="expired", quantity=5)
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cap = ListingSeoEdit(FakeEtsyWriteAdapter())
+
+    assert (
+        cap.materialize(conn, USER_ID, _cfg(), _intent(str(LISTING_EXPIRED_NO_SALE), title="X"))
+        is None
+    )
+
+
+def test_active_listing_is_not_double_counted_by_the_expired_branch(conn):
+    """An active, already-eligible listing must appear exactly once (via the
+    active branch), never duplicated by the expired-with-sales branch."""
+    cfg = _cfg()
+    _seed_listing(conn, LISTING_DIGITAL, "Loon at Dusk Digital Download", tags=["loon"])
+    rebuild_core(conn)
+    rebuild_ops(conn)
+
+    from shopsteward.pipeline.ops.capabilities.seo_edit import _eligible
+
+    targets = _eligible(conn, USER_ID, cfg)
+    assert list(targets).count(str(LISTING_DIGITAL)) == 1
+
+
+def test_expired_listing_views_never_gate_eligibility(conn):
+    """Etsy returns views:0 for every expired listing regardless of real
+    sales history -- eligibility must never be gated on it."""
+    cfg = _cfg()
+    _seed_listing(
+        conn, LISTING_EXPIRED_WITH_SALE, "Old Print", views=0, state="expired", quantity=5
+    )
+    seed_sale_observed(
+        conn,
+        receipt_id=8102,
+        day=TODAY - timedelta(days=100),
+        transactions=[(LISTING_EXPIRED_WITH_SALE, 81021, 1, 40.0)] * cfg.renew.min_lifetime_sales,
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cap = ListingSeoEdit(FakeEtsyWriteAdapter())
+
+    assert (
+        cap.materialize(
+            conn, USER_ID, cfg, _intent(str(LISTING_EXPIRED_WITH_SALE), title="Restyled")
+        )
+        is not None
+    )
+
+
+def test_expired_listing_with_only_fixture_polluted_sales_is_not_eligible(
+    conn, tmp_path, monkeypatch
+):
+    """A dev DB polluted by an old `--fixtures` sync (tiny synthetic ids)
+    that predates the real shop's own `etsy.shop.observed` anchor must not
+    count toward `cfg.renew.min_lifetime_sales` -- mirrors
+    read_live_observed()'s own guard test in tests/core/test_sync.py."""
+    import shopsteward.adapters.etsy.auth as auth_mod
+    from shopsteward.adapters.etsy.auth import EtsyTokens, EtsyTokenStore
+
+    monkeypatch.setattr(auth_mod, "etsy_tokens_path", lambda: tmp_path / "etsy_tokens.json")
+
+    listing_id = 933
+    # fixture-era shop + sale -- predates the real shop.observed anchor.
+    append(conn, Event(user_id=USER_ID, type="etsy.shop.observed", payload={"shop_id": 100001}))
+    seed_sale_observed(
+        conn,
+        receipt_id=8103,
+        day=TODAY - timedelta(days=200),
+        transactions=[(listing_id, 81031, 1, 40.0)],
+    )
+    # real shop anchor, after the fixture rows -- no real sale follows it.
+    append(conn, Event(user_id=USER_ID, type="etsy.shop.observed", payload={"shop_id": 52644245}))
+    _seed_listing(conn, listing_id, "Old Print", views=0, state="expired", quantity=5)
+
+    store = EtsyTokenStore()
+    store.save(
+        EtsyTokens(
+            access_token="t",
+            access_expires_at=9999999999.0,
+            refresh_token="r",
+            shop_id=52644245,
+            etsy_user_id=1,
+            scopes=["shops_r"],
+        )
+    )
+
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cap = ListingSeoEdit(FakeEtsyWriteAdapter())
+
+    assert cap.materialize(conn, USER_ID, _cfg(), _intent(str(listing_id), title="X")) is None
+
+
 # --- materialize(): structural validation + diff ----------------------------
 
 
@@ -195,11 +327,13 @@ def test_materialize_only_carries_the_field_that_actually_changed(conn):
     assert action.params == {"tags": ["loon", "new"]}  # title unchanged -- never carried
 
 
-def test_materialize_ignores_a_description_key_entirely(conn):
-    """description is deferred this slice (no baseline in the sync model) --
-    it must be silently dropped from params, never validated or sent, and
-    must never itself count as a change."""
-    _seed_listing(conn, LISTING_DIGITAL, "Loon at Dusk", tags=["loon"])
+def test_materialize_drops_description_with_no_baseline_to_diff_or_restore(conn):
+    """current_description is None (this listing was never observed with a
+    description, e.g. synced before the field existed) -- a proposed
+    description must be silently dropped, never validated or sent, and must
+    never itself count as a change. This keeps undo_available=True always
+    truthful: there is never a kept description edit with no baseline."""
+    _seed_listing(conn, LISTING_DIGITAL, "Loon at Dusk", tags=["loon"])  # no description -> None
     rebuild_core(conn)
     rebuild_ops(conn)
     cap = ListingSeoEdit(FakeEtsyWriteAdapter())
@@ -223,6 +357,64 @@ def test_materialize_ignores_a_description_key_entirely(conn):
     assert action is not None
     assert action.params == {"title": "New Title"}
     assert "description" not in action.params
+
+
+def test_materialize_keeps_a_description_change_with_a_real_baseline(conn):
+    _seed_listing(
+        conn, LISTING_DIGITAL, "Loon at Dusk", tags=["loon"], description="Original description."
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cap = ListingSeoEdit(FakeEtsyWriteAdapter())
+    cfg = _cfg()
+
+    action = cap.materialize(
+        conn, USER_ID, cfg, _intent(str(LISTING_DIGITAL), description="A brand new description.")
+    )
+    assert action is not None
+    assert action.params == {"description": "A brand new description."}
+
+
+def test_materialize_drops_a_description_identical_to_the_current_baseline(conn):
+    _seed_listing(
+        conn, LISTING_DIGITAL, "Loon at Dusk", tags=["loon"], description="Original description."
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cap = ListingSeoEdit(FakeEtsyWriteAdapter())
+    cfg = _cfg()
+
+    assert (
+        cap.materialize(
+            conn, USER_ID, cfg, _intent(str(LISTING_DIGITAL), description="Original description.")
+        )
+        is None
+    )
+
+
+def test_materialize_drops_an_over_length_description_never_truncates(conn):
+    _seed_listing(
+        conn, LISTING_DIGITAL, "Loon at Dusk", tags=["loon"], description="Original description."
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cap = ListingSeoEdit(FakeEtsyWriteAdapter())
+    cfg = _cfg()
+
+    action = cap.materialize(
+        conn, USER_ID, cfg, _intent(str(LISTING_DIGITAL), description="x" * 5001)
+    )
+    assert action is None  # dropped whole key, never truncated -- also a no-op with nothing else
+
+    # over-length description alongside a real title change: title survives independently.
+    action2 = cap.materialize(
+        conn,
+        USER_ID,
+        cfg,
+        _intent(str(LISTING_DIGITAL), title="New Title", description="x" * 5001),
+    )
+    assert action2 is not None
+    assert action2.params == {"title": "New Title"}
 
 
 @pytest.mark.parametrize(
@@ -327,6 +519,51 @@ def test_tags_list_params_round_trip_through_action_proposed_event(conn):
     update_calls = [c for c in fake.calls if c[0] == "update_listing"]
     assert len(update_calls) == 1
     assert update_calls[0][1]["fields"] == {"tags": ["loon", "sunset", "art"]}
+
+
+# --- description: execute()/undo() round-trip -------------------------------
+
+
+def test_e2e_description_change_execute_records_before_and_undo_restores(conn):
+    _seed_listing(
+        conn, LISTING_DIGITAL, "Loon at Dusk", tags=["loon"], description="Original description."
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    ops_config.seed(conn, USER_ID)
+    rebuild_ops(conn)
+    fake = FakeEtsyWriteAdapter()
+    fake.seed_listing(LISTING_DIGITAL, state="active", title="Loon at Dusk", tags=["loon"])
+    cap = ListingSeoEdit(fake)
+    cfg = _cfg(enabled=True, weekly_catalog_pct_cap=1.0)
+
+    action = cap.materialize(
+        conn, USER_ID, cfg, _intent(str(LISTING_DIGITAL), description="A brand new description.")
+    )
+    assert action is not None
+    assert action.params == {"description": "A brand new description."}
+
+    run(conn, USER_ID, cfg, [cap], today=TODAY, proposals=[action])
+    action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
+
+    approved = approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
+    assert approved.executed == 1
+    assert fake.listings[LISTING_DIGITAL]["description"] == "A brand new description."
+
+    update_calls = [c for c in fake.calls if c[0] == "update_listing"]
+    assert len(update_calls) == 1
+    assert update_calls[0][1]["fields"] == {"description": "A brand new description."}
+
+    executed_event = [
+        e for e in read_all(conn, "action.executed") if e.payload["action_id"] == action_id
+    ][0]
+    assert executed_event.payload["before"] == {"description": "Original description."}
+    assert executed_event.payload["after"] == {"description": "A brand new description."}
+
+    undo_action(conn, USER_ID, action_id, [cap])
+    assert fake.listings[LISTING_DIGITAL]["description"] == "Original description."
+    undone = [e for e in read_all(conn, "action.undone") if e.payload["action_id"] == action_id][0]
+    assert undone.payload["restored_to"] == {"description": "Original description."}
 
 
 # --- E2E via runner: T2 queue, approve calls update_listing with ONLY the --

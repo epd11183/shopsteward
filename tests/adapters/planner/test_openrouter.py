@@ -107,6 +107,8 @@ def test_plan_system_prompt_reflects_cfg_not_hardcoded_numbers() -> None:
     assert "price_usd" in system_prompt
     assert "title" in system_prompt
     assert "tags" in system_prompt
+    assert "description" in system_prompt
+    assert "1-5000" in system_prompt
     assert "caption" in system_prompt
 
 

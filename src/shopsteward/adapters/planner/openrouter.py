@@ -63,12 +63,17 @@ def _plan_system_prompt(limits: PlannerLimits) -> str:
         "doing.\n\n"
         "For capabilities that need generated content, `params` MUST contain "
         "the following real fields (any other proposal is silently dropped):\n"
-        '- listing.seo_edit: optionally "title" (string, 1-140 chars) and/or '
-        f'"tags" (list of 1-{_MAX_TAGS} strings, each 1-{_MAX_TAG_LEN} chars -- '
-        "Etsy's real tag length limit). At least one of title/tags must "
-        "actually differ from the listing's current value (its current title "
-        "is in the facts; its current tags are not, so pick tags you believe "
-        "are new) or the proposal is a no-op and is dropped.\n"
+        '- listing.seo_edit: optionally "title" (string, 1-140 chars), "tags" '
+        f"(list of 1-{_MAX_TAGS} strings, each 1-{_MAX_TAG_LEN} chars -- "
+        'Etsy\'s real tag length limit), and/or "description" (string, '
+        "1-5000 chars). At least one of title/tags/description must actually "
+        "differ from the listing's current value (its current title is in "
+        "the facts; its current tags/description are not, so pick values you "
+        "believe are new) or the proposal is a no-op and is dropped. A "
+        "description change is only ever kept when the listing already has a "
+        "recorded description to diff/restore against -- propose one anyway "
+        "if you believe it's an improvement, it will simply be dropped "
+        "server-side if there's no baseline.\n"
         '- listing.reprice: "price_usd" (a real, finite number) that is '
         f">= {limits.reprice_min_price_usd}, within +/-"
         f"{limits.reprice_max_pct_change * 100:.0f}% of the listing's current "
@@ -79,9 +84,11 @@ def _plan_system_prompt(limits: PlannerLimits) -> str:
         f"{limits.caption_max_len} characters).\n"
         "listing.autorenew_off, listing.deactivate, and listing.renew take "
         "no params -- do not invent any for them.\n"
-        "(listing.seo_edit's eligible targets already only include listings "
-        f"with at least {limits.seo_edit_min_lifetime_views} lifetime views -- "
-        "you never need to check this yourself, it's given for context.)"
+        "(listing.seo_edit's eligible targets are already either active "
+        f"listings with at least {limits.seo_edit_min_lifetime_views} "
+        "lifetime views and no recent sale, or expired listings with real "
+        "historical sales -- you never need to check either condition "
+        "yourself, it's given for context.)"
     )
 
 

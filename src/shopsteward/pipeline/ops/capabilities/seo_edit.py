@@ -1,28 +1,40 @@
-"""`listing.seo_edit` -- Claude rewrites a listing's title/tags, the operator
-approves each edit (M8b slice 4a, design §4/§8 slice 4). Policy: Etsy E3
-PERMITTED via `updateListing`/`listings_w`. Draft #10: title/tag edit is a
-**T2 ceiling, NEVER higher** (the formula would say T1, but overridden --
+"""`listing.seo_edit` -- Claude rewrites a listing's title/tags/description,
+the operator approves each edit (M8b slice 4a, design §4/§8 slice 4; widened
+to cover description and expired-with-sales listings, see below). Policy:
+Etsy E3 PERMITTED via `updateListing`/`listings_w`. Draft #10: title/tag edit
+is a **T2 ceiling, NEVER higher** (the formula would say T1, but overridden --
 §0 P3 policy surface + a bad edit resets a listing's Etsy search-ranking
 history, which is not cleanly reversible even though the fields themselves
 are; PRD §5.5 "wait at Gate 3"). `max_tier = Tier.PROPOSE` and this
 capability is never promoted regardless of the ladder (registry.py's
 invariant 2 -- max_tier is a Python attribute, not config).
 
-`description` editing is DEFERRED, this slice only: `EtsyListing`
-(adapters/etsy/models.py) -- the model every `etsy.listing.observed` event
-carries -- has no `description` field at all, so there is no baseline to
-diff a new description against or restore on undo. Adding description
-requires first adding it to the sync/read model (a later slice); until
-then a `description` key in `intent.params`/`action.params` is simply
-never read, validated, sent, or restored -- only `title`/`tags` are.
+**`description` editing is now implemented** (`EtsyListing.description`,
+adapters/etsy/models.py, added purely additively/optionally -- every
+already-stored `etsy.listing.observed` payload predates the field and still
+validates fine, yielding `description=None`). The undo-honesty rule: a
+proposed description is only ever kept when `target.current_description` is
+not None AND the value actually differs -- a listing with no recorded
+baseline (synced before this field existed) has any proposed description
+silently dropped, so `undo_available=True` is never a lie. Title/tags may
+still proceed on that same intent independently.
+
+**Eligibility now also covers expired listings with genuine historical
+sales** -- the same 7 real listings `listing.renew` targets for reactivation,
+using the SAME config knob (`cfg.renew.min_lifetime_sales`) so the two
+capabilities never disagree about "worth reviving". `views`/`num_favorers`
+are NEVER used to gate this branch: confirmed empirically that Etsy's API
+returns `views: 0` for every expired listing regardless of real sales
+history.
 
 **Planner-only, like `ops.tune_threshold`'s trigger is SQL but this
 capability's COPY is not**: `propose()` always returns `[]` -- writing good
 SEO copy is exactly the "deterministic heuristic too blunt" case (design
-§11.1), there is no sensible deterministic title/tags to generate. All the
-value is in `materialize()`: the LLM writes the copy, `_validate_params()`
-validates it against Etsy's real field limits (dropped, never clamped) and
-against the listing's current title/tags (a no-op proposal is never built).
+§11.1), there is no sensible deterministic title/tags/description to
+generate. All the value is in `materialize()`: the LLM writes the copy,
+`_validate_params()` validates it against Etsy's real field limits (dropped,
+never clamped) and against the listing's current title/tags/description (a
+no-op proposal is never built).
 
 **Both digital AND POD listings are eligible** -- unlike `listing.reprice`
 (digital-only, draft #9b), SEO edit only ever calls `update_listing` with
@@ -62,6 +74,9 @@ from shopsteward.pipeline.ops.registry import compute_action_id
 # adapters/copy/interface.py's CopyVerdict and pipeline/listings/models.py's
 # GateEditFields).
 _MAX_TITLE_LEN = 140
+# A deliberate, conservative PRODUCT limit -- well below Etsy's real ceiling,
+# not a value copied from Etsy's OpenAPI spec that could be wrong.
+_MAX_DESCRIPTION_LEN = 5000
 
 
 @dataclass(frozen=True)
@@ -69,7 +84,9 @@ class _Target:
     listing_id: int
     current_title: str
     current_tags: list[str]
+    current_description: str | None
     lifetime_views: int
+    reason: str
 
 
 def _latest_observed(conn: sqlite3.Connection, user_id: int, listing_id: int) -> EtsyListing | None:
@@ -90,21 +107,31 @@ def _latest_observed(conn: sqlite3.Connection, user_id: int, listing_id: int) ->
 def _eligible(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> dict[str, _Target]:
     """target_id -> the eligible-for-SEO-edit facts for that listing -- the
     ONE grounding function shared by materialize() and execute() so the two
-    can never disagree. "Viewed but not selling -> copy/SEO may be the
-    problem" (the same signal analytics.viewed_not_sold surfaces on the
-    Brief, applied here with a revenue-window bound rather than lifetime, to
-    match reprice's own eligibility shape). No digital/POD split -- see
-    module docstring."""
+    can never disagree. Two independent branches, never double-counting a
+    listing (a listing is exactly one of active/expired):
+
+    1. Active, viewed but not selling -> copy/SEO may be the problem (the
+       same signal analytics.viewed_not_sold surfaces on the Brief, applied
+       here with a revenue-window bound rather than lifetime, to match
+       reprice's own eligibility shape).
+    2. Expired with genuine historical sales -- the same bar `listing.renew`
+       uses (`cfg.renew.min_lifetime_sales` against `proj_sale_items`, which
+       only ever holds real, non-fixture sale line-items -- see renew.py's
+       module docstring). `views` is NEVER checked for this branch (module
+       docstring -- Etsy returns 0 for every expired listing regardless of
+       real sales history).
+
+    No digital/POD split -- see module docstring."""
     start = datetime.now(UTC).date() - timedelta(days=cfg.windows.revenue_window_days - 1)
     end = datetime.now(UTC).date()
 
-    rows = conn.execute(
+    out: dict[str, _Target] = {}
+
+    active_rows = conn.execute(
         "SELECT listing_id, title, views FROM proj_listings WHERE user_id=? AND state='active'",
         (user_id,),
     ).fetchall()
-
-    out: dict[str, _Target] = {}
-    for r in rows:
+    for r in active_rows:
         if r["views"] < cfg.seo_edit.min_lifetime_views:
             continue
         sold_in_window = conn.execute(
@@ -121,19 +148,63 @@ def _eligible(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> dict[st
             listing_id=r["listing_id"],
             current_title=r["title"],
             current_tags=listing.tags,
+            current_description=listing.description,
             lifetime_views=r["views"],
+            reason=(
+                f"{r['views']} views, 0 sales in the last "
+                f"{cfg.windows.revenue_window_days}d -- refresh title/tags."
+            ),
+        )
+
+    expired_rows = conn.execute(
+        "SELECT listing_id, title FROM proj_listings WHERE user_id=? AND state='expired'",
+        (user_id,),
+    ).fetchall()
+    for r in expired_rows:
+        key = str(r["listing_id"])
+        if key in out:
+            continue  # defensive -- a listing can't be both active and expired
+        lifetime_sales = conn.execute(
+            "SELECT COUNT(*) AS n FROM proj_sale_items WHERE user_id=? AND listing_id=?",
+            (user_id, r["listing_id"]),
+        ).fetchone()["n"]
+        if lifetime_sales < cfg.renew.min_lifetime_sales:
+            continue
+        listing = _latest_observed(conn, user_id, r["listing_id"])
+        if listing is None or listing.quantity < 1:
+            # matches listing.renew's gate -- a sold-out listing isn't
+            # "worth reviving" via renew, so seo_edit shouldn't polish it either.
+            continue
+        out[key] = _Target(
+            listing_id=r["listing_id"],
+            current_title=r["title"],
+            current_tags=listing.tags,
+            current_description=listing.description,
+            lifetime_views=0,  # never a gating signal for this branch -- see module docstring
+            reason=(
+                f"{r['title']} -- expired, {lifetime_sales} lifetime sale(s) -- "
+                "refresh title/tags/description."
+            ),
         )
     return out
 
 
 def _validate_params(params: dict, target: _Target) -> dict[str, str | list[str]] | None:
     """Structural validation against Etsy's real limits (drop, never clamp)
-    plus a diff against `target`'s current title/tags -- returns only the
-    fields that are both valid AND actually changed, or None if nothing
-    survives. A `description` key in `params` is silently ignored (never
-    read, never validated, never sent -- see module docstring). Shared by
-    materialize() and execute() (re-validation) so the two rules can never
-    drift apart."""
+    plus a diff against `target`'s current title/tags/description -- returns
+    only the fields that are both valid AND actually changed, or None if
+    nothing survives. Shared by materialize() and execute() (re-validation)
+    so the two rules can never drift apart.
+
+    description's undo-honesty rule (module docstring): kept ONLY IF
+    `target.current_description is not None` AND the proposed value differs
+    from it. No baseline (a listing synced before this field existed, or
+    Etsy genuinely has none) -> the description key is dropped, never kept
+    with no way to restore it on undo -- title/tags may still proceed on the
+    same intent independently. Description content does not need tags'
+    comma-rejection check (that's specific to comma-joining tags into Etsy's
+    form-urlencoded array field; description is a plain string field, sent
+    as-is)."""
     title = params.get("title")
     new_title: str | None = None
     if title is not None:
@@ -155,18 +226,33 @@ def _validate_params(params: dict, target: _Target) -> dict[str, str | list[str]
             return None  # drop, never clamp -- see module docstring
         new_tags = tags
 
+    description = params.get("description")
+    new_description: str | None = None
+    if (
+        description is not None
+        and isinstance(description, str)
+        and 1 <= len(description) <= _MAX_DESCRIPTION_LEN
+    ):
+        new_description = description
+    # else: structurally invalid -- silently dropped, never clamped.
+
     changed: dict[str, str | list[str]] = {}
     if new_title is not None and new_title != target.current_title:
         changed["title"] = new_title
     if new_tags is not None and new_tags != target.current_tags:
         changed["tags"] = new_tags
+    if (
+        new_description is not None
+        and target.current_description is not None
+        and new_description != target.current_description
+    ):
+        changed["description"] = new_description
     return changed or None
 
 
 def _build_action(
     target: _Target,
     changed: dict[str, str | list[str]],
-    cfg: OpsConfig,
     cfg_hash: str,
     today: str,
     expires_at: str,
@@ -182,10 +268,7 @@ def _build_action(
         target_type="listing",
         target_id=str(target.listing_id),
         tier=Tier.PROPOSE,  # overwritten by the runner with the effective tier
-        reason=(
-            f"{target.lifetime_views} views, 0 sales in the last "
-            f"{cfg.windows.revenue_window_days}d -- refresh title/tags."
-        ),
+        reason=target.reason,
         inputs_hash=inputs_hash,
         estimated_cost_usd=0.0,
         undo_available=True,
@@ -226,7 +309,7 @@ class ListingSeoEdit:
         today = today_date.isoformat()
         cfg_hash = ops_config_hash(cfg)
         expires_at = (today_date + timedelta(days=cfg.autonomy.proposal_ttl_days)).isoformat()
-        return _build_action(target, changed, cfg, cfg_hash, today, expires_at)
+        return _build_action(target, changed, cfg_hash, today, expires_at)
 
     def execute(
         self, conn: sqlite3.Connection, user_id: int, action: ProposedAction
@@ -249,10 +332,18 @@ class ListingSeoEdit:
             before["title"] = target.current_title
         if "tags" in changed:
             before["tags"] = target.current_tags
+        if "description" in changed:
+            # guaranteed non-None -- _validate_params only ever keeps
+            # "description" in `changed` when current_description is not None.
+            before["description"] = target.current_description
 
         self._adapter.update_listing(
             listing_id,
-            EtsyListingUpdate(title=changed.get("title"), tags=changed.get("tags")),
+            EtsyListingUpdate(
+                title=changed.get("title"),
+                tags=changed.get("tags"),
+                description=changed.get("description"),
+            ),
         )
         return ExecutionResult(before=before, after=dict(changed), cost_usd=0.0, duration_ms=0)
 
@@ -267,7 +358,11 @@ class ListingSeoEdit:
         listing_id = int(action.target_id)
         self._adapter.update_listing(
             listing_id,
-            EtsyListingUpdate(title=prior.get("title"), tags=prior.get("tags")),
+            EtsyListingUpdate(
+                title=prior.get("title"),
+                tags=prior.get("tags"),
+                description=prior.get("description"),
+            ),
         )
 
     def estimate_cost_usd(self, action: ProposedAction) -> float:

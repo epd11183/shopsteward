@@ -25,7 +25,7 @@ from shopsteward.pipeline.ops.planner import plan_proposals
 from shopsteward.pipeline.ops.projections import rebuild_ops
 from shopsteward.pipeline.ops.registry import REGISTRY, register
 from shopsteward.pipeline.ops.runner import run
-from tests.pipeline.ops.helpers import seed_listing_observed_on
+from tests.pipeline.ops.helpers import seed_listing_observed_on, seed_sale_observed
 from tests.pipeline.ops.stub_capability import StubCapability
 
 USER_ID = 1
@@ -256,6 +256,43 @@ def test_facts_json_includes_viewed_not_sold_for_seo_edit_target_discovery(conn)
     # deterministic Brief/other blocks unaffected -- still present, unchanged shape.
     assert "dead_listings" in facts
     assert "trending" in facts
+
+
+def test_facts_json_includes_expired_with_sales_for_seo_edit_target_discovery(conn):
+    """listing.seo_edit's other eligibility branch (expired + real historical
+    sales) -- same real target ids listing.renew proposes for reactivation."""
+    LISTING_EXPIRED_WITH_SALES = 702
+    seed_listing_observed_on(
+        conn,
+        listing_id=LISTING_EXPIRED_WITH_SALES,
+        title="Old Canvas Print",
+        day=TODAY - timedelta(days=1),
+        views=0,
+        state="expired",
+        quantity=5,
+    )
+    seed_sale_observed(
+        conn,
+        receipt_id=9101,
+        day=TODAY - timedelta(days=100),
+        transactions=[(LISTING_EXPIRED_WITH_SALES, 91011, 1, 40.0)],
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cfg = _cfg(enabled=True)
+    adapter = FakePlannerAdapter(plan=[])
+
+    plan_proposals(conn, USER_ID, cfg, adapter, [], soft_cap_usd=10.0)
+
+    (facts_json,) = adapter.plan_calls
+    facts = json.loads(facts_json)
+    assert facts["expired_with_sales"] == [
+        {
+            "listing_id": LISTING_EXPIRED_WITH_SALES,
+            "title": "Old Canvas Print",
+            "lifetime_sales": 1,
+        }
+    ]
 
 
 def test_materialize_and_propose_share_grounding_and_agree(conn):
