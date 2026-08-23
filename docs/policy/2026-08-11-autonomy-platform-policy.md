@@ -40,6 +40,7 @@ owned by the operator's Business.
 | E12 | **Review solicitation** | **RESTRICTED** | no API channel | — | Manual honest ask OK; **never** incentivize/gate/automate (Seller Policy §3a(3–4), API Terms §5(21)) |
 | E13 | **Respond to a public review** | **RESTRICTED (dashboard-only)** | **read-only** API (`getReviewsByShop/ByListing`) | `feedback_r` to read | Responding allowed as a seller act, but **no API to post** it |
 | E14 | **Refunds / disputes / cases** | **PROHIBITED (no mechanism)** | none in v3 | — | Manual Shop-Manager/Payment-account process (Seller Policy §3b) |
+| E15 | **Renew a specific expired listing with sales history** | **PERMITTED** | `updateListing` PATCH (`state`→`active`) on an `expired` listing | `listings_w` (already held) | Renewal is a first-class Etsy seller act; `updateListing` names "manually renewing" as a use of the `state` field. Etsy charges the standard $0.20 listing fee, non-refundable. Distinct from E8 — see §2 |
 
 ### Meta (Instagram + Facebook)
 
@@ -76,6 +77,61 @@ never an unattended live write; E5 is already a draft and Gate 3 owns it.
 before expiry, touches no customer, and Etsy treats it as a sanctioned feature.
 Matches design §7's choice.
 
+### E15 renew-an-expired-listing is PERMITTED — and is *not* E8
+
+**Mechanism, corrected against the live reference.** E8 states "no renew
+endpoint exists." That is right only in the narrow sense that there is no
+distinct `renewListing` operation. It is **wrong** as a claim that renewal
+is unavailable: renewal *is* `PATCH /application/shops/{shop_id}/listings/{listing_id}`
+with `state=active`, and `updateListing`'s own reference documents
+"manually renewing" as a real use of the `state` field. §4's parenthetical
+"there is no renew endpoint anyway" is superseded by this entry. Etsy
+silently charges the standard **$0.20 listing fee** on the transition into
+`active`; the fee is spent at call time and is non-refundable.
+
+**Why this is not the E8 pattern.** E8 is prohibited as *churn at scale for
+search recency*: repeatedly cycling listings that are **already sellable**
+(deactivate→reactivate, or delete+recreate), on a cadence, selected for
+rank benefit — the conduct Seller Policy §1.c.7 reaches. `listing.renew` is
+the opposite on every axis that clause cares about:
+
+- **Target state.** Only `state == "expired"` listings are eligible
+  (`_candidates()`). An `active` listing is never proposed, so the
+  deactivate→reactivate cycle E8 describes is structurally unreachable, and
+  a renewed listing leaves the eligible set the moment it goes active. It
+  cannot re-renew itself.
+- **Selection signal.** Eligibility is gated on **verified real sales
+  history** — at least `cfg.renew.min_lifetime_sales` (currently **1**)
+  non-fixture sale line-items in `proj_sale_items`, folded from
+  `etsy.sale.observed` — plus `quantity >= 1` (zero stock would renew to
+  `sold_out`, not `active`). Nothing selects on rank, recency, or search
+  position. `views`/`num_favorers` are **deliberately never used**: Etsy
+  returns `views: 0` for every expired listing regardless of history, so the
+  field carries no signal here.
+- **Cadence and volume.** One-time repair of specific listings, not a
+  recurring cycle. Bounded regardless by `config/defaults/ops.json`'s
+  `autonomy` block: `per_capability_daily_cap: 5`, `daily_action_cap: 10`,
+  `weekly_catalog_pct_cap: 0.10`, and `monthly_spend_cap_usd: 20.00` — which
+  at $0.20/renewal is itself a hard ceiling of 100 renewals/month.
+- **Honesty.** Renewal changes no customer-visible representation; §1.c.4
+  accuracy and §1.d.6 pricing are untouched.
+
+Reactivating a genuinely expired listing the shop previously sold from is
+the ordinary, intended use of the feature Etsy bills for. E8's verdict
+stands unchanged for its own pattern.
+
+**Scope and auth.** `listings_w`, already consented — **no new scope, no
+re-auth** — same as E1-E5. Mechanically identical to the `listing.deactivate`
+reactivate path, differing only in the source state.
+
+**Standing caveats carried into the build.** (a) Every execution spends
+real, non-refundable money, so the capability notifies the operator
+regardless of ladder trust; the numeric spend cap, not the tier, is the
+blast-radius control. (b) `undo()` is **not** a reverse — Etsy's live-state
+enum is `active`/`inactive` only, there is no API to restore `expired`, and
+the fee is not recoverable. Undo is a **visibility** lever only and must
+never be presented to the operator as making them whole.
+
 ### Defer (PERMITTED but gated on external onboarding)
 **M1–M3 (IG/FB promotion)** are permitted but require one **App Review +
 Business Verification** pass before *any* production use — even on owned assets.
@@ -99,6 +155,8 @@ dead `adapters/meta` only after the review/verification clears (design §9 slice
 **Etsy**
 - API reference & listing lifecycle / scopes: https://developer.etsy.com/documentation/tutorials/listings ; https://developers.etsy.com/documentation/reference/
 - No renew endpoint in v3 (staff confirmation): https://github.com/etsy/open-api/discussions/690
+- `updateListing` (PATCH `state`; "manually renewing" named as a use of the field): https://developers.etsy.com/documentation/reference/#operation/updateListing
+- Renewing listings & the $0.20 listing fee: https://help.etsy.com/hc/en-us/articles/115015628088 ; https://www.etsy.com/legal/fees/
 - Etsy Ads not in API (open feature request): https://github.com/etsy/open-api/discussions/1082 ; https://github.com/etsy/open-api/discussions/730
 - Review-ID / no response endpoint: https://github.com/etsy/open-api/discussions/1076
 - Rate limits (10 QPS / 10k QPD, 429 + retry-after): https://developer.etsy.com/documentation/essentials/rate-limits/
@@ -120,7 +178,10 @@ dead `adapters/meta` only after the review/verification clears (design §9 slice
 - **E8 recency-churn:** No Etsy clause names "renewing/relisting to refresh
   recency" verbatim; the prohibition rests on the general §1.c.7 "manipulating
   search" language. Treated as **high-risk-by-general-clause and cut from
-  automation.** The design never needed it (there is no renew endpoint anyway).
+  automation.** The design never needed it. (The parenthetical "no renew
+  endpoint exists" in the E8 row is corrected by E15: there is no *distinct*
+  endpoint, but the `state`→`active` PATCH is a documented, sanctioned
+  renewal mechanism. E8's verdict on *churn* is unaffected.)
 - **E13 read scope nuance:** `getReviewsByListing` may be API-key-only while
   `getReviewsByShop`'s buyer fields need `feedback_r`; immaterial to M8a (we
   don't read reviews yet).
