@@ -118,9 +118,10 @@ def test_create_draft_listing_sends_form_urlencoded_body(tmp_path) -> None:
     assert body["type"] == "download"
     assert body["is_supply"] == "false"
     assert body["should_auto_renew"] == "true"
-    # tags is a repeated-key list, not a JSON array or a single field
+    # tags is a single comma-joined value, not a repeated key or a JSON array
+    # (Etsy's array fields are comma-joined form values -- see live.py).
     tags = [v for k, v in urllib.parse.parse_qsl(sent.content.decode()) if k == "tags"]
-    assert tags == ["wall art", "coastal"]
+    assert tags == ["wall art,coastal"]
     # createDraftListing has no `state` request field at all -- the
     # endpoint inherently creates drafts (Etsy OpenAPI spec).
     assert "state" not in body
@@ -189,6 +190,97 @@ def test_update_listing_patches_fields_only(tmp_path) -> None:
     assert sent.headers["content-type"] == "application/x-www-form-urlencoded"
     body = dict(urllib.parse.parse_qsl(sent.content.decode()))
     assert body == {"title": "New title"}  # only the field that was set, no price, no state
+
+
+@respx.mock
+def test_update_listing_comma_joins_list_fields(tmp_path) -> None:
+    # Regression: httpx's form-urlencoded `data=` serializes a bare list as
+    # REPEATED keys (tags=a&tags=b&tags=c), and Etsy's parser keeps only the
+    # last one -- a 10-tag list silently landed as 1 tag on a real listing.
+    # Etsy's array fields are a single comma-joined string, not repeated
+    # keys and not JSON. A 3-element list catches this; a 1-element list
+    # would pass either way.
+    route = respx.patch(f"{BASE}/shops/100001/listings/555").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "listing_id": 555,
+                "title": "T",
+                "state": "draft",
+                "quantity": 999,
+                "price": {"amount": 1500, "divisor": 100, "currency_code": "USD"},
+            },
+        )
+    )
+    adapter = _write_adapter(tmp_path)
+    adapter.update_listing(555, EtsyListingUpdate(title="New title", tags=["a", "b", "c"]))
+
+    sent = route.calls.last.request
+    pairs = urllib.parse.parse_qsl(sent.content.decode())
+    body = dict(pairs)
+    # a single "tags" key with the comma-joined value -- not three repeated
+    # "tags" pairs, and not a JSON-encoded list.
+    assert [v for k, v in pairs if k == "tags"] == ["a,b,c"]
+    assert body["tags"] == "a,b,c"
+    # non-list fields must pass through unchanged, not comma-split or mangled.
+    assert body["title"] == "New title"
+
+
+@respx.mock
+def test_update_listing_omits_empty_list_fields(tmp_path) -> None:
+    # An empty list must be treated as "no-op" (field absent), never as an
+    # explicit "clear all tags" instruction -- ",".join([]) == "" would send
+    # tags= on the wire, which Etsy reads as "clear the tags".
+    route = respx.patch(f"{BASE}/shops/100001/listings/555").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "listing_id": 555,
+                "title": "T",
+                "state": "draft",
+                "quantity": 999,
+                "price": {"amount": 1500, "divisor": 100, "currency_code": "USD"},
+            },
+        )
+    )
+    adapter = _write_adapter(tmp_path)
+    adapter.update_listing(555, EtsyListingUpdate(title="New title", tags=[]))
+
+    sent = route.calls.last.request
+    # keep_blank_values=True -- the default parse_qsl silently drops a
+    # `tags=` (empty-value) pair, which would mask this exact bug.
+    body = dict(urllib.parse.parse_qsl(sent.content.decode(), keep_blank_values=True))
+    assert "tags" not in body
+    assert body == {"title": "New title"}
+
+
+@respx.mock
+def test_create_draft_listing_comma_joins_list_fields(tmp_path) -> None:
+    # Same repeated-key truncation bug as update_listing's tags field, on the
+    # OTHER write path -- confirmed on the wire:
+    # ...&tags=a&tags=b&tags=c... truncates to the last value server-side.
+    route = respx.post(f"{BASE}/shops/100001/listings").mock(
+        return_value=httpx.Response(200, json={"listing_id": 555, "state": "draft"})
+    )
+    adapter = _write_adapter(tmp_path)
+    adapter.create_draft_listing(_spec(tags=["a", "b", "c"]))
+
+    sent = route.calls.last.request
+    pairs = urllib.parse.parse_qsl(sent.content.decode())
+    assert [v for k, v in pairs if k == "tags"] == ["a,b,c"]
+
+
+@respx.mock
+def test_create_draft_listing_omits_empty_list_fields(tmp_path) -> None:
+    route = respx.post(f"{BASE}/shops/100001/listings").mock(
+        return_value=httpx.Response(200, json={"listing_id": 555, "state": "draft"})
+    )
+    adapter = _write_adapter(tmp_path)
+    adapter.create_draft_listing(_spec(tags=[]))
+
+    sent = route.calls.last.request
+    body = dict(urllib.parse.parse_qsl(sent.content.decode(), keep_blank_values=True))
+    assert "tags" not in body
 
 
 @respx.mock

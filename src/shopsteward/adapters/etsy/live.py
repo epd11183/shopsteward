@@ -5,6 +5,7 @@ below stays separately gated (live_etsy_write_open(), M5a) -- this class has
 no write methods at all, so the read path can never reach one."""
 
 import httpx
+import pydantic
 
 from shopsteward.adapters.etsy.auth import EtsyTokenAuth, EtsyTokenStore, api_key_header
 from shopsteward.adapters.etsy.interface import EtsyWriteError
@@ -21,6 +22,34 @@ from shopsteward.adapters.etsy.models import (
 
 BASE = "https://openapi.etsy.com/v3/application"
 _LISTING_STATES = ("active", "expired")
+
+
+def _encode_form_data(model: pydantic.BaseModel) -> dict[str, str | bool | int | float]:
+    """Etsy's form-urlencoded array fields (tags, materials, ...) are a
+    SINGLE comma-joined value, not JSON and not a repeated key -- a bare
+    list passed to httpx's `data=` serializes as repeated `tags=a&tags=b&...`
+    (doseq), and Etsy's parser keeps only the last one, silently truncating
+    to one tag. Confirmed live (real PATCH): 10 proposed tags landed as 1.
+    An empty list is skipped entirely (never sent as `tags=`) -- Etsy reads
+    an explicit empty value as "clear this field", and nothing here means to
+    do that; absent is the safe, conservative no-op. NOTE: this means
+    `listing.seo_edit`'s undo() can never restore a listing that legitimately
+    had zero tags before an edit -- pre-existing behavior, not a regression,
+    but worth being explicit about since a silent no-op during a rollback is
+    exactly the kind of thing that's confusing during an incident.
+
+    Shared by update_listing() and create_draft_listing() so the two write
+    paths can never diverge on this again. This function does NOT itself
+    reject a tag containing a literal comma -- that would corrupt the
+    comma-join below into extra tags on Etsy's side, undetectably. Every
+    caller that can put LLM- or operator-authored tag content in front of
+    this encoder MUST validate it first via
+    `adapters.copy.tags.validate_tag` (or a Pydantic field_validator that
+    calls it, as `CopyVerdict` and `GateEditFields` do) -- the invariant is
+    "validated before this function is ever reached", not a fixed list of
+    call sites to keep in sync here."""
+    raw = model.model_dump(exclude_none=True)
+    return {k: ",".join(v) if isinstance(v, list) else v for k, v in raw.items() if v != []}
 
 
 def _safe_error(resp: httpx.Response) -> str | None:
@@ -104,9 +133,13 @@ class LiveEtsyWriteAdapter:
     def create_draft_listing(self, spec: EtsyDraftSpec) -> EtsyListingRef:
         # createDraftListing is application/x-www-form-urlencoded, not JSON
         # (Etsy OpenAPI spec) -- there is no `state` request field at all,
-        # the endpoint inherently creates drafts. httpx encodes list values
-        # (tags) as repeated keys and bools as lowercase "true"/"false".
-        body = self._request("POST", f"/shops/{self._shop_id}/listings", data=spec.model_dump())
+        # the endpoint inherently creates drafts. See _encode_form_data for
+        # why list fields (tags) must be comma-joined rather than left as a
+        # bare list (httpx's repeated-key doseq encoding truncates them on
+        # Etsy's side -- confirmed on the wire, same bug update_listing had).
+        body = self._request(
+            "POST", f"/shops/{self._shop_id}/listings", data=_encode_form_data(spec)
+        )
         ref = EtsyListingRef(listing_id=body["listing_id"], state=body.get("state", "draft"))
         if ref.state != "draft":
             # Never trust that blindly -- write-safety invariant (PRD §13
@@ -137,11 +170,12 @@ class LiveEtsyWriteAdapter:
         return EtsyFileRef(listing_file_id=body["listing_file_id"], rank=body.get("rank"))
 
     def update_listing(self, listing_id: int, fields: EtsyListingUpdate) -> EtsyListing:
-        # updateListing is also form-urlencoded (Etsy OpenAPI spec), not JSON.
+        # updateListing is also form-urlencoded (Etsy OpenAPI spec), not
+        # JSON -- see _encode_form_data for the comma-join/empty-list rules.
         body = self._request(
             "PATCH",
             f"/shops/{self._shop_id}/listings/{listing_id}",
-            data=fields.model_dump(exclude_none=True),
+            data=_encode_form_data(fields),
         )
         return EtsyListing.model_validate(body)
 

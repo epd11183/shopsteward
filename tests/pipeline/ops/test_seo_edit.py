@@ -236,6 +236,7 @@ def test_materialize_ignores_a_description_key_entirely(conn):
         {"tags": []},  # empty tags list
         {"tags": ["ok", ""]},  # an empty tag in the list
         {"tags": "not-a-list"},  # non-list tags
+        {"tags": ["black, white", "red"]},  # a tag containing a comma
         {"title": "Loon at Dusk", "tags": ["loon"]},  # matches current -- no-op
     ],
 )

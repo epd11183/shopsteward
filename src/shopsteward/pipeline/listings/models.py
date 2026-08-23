@@ -6,14 +6,19 @@ PricingRules and Economics here, and re-exports CopyInputs from
 adapters.copy.interface (VisionVerdict precedent -- see that module's
 docstring for why CopyInputs is owned by the adapter, not here). Slice 4
 (Gate 3) adds Gate3Card (queue read model) and GateEditFields (partial-edit
-input validation -- tag count/length rules mirror adapters.copy.interface's
-CopyVerdict but stay separate since every field here is optional, a Gate 3
-edit touches only the fields the operator actually changed).
+input validation -- every field here is optional, a Gate 3 edit touches
+only the fields the operator actually changed). Per-tag content validation
+(blank/length/comma) is shared with adapters.copy.interface's CopyVerdict
+via adapters.copy.tags.validate_tag; the count/length ceilings
+(MAX_TAGS/MAX_TAG_LEN) come from the same module.
 """
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from shopsteward.adapters.copy.interface import CopyInputs
+from shopsteward.adapters.copy.tags import MAX_TAG_LEN as _MAX_TAG_LEN
+from shopsteward.adapters.copy.tags import MAX_TAGS as _MAX_TAGS
+from shopsteward.adapters.copy.tags import validate_tag
 
 __all__ = [
     "AssetStoreConfig",
@@ -153,10 +158,6 @@ class Economics(BaseModel):
     margin_pct: float = 0.0
 
 
-_MAX_TAGS = 13
-_MAX_TAG_LEN = 20
-
-
 class GateEditFields(BaseModel):
     """Partial Gate 3 edit -- every field is optional (decision 40: edits are
     never required); only fields present get validated, persisted, and sent
@@ -173,10 +174,7 @@ class GateEditFields(BaseModel):
         if tags is None:
             return tags
         for tag in tags:
-            if not tag.strip():
-                raise ValueError("empty tag not allowed (Etsy rejects blank tags)")
-            if len(tag) > _MAX_TAG_LEN:
-                raise ValueError(f"tag {tag!r} exceeds {_MAX_TAG_LEN} chars")
+            validate_tag(tag, max_len=_MAX_TAG_LEN)
         return tags
 
 

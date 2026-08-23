@@ -219,6 +219,18 @@ def test_edit_rejects_empty_tag(conn, tmp_path):
         gate3.edit(conn, USER_ID, draft_id, {"tags": ["  "]}, adapter)
 
 
+def test_edit_rejects_tag_containing_comma(conn, tmp_path):
+    # Etsy's write path comma-joins tags into a single form field
+    # (adapters/etsy/live.py::_encode_form_data) -- a tag containing a
+    # literal comma would silently split into extra tags on the wire,
+    # undetectable server-side.
+    adapter = FakeEtsyWriteAdapter()
+    draft_id = _build_one_pushed_draft(conn, tmp_path, adapter)
+
+    with pytest.raises(ValueError):
+        gate3.edit(conn, USER_ID, draft_id, {"tags": ["black, white", "red"]}, adapter)
+
+
 def test_edit_no_fields_is_an_error(conn, tmp_path):
     adapter = FakeEtsyWriteAdapter()
     draft_id = _build_one_pushed_draft(conn, tmp_path, adapter)

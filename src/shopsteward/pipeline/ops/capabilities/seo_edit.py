@@ -45,6 +45,9 @@ from datetime import UTC, datetime, timedelta
 
 import pydantic
 
+from shopsteward.adapters.copy.tags import MAX_TAG_LEN as _MAX_TAG_LEN
+from shopsteward.adapters.copy.tags import MAX_TAGS as _MAX_TAGS
+from shopsteward.adapters.copy.tags import validate_tag
 from shopsteward.adapters.etsy.interface import EtsyWriteAdapter
 from shopsteward.adapters.etsy.models import EtsyListing, EtsyListingUpdate
 from shopsteward.adapters.planner.interface import ProposalIntent
@@ -54,13 +57,11 @@ from shopsteward.pipeline.ops.config import get_ops_config, ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
 from shopsteward.pipeline.ops.registry import compute_action_id
 
-# Etsy's real field limits (not tuning knobs -- adapters/copy/interface.py's
-# CopyVerdict enforces the same numbers on the deterministic listing-copy
-# path; kept as local constants here rather than imported since those are
-# private to that module).
+# Etsy's real field limits. _MAX_TITLE_LEN has no tag-content counterpart
+# (adapters/copy/tags.py owns MAX_TAGS/MAX_TAG_LEN, shared with
+# adapters/copy/interface.py's CopyVerdict and pipeline/listings/models.py's
+# GateEditFields).
 _MAX_TITLE_LEN = 140
-_MAX_TAGS = 13
-_MAX_TAG_LEN = 20
 
 
 @dataclass(frozen=True)
@@ -145,8 +146,13 @@ def _validate_params(params: dict, target: _Target) -> dict[str, str | list[str]
     if tags is not None:
         if not isinstance(tags, list) or not (1 <= len(tags) <= _MAX_TAGS):
             return None
-        if not all(isinstance(t, str) and 1 <= len(t) <= _MAX_TAG_LEN for t in tags):
+        if not all(isinstance(t, str) for t in tags):
             return None
+        try:
+            for t in tags:
+                validate_tag(t, max_len=_MAX_TAG_LEN)
+        except ValueError:
+            return None  # drop, never clamp -- see module docstring
         new_tags = tags
 
     changed: dict[str, str | list[str]] = {}

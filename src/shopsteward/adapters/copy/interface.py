@@ -12,9 +12,11 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field, field_validator
 
+from shopsteward.adapters.copy.tags import MAX_TAG_LEN as _MAX_TAG_LEN
+from shopsteward.adapters.copy.tags import MAX_TAGS as _MAX_TAGS
+from shopsteward.adapters.copy.tags import validate_tag
+
 _MAX_TITLE_LEN = 140
-_MAX_TAGS = 13
-_MAX_TAG_LEN = 20
 
 
 class CopyInputs(BaseModel):
@@ -44,10 +46,7 @@ class CopyVerdict(BaseModel):
     @classmethod
     def _tags_within_length(cls, tags: list[str]) -> list[str]:
         for tag in tags:
-            if not tag.strip():
-                raise ValueError("empty tag not allowed (Etsy rejects blank tags)")
-            if len(tag) > _MAX_TAG_LEN:
-                raise ValueError(f"tag {tag!r} exceeds {_MAX_TAG_LEN} chars")
+            validate_tag(tag, max_len=_MAX_TAG_LEN)
         return tags
 
 

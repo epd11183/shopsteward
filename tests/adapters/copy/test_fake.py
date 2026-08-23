@@ -78,3 +78,12 @@ def test_copy_verdict_rejects_title_too_long():
 def test_copy_verdict_requires_description():
     with pytest.raises(ValidationError):
         CopyVerdict(title="t", tags=["a"] * 13)
+
+
+def test_copy_verdict_rejects_tag_containing_comma():
+    # Etsy's write path comma-joins tags into a single form field; a tag
+    # containing a literal comma would silently split into extra tags on
+    # the wire (undetectable server-side -- each fragment is individually
+    # valid). Reject at the source instead.
+    with pytest.raises(ValidationError):
+        CopyVerdict(title="t", tags=["black, white", "red"], description="d")
