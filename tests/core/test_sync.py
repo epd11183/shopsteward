@@ -82,6 +82,24 @@ def test_read_live_observed_excludes_fixture_rows_that_predate_the_real_shop(con
     assert [e.payload["listing_id"] for e in events] == [1820850226]
 
 
+def test_read_live_observed_anchors_on_first_shop_observed_not_latest(conn, tmp_path):
+    # Real shop.observed, then a real sale, then a SECOND real shop.observed
+    # for the same shop (a second `sync --live` call), then a second sale.
+    # Both sales must be visible -- the anchor must not advance past the
+    # first one and orphan the sale from the earlier real sync.
+    append(conn, Event(user_id=1, type="etsy.shop.observed", payload={"shop_id": 52644245}))
+    append(conn, Event(user_id=1, type="etsy.sale.observed", payload={"receipt_id": 1}))
+    append(conn, Event(user_id=1, type="etsy.shop.observed", payload={"shop_id": 52644245}))
+    append(conn, Event(user_id=1, type="etsy.sale.observed", payload={"receipt_id": 2}))
+
+    store = EtsyTokenStore(path=tmp_path / "etsy_tokens.json")
+    store.save(_tokens(52644245))
+
+    events = read_live_observed(conn, "etsy.sale.observed", token_store=store)
+
+    assert [e.payload["receipt_id"] for e in events] == [1, 2]
+
+
 def test_read_live_observed_falls_back_unfiltered_with_no_matching_anchor(conn, tmp_path):
     # No etsy.shop.observed at all for the configured shop -- nothing to
     # anchor against, so everything is returned (fresh DB / directly-seeded

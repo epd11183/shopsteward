@@ -22,14 +22,22 @@ def read_live_observed(
     token_store: EtsyTokenStore | None = None,
 ) -> list[Event]:
     """Read `etsy.listing.observed` / `etsy.sale.observed` events, excluding
-    any rows that predate the most recent `etsy.shop.observed` for the shop
-    currently configured in the Etsy token store.
+    any rows that predate the FIRST (earliest) `etsy.shop.observed` for the
+    shop currently configured in the Etsy token store.
+
+    The anchor is the earliest match, not the latest: `sync --live` appends a
+    fresh `etsy.shop.observed` event on every call, so a shop's identity
+    anchor is a one-time boundary (fixture-era junk vs. this shop's real
+    history), not a moving cursor. Anchoring on the latest shop.observed
+    would silently advance forward on every subsequent sync and orphan
+    listing/sale events from every earlier *real* sync too -- not just the
+    original fixture pollution.
 
     Guards against a dev DB polluted by a `--fixtures` sync (tiny synthetic
     shop/listing/receipt ids) that predates a later real `--live` sync
     against the operator's actual shop: those fixture rows have no shop_id
     field of their own to filter by, but they necessarily precede the real
-    shop's `etsy.shop.observed` anchor in row-id order.
+    shop's first `etsy.shop.observed` anchor in row-id order.
 
     Falls back to returning everything unfiltered when there's nothing to
     anchor against yet -- no stored Etsy auth (most of the test suite), or
@@ -48,7 +56,8 @@ def read_live_observed(
     anchor_id: int | None = None
     for e in read_all(conn, "etsy.shop.observed"):
         if e.payload.get("shop_id") == shop_id:
-            anchor_id = e.id  # read_all is id-ordered, so the last match wins
+            anchor_id = e.id  # read_all is id-ordered, so the first match wins
+            break
     if anchor_id is None:
         return events
 
