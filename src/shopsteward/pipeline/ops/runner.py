@@ -58,12 +58,34 @@ def run(
     today: date | None = None,
     proposals: list[ProposedAction] | None = None,
 ) -> RunReport:
-    """When `proposals` is given (the M8b planner path, `planner.plan_proposals()`
-    output), the runner uses THAT list instead of calling each capability's
-    own `propose()` -- everything downstream (idempotency by action_id,
-    govern, T2-queue/T0-T1-execute, events) is byte-for-byte identical to the
-    deterministic path. `proposals=None` (the default) is today's unchanged
-    behavior."""
+    """Every capability's own `propose()` ALWAYS runs, planner or not -- a
+    deterministic capability (listing.renew/autorenew_off/autorenew_on/
+    deactivate/gapfill_reprint/tune_threshold) must never lose real,
+    eligible candidates just because an LLM planning round didn't happen to
+    name them. When `proposals` is given (the M8b planner path,
+    `planner.plan_proposals()` output), it is merged in per capability, but
+    ONLY for targets the capability's own `propose()` did NOT already cover:
+    the planner's job (per `_build_facts_json`'s "target discovery, not
+    trust" framing) is to surface targets deterministic logic MISSED, not to
+    offer a competing alternative for one it already found. For a
+    planner-only capability (e.g. listing.seo_edit/caption_draft, whose
+    `propose()` always returns `[]`), this is simply the planner's full list.
+    For `listing.reprice` -- a genuine HYBRID whose own `propose()` can
+    return a real deterministic default price change for a listing the
+    planner *also* independently priced -- this target_id-level filter is
+    load-bearing: without it, both the deterministic and the planner's
+    alternate price for the SAME listing would survive (different prices ->
+    different inputs_hash -> different action_id, so a plain action_id dedup
+    would not catch it), showing the operator two competing reprice
+    proposals for one listing. The deterministic default always wins; the
+    planner's proposal for that target_id is dropped. Any remaining
+    planner-vs-deterministic exact duplicate (identical action_id) is then
+    also deduped, though after the target_id filter that can only happen if
+    the planner independently re-derives the identical proposal -- a subset
+    case, not the primary mechanism. Everything downstream (idempotency by
+    action_id, govern, T2-queue/T0-T1-execute, events) is unchanged.
+    `proposals=None` (the default) is today's behavior: only `propose()`
+    runs."""
     report = RunReport(dry_run=dry_run)
     if not cfg.autonomy.enabled:
         return report
@@ -79,11 +101,16 @@ def run(
 
     for cap in capabilities:
         eff_tier = effective_tier(cap, states.get(cap.key))
-        cap_proposals = (
-            proposals_by_cap.get(cap.key, [])
-            if proposals_by_cap is not None
-            else cap.propose(conn, user_id, cfg)
-        )
+        own_proposals = cap.propose(conn, user_id, cfg)
+        cap_proposals = own_proposals
+        if proposals_by_cap is not None:
+            own_action_ids = {a.action_id for a in own_proposals}
+            own_target_ids = {a.target_id for a in own_proposals}
+            cap_proposals = own_proposals + [
+                a
+                for a in proposals_by_cap.get(cap.key, [])
+                if a.target_id not in own_target_ids and a.action_id not in own_action_ids
+            ]
         for action in cap_proposals:
             action = action.model_copy(update={"tier": eff_tier})
             status = _action_status(conn, user_id, action.action_id)
