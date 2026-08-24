@@ -120,7 +120,7 @@ class LiveEtsyAdapter:
         # endpoint (e.g. an old/expired listing) -- treat that as "no
         # images", same as an empty results list, instead of raising.
         try:
-            body = self._get(f"/shops/{self._shop_id}/listings/{listing_id}/images")
+            body = self._get(f"/listings/{listing_id}/images")
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
                 return []
