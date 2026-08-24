@@ -28,7 +28,11 @@ TOKEN_URL = "https://api.etsy.com/v3/public/oauth/token"
 CONNECT_URL = "https://www.etsy.com/oauth/connect"
 SHOPS_URL = "https://openapi.etsy.com/v3/application/users/{user_id}/shops"
 # listings_w added for M5a per PRD decision 41 (operator-approved re-consent).
-DEFAULT_SCOPES = ("listings_r", "listings_w", "transactions_r", "shops_r")
+# feedback_r added for the review-velocity read (roadmap P4) -- read-only,
+# getReviewsByShop. Etsy tokens don't retroactively gain scopes, so this is
+# inert for any token already on disk until the operator re-runs
+# `shopsteward etsy auth`.
+DEFAULT_SCOPES = ("listings_r", "listings_w", "transactions_r", "shops_r", "feedback_r")
 DEFAULT_PORT = 8322
 REDIRECT_PATH = "/oauth/redirect"
 

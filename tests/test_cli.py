@@ -25,7 +25,7 @@ def test_ingest_requires_mode(tmp_path: Path) -> None:
 
 
 class _SpyReadAdapter:
-    """Stands in for LiveEtsyAdapter: exposes only the three read methods
+    """Stands in for LiveEtsyAdapter: exposes only the read methods
     (no create/update/publish/delete at all) and records every call so a
     test can assert the write surface is unreachable from `sync --live`."""
 
@@ -42,6 +42,10 @@ class _SpyReadAdapter:
 
     def list_receipts(self, min_created: int | None = None) -> list[EtsyReceipt]:
         self.calls.append("list_receipts")
+        return []
+
+    def list_reviews(self) -> list[Any]:
+        self.calls.append("list_reviews")
         return []
 
 
@@ -118,7 +122,7 @@ def test_sync_live_gate_open_calls_only_read_methods(monkeypatch, tmp_path: Path
     result = runner.invoke(app, ["sync", "--live"])
 
     assert result.exit_code == 0, result.output
-    assert spy.calls == ["get_shop", "list_listings", "list_receipts"]
+    assert spy.calls == ["get_shop", "list_listings", "list_receipts", "list_reviews"]
     # LiveEtsyAdapter (and this spy standing in for it) carries no write
     # method at all -- the read sync path can never reach one.
     for write_method in (

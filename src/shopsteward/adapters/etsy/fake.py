@@ -14,6 +14,7 @@ from shopsteward.adapters.etsy.models import (
     EtsyListingRef,
     EtsyListingUpdate,
     EtsyReceipt,
+    EtsyReview,
     EtsyShop,
     Money,
 )
@@ -37,6 +38,9 @@ class FixtureEtsyAdapter:
         if min_created is not None:
             receipts = [r for r in receipts if r.created_timestamp >= min_created]
         return receipts
+
+    def list_reviews(self) -> list[EtsyReview]:
+        return [EtsyReview.model_validate(r) for r in self._load("reviews")["results"]]
 
     def get_listing_images(self, listing_id: int) -> list[EtsyListingImage]:
         # listing_images.json maps listing_id (string key, JSON has no int

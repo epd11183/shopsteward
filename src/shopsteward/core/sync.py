@@ -2,6 +2,7 @@
 
 import sqlite3
 
+import httpx
 from pydantic import BaseModel
 
 from shopsteward.adapters.etsy.auth import EtsyTokenStore
@@ -14,6 +15,7 @@ class SyncResult(BaseModel):
     listings: int = 0
     listing_images: int = 0
     receipts: int = 0
+    reviews: int = 0
 
 
 def read_live_observed(
@@ -110,4 +112,27 @@ def sync_etsy(conn: sqlite3.Connection, adapter: EtsyAdapter, user_id: int) -> S
             Event(user_id=user_id, type="etsy.sale.observed", payload=receipt.model_dump()),
         )
         result.receipts += 1
+
+    # feedback_r is a new scope (roadmap P4) -- no token on disk holds it
+    # yet, so the real API 403s until the operator re-runs
+    # `shopsteward etsy auth`. That's expected, not a sync failure: skip
+    # just this piece and let shops/listings/images/receipts keep working.
+    try:
+        reviews = adapter.list_reviews()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 403:
+            print(
+                "skipping reviews: feedback_r scope not yet granted, "
+                "re-run `shopsteward etsy auth` to enable"
+            )
+        else:
+            raise
+    else:
+        for review in reviews:
+            append(
+                conn,
+                Event(user_id=user_id, type="etsy.review.observed", payload=review.model_dump()),
+            )
+            result.reviews += 1
+
     return result

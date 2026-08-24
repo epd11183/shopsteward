@@ -30,6 +30,15 @@ def test_get_listing_images_unknown_listing_returns_empty() -> None:
     assert adapter.get_listing_images(999999) == []
 
 
+def test_list_reviews_returns_fixture_rows() -> None:
+    adapter = FixtureEtsyAdapter(FIXTURES)
+    reviews = adapter.list_reviews()
+    assert len(reviews) == 2
+    assert reviews[0].listing_id == 111
+    assert reviews[0].rating == 5
+    assert reviews[1].review == ""
+
+
 def test_download_image_reads_fixture_bytes() -> None:
     adapter = FixtureEtsyAdapter(FIXTURES)
     images = adapter.get_listing_images(111)

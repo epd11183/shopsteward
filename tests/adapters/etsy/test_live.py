@@ -66,6 +66,40 @@ def test_pagination_follows_count() -> None:
 
 
 @respx.mock
+def test_list_reviews_paginates_and_parses() -> None:
+    def pager(request: httpx.Request) -> httpx.Response:
+        offset = int(dict(request.url.params)["offset"])
+        row = {
+            "shop_id": 100001,
+            "listing_id": offset + 1,
+            "transaction_id": offset + 1000,
+            "buyer_user_id": 500003,
+            "rating": 5,
+            "review": "great",
+            "language": "en",
+            "create_timestamp": 1753246400,
+        }
+        return httpx.Response(200, json={"count": 150, "results": [row]})
+
+    respx.get(f"{BASE}/shops/100001/reviews").mock(side_effect=pager)
+    adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
+    reviews = adapter.list_reviews()
+    assert len(reviews) == 2  # offsets 0 and 100
+    assert {r.listing_id for r in reviews} == {1, 101}
+
+
+@respx.mock
+def test_list_reviews_raises_on_403_insufficient_scope() -> None:
+    respx.get(f"{BASE}/shops/100001/reviews").mock(
+        return_value=httpx.Response(403, json={"error": "insufficient_scope"})
+    )
+    adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        adapter.list_reviews()
+    assert exc_info.value.response.status_code == 403
+
+
+@respx.mock
 def test_get_listing_images_parses_results() -> None:
     respx.get(f"{BASE}/listings/555/images").mock(
         return_value=httpx.Response(

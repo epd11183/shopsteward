@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import httpx
 import pytest
 
 from shopsteward.adapters.etsy.auth import EtsyTokens, EtsyTokenStore
@@ -37,6 +38,52 @@ def test_sync_appends_listing_images_observed_per_listing(conn):
         {"listing_image_id": 9001, "rank": 1, "url_570xN": "sample_listing.jpg"}
     ]
     assert by_listing[222] == []  # no fixture row for this listing -- empty is valid
+
+
+def test_sync_appends_review_observed_events(conn):
+    result = sync_etsy(conn, FixtureEtsyAdapter(FIXTURES), user_id=1)
+    assert result.reviews == 2
+    events = read_all(conn, "etsy.review.observed")
+    assert len(events) == 2
+    assert events[0].payload == {
+        "shop_id": 100001,
+        "listing_id": 111,
+        "transaction_id": 8001,
+        "buyer_user_id": 500003,
+        "rating": 5,
+        "review": "scrubbed-review-text",
+        "language": "en",
+        "create_timestamp": 1753246400,
+    }
+
+
+class _NoScopeAdapter:
+    """Wraps a real adapter but 403s on list_reviews -- stands in for a
+    token that hasn't been re-authed with feedback_r yet."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def list_reviews(self):
+        raise httpx.HTTPStatusError(
+            "insufficient scope",
+            request=httpx.Request("GET", "https://openapi.etsy.com/x"),
+            response=httpx.Response(403, json={"error": "insufficient_scope"}),
+        )
+
+
+def test_sync_skips_reviews_gracefully_on_403(conn, capsys):
+    adapter = _NoScopeAdapter(FixtureEtsyAdapter(FIXTURES))
+    result = sync_etsy(conn, adapter, user_id=1)
+
+    assert result.reviews == 0
+    assert read_all(conn, "etsy.review.observed") == []
+    # everything else still ran normally
+    assert result.shops == 1 and result.listings == 7 and result.receipts == 10
+    assert "feedback_r scope not yet granted" in capsys.readouterr().out
 
 
 def test_resync_is_incremental_on_receipts(conn):

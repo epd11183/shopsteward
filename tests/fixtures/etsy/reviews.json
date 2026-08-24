@@ -1,0 +1,25 @@
+{
+  "count": 2,
+  "results": [
+    {
+      "shop_id": 100001,
+      "listing_id": 111,
+      "transaction_id": 8001,
+      "buyer_user_id": 500003,
+      "rating": 5,
+      "review": "scrubbed-review-text",
+      "language": "en",
+      "create_timestamp": 1753246400
+    },
+    {
+      "shop_id": 100001,
+      "listing_id": 222,
+      "transaction_id": 8002,
+      "buyer_user_id": 500004,
+      "rating": 4,
+      "review": "",
+      "language": "en",
+      "create_timestamp": 1753332800
+    }
+  ]
+}

@@ -61,6 +61,24 @@ class EtsyTransaction(BaseModel):
     price: Money
 
 
+class EtsyReview(BaseModel):
+    """getReviewsByShop response row (feedback_r scope, new -- see
+    auth.DEFAULT_SCOPES). Etsy's Review object has no dedicated review id
+    field; a review is uniquely identified by the (shop_id, listing_id,
+    transaction_id) triple (Etsy allows at most one review per
+    transaction), so those three fields are kept rather than inventing an
+    id. `review` may be an empty string (a rating with no written text)."""
+
+    shop_id: int
+    listing_id: int
+    transaction_id: int
+    buyer_user_id: int | None = None
+    rating: int
+    review: str = ""
+    language: str | None = None
+    create_timestamp: int
+
+
 class EtsyReceipt(BaseModel):
     receipt_id: int
     created_timestamp: int

@@ -11,6 +11,7 @@ from shopsteward.adapters.etsy.models import (
     EtsyListingRef,
     EtsyListingUpdate,
     EtsyReceipt,
+    EtsyReview,
     EtsyShop,
 )
 
@@ -21,6 +22,13 @@ class EtsyAdapter(Protocol):
     def get_shop(self) -> EtsyShop: ...
     def list_listings(self) -> list[EtsyListing]: ...
     def list_receipts(self, min_created: int | None = None) -> list[EtsyReceipt]: ...
+    def list_reviews(self) -> list[EtsyReview]:
+        """getReviewsByShop (feedback_r scope, new -- roadmap P4 "review
+        velocity"). Raises the adapter's normal HTTP-error behavior on
+        failure; a 403 for missing scope is handled by the caller
+        (core.sync.sync_etsy), not swallowed here."""
+        ...
+
     def get_listing_images(self, listing_id: int) -> list[EtsyListingImage]:
         """Returns [] if the listing has no images available (including a
         404 from the images endpoint, e.g. an old/expired listing) -- not

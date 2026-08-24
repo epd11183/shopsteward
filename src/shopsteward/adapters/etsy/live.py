@@ -20,6 +20,7 @@ from shopsteward.adapters.etsy.models import (
     EtsyListingRef,
     EtsyListingUpdate,
     EtsyReceipt,
+    EtsyReview,
     EtsyShop,
 )
 
@@ -134,6 +135,15 @@ class LiveEtsyAdapter:
         params: dict[str, int] = {"min_created": min_created} if min_created is not None else {}
         rows = self._paginate(f"/shops/{self._shop_id}/receipts", **params)
         return [EtsyReceipt.model_validate(r) for r in rows]
+
+    def list_reviews(self) -> list[EtsyReview]:
+        # getReviewsByShop -- requires feedback_r, a scope no token on disk
+        # holds yet (see auth.DEFAULT_SCOPES). Routes through _get/_paginate
+        # like every other read here, so it inherits the 429-retry behavior;
+        # a 403 (missing scope) surfaces as httpx.HTTPStatusError and is
+        # handled by sync_etsy(), not here.
+        rows = self._paginate(f"/shops/{self._shop_id}/reviews")
+        return [EtsyReview.model_validate(r) for r in rows]
 
     def get_listing_images(self, listing_id: int) -> list[EtsyListingImage]:
         # A 404 here means the listing has no images available at this
