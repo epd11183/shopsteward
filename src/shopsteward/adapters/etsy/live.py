@@ -24,7 +24,7 @@ from shopsteward.adapters.etsy.models import (
 )
 
 BASE = "https://openapi.etsy.com/v3/application"
-_LISTING_STATES = ("active", "expired")
+_LISTING_STATES = ("active", "expired", "sold_out")
 # Etsy's image CDN hosts (url_570xN values observed on real listings) --
 # download_image() only ever needs to fetch from these, so anything else is
 # rejected outright rather than followed (closes an SSRF-shape gap: an
@@ -119,8 +119,12 @@ class LiveEtsyAdapter:
         # getListingsByShop (not findAllListingsActiveByShop) so expired
         # listings aren't invisible to a "what's dying" analysis -- same
         # listings_r scope, just a `state` filter on the general listings
-        # endpoint instead of the active-only one. draft/sold_out are not
-        # fetched here; add states to _LISTING_STATES if that's ever needed.
+        # endpoint instead of the active-only one. sold_out is included --
+        # Etsy's own shop dashboard counts sold_out listings as part of its
+        # "active listings" figure (discovered 2026-08-24: our sync showed
+        # 29 active against Etsy's own dashboard reporting 34; the gap was
+        # exactly the sold_out listings this fetch was skipping). draft is
+        # still not fetched -- add it here if that's ever needed.
         rows: list[dict] = []
         for state in _LISTING_STATES:
             rows.extend(self._paginate(f"/shops/{self._shop_id}/listings", state=state))

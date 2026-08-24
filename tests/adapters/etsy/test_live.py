@@ -37,10 +37,15 @@ def test_list_listings_fetches_active_and_expired_and_parses() -> None:
             200, json={"count": 1, "results": [_listing_row(222, "expired")]}
         )
     )
+    respx.get(f"{BASE}/shops/100001/listings", params={"state": "sold_out"}).mock(
+        return_value=httpx.Response(
+            200, json={"count": 1, "results": [_listing_row(333, "sold_out")]}
+        )
+    )
     adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
     listings = adapter.list_listings()
-    assert {listing.listing_id for listing in listings} == {111, 222}
-    assert {listing.state for listing in listings} == {"active", "expired"}
+    assert {listing.listing_id for listing in listings} == {111, 222, 333}
+    assert {listing.state for listing in listings} == {"active", "expired", "sold_out"}
     sent = respx.calls.last.request
     assert sent.headers["x-api-key"] == "k"
     assert sent.headers["authorization"] == "Bearer tok"
@@ -56,8 +61,8 @@ def test_pagination_follows_count() -> None:
 
     respx.get(f"{BASE}/shops/100001/listings").mock(side_effect=pager)
     adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
-    # count=150 -> offsets 0 and 100, times 2 states (active, expired)
-    assert len(adapter.list_listings()) == 4
+    # count=150 -> offsets 0 and 100, times 3 states (active, expired, sold_out)
+    assert len(adapter.list_listings()) == 6
 
 
 @respx.mock
