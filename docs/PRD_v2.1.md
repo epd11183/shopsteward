@@ -435,6 +435,28 @@ to each RAW for Lightroom to read on import. See
 design and `docs/superpowers/plans/2026-08-09-raw-auto-edit-engine.md` for
 the implementation plan.
 
+### Amendment (2026-08-24): the 2026-08-09 deferral above is superseded — shop-building is active, autonomous, and live
+
+M8a (autonomy chassis: capability registry, tier engine, governor, runner)
+and M8b (LLM shop-manager: `listing.renew`, `listing.seo_edit`,
+`listing.reprice`, `listing.autorenew_on/off`, `listing.gapfill_reprint`,
+`social.caption_draft`, `social.pinterest_post`) are built and running
+against the real, live shop (52644245) — not a hero-mode/manual-winners-
+folder precondition as the 2026-08-09 amendment above assumed. `CLAUDE.md`'s
+"Governance & decision authority" section (rewritten 2026-08-24, explicit
+operator authorization) is now the normative source for what requires
+operator approval versus what's delegated — this PRD's §8.1/§8.2 sub-agent
+process still applies to *how* work gets built, but no longer gates
+architecture/adapter/dependency/external-service decisions the way it did
+when originally written. See `docs/research/2026-08-24-etsy-path-to-
+profitability.md` for the current ground-truth business state and plan,
+and `docs/designs/2026-08-24-pinterest-adapter-and-loop-roadmap.md` for the
+active Pinterest build and its phased roadmap (P0–P6). M3–M5's *specific*
+superseded scope (hero-mode viability scoring, the mockup compositor, the
+Gate-3 curation UI) remains superseded as described above — this amendment
+only lifts the blanket "shop-building is deferred" framing, not those
+specific abandoned features.
+
 ## 11. Success Metrics
 
 Unchanged from PRD v2, plus:
