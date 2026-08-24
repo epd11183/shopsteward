@@ -45,7 +45,8 @@ def test_render_text_contains_the_shop_section_and_the_shop_section_is_unaffecte
     assert "NEEDS YOU (0)" in text
     assert "DONE (0)" in text
     assert "REFUSED (0)" in text
-    assert "autonomy: OFF" in text  # shipped default: autonomy.enabled=False
+    assert "autonomy: ON" in text  # defaults: autonomy.enabled=True (2026-08-24)
+    assert "$20.00 cap" in text
     # DONE OVERNIGHT was the draft mockup's literal label; the shipped
     # section header is "DONE" (see draft §6 vs the PR3 contract's §8).
     assert "DONE OVERNIGHT" not in text

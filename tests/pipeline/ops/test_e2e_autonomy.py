@@ -42,7 +42,7 @@ def _cfg(**autonomy_overrides):
 
 def test_1_disabled_autonomy_run_is_a_total_noop(conn):
     cfg = ops_config.load_ops_config()
-    assert cfg.autonomy.enabled is False
+    cfg.autonomy.enabled = False
     cap = StubCapability(targets={"111": {"on": True}, "222": {"on": True}})
 
     report = run(conn, USER_ID, cfg, [cap], today=TODAY)

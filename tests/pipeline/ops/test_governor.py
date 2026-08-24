@@ -88,9 +88,9 @@ def test_refuses_when_precondition_fails(conn):
     assert decision.reason == RefusalReason.PRECONDITION
 
 
-def test_budget_refuses_any_positive_cost_at_the_zero_default_cap(conn):
+def test_budget_refuses_any_positive_cost_at_a_zero_cap(conn):
     cfg = _cfg()
-    assert cfg.autonomy.monthly_spend_cap_usd == 0.00
+    cfg.autonomy.monthly_spend_cap_usd = 0.00
     action = _action(estimated_cost_usd=0.01)
     cap = StubCapability()
     decision = govern(conn, USER_ID, action, cap, cfg, TODAY)
@@ -98,8 +98,9 @@ def test_budget_refuses_any_positive_cost_at_the_zero_default_cap(conn):
     assert decision.reason == RefusalReason.BUDGET
 
 
-def test_budget_passes_at_zero_cost_with_the_zero_default_cap(conn):
+def test_budget_passes_at_zero_cost_with_a_zero_cap(conn):
     cfg = _cfg()
+    cfg.autonomy.monthly_spend_cap_usd = 0.00
     action = _action(estimated_cost_usd=0.0)
     cap = StubCapability()
     decision = govern(conn, USER_ID, action, cap, cfg, TODAY)
@@ -198,6 +199,7 @@ def test_precedence_policy_unverified_beats_precondition(conn):
 
 def test_precedence_budget_beats_daily_cap(conn):
     cfg = _cfg()
+    cfg.autonomy.monthly_spend_cap_usd = 0.00
     cfg.autonomy.daily_action_cap = 1
     append(
         conn,

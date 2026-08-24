@@ -9,11 +9,13 @@ USER_ID = 1
 
 def test_autonomy_block_loads_from_real_defaults_file():
     cfg = ops_config.load_ops_config()
-    assert cfg.autonomy.enabled is False
-    assert cfg.autonomy.monthly_spend_cap_usd == 0.00
-    assert cfg.autonomy.daily_action_cap == 10
-    assert cfg.autonomy.per_capability_daily_cap == 5
-    assert cfg.autonomy.weekly_catalog_pct_cap == 0.10
+    # Operator-authorized live values (2026-08-24 governance rewrite):
+    # autonomy on, $20/month cap; volume caps loosened (revert planned).
+    assert cfg.autonomy.enabled is True
+    assert cfg.autonomy.monthly_spend_cap_usd == 20.00
+    assert cfg.autonomy.daily_action_cap == 1000
+    assert cfg.autonomy.per_capability_daily_cap == 1000
+    assert cfg.autonomy.weekly_catalog_pct_cap == 1.0
     assert cfg.autonomy.proposal_ttl_days == 14
     assert cfg.autonomy.ladder.promote_approvals == 20
     assert cfg.autonomy.ladder.promote_min_days == 14
@@ -30,7 +32,7 @@ def test_autonomy_block_round_trips_through_ops_config_hash(tmp_path):
     assert h1 == h2
 
     edited = cfg.model_dump(by_alias=True)
-    edited["autonomy"]["enabled"] = True
+    edited["autonomy"]["enabled"] = not edited["autonomy"]["enabled"]
     path = tmp_path / "edited_ops.json"
     path.write_text(json.dumps(edited))
     changed_cfg = ops_config.load_ops_config(path)
@@ -51,5 +53,6 @@ def test_get_ops_config_round_trips_autonomy_after_rebuild(tmp_path):
     ops_config.seed(conn, USER_ID)
     rebuild_ops(conn)
     cfg = ops_config.get_ops_config(conn, USER_ID)
-    assert cfg.autonomy.enabled is False
-    assert cfg.autonomy.monthly_spend_cap_usd == 0.00
+    # Round-trip fidelity, not specific values: whatever the defaults file
+    # says must survive seed -> rebuild -> get unchanged.
+    assert cfg.autonomy == ops_config.load_ops_config().autonomy

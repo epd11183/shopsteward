@@ -246,14 +246,13 @@ def test_e2e_rerun_same_day_is_idempotent(conn):
     assert len(read_all(conn, "action.proposed")) == 2
 
 
-def test_e2e_zero_cost_passes_the_default_zero_dollar_budget_cap(conn):
+def test_e2e_zero_cost_passes_a_zero_dollar_budget_cap(conn):
     _seed_scenario(conn)
     fake = FakeEtsyWriteAdapter()
     fake.seed_listing(LISTING_DEAD_A, should_auto_renew=True, state="active")
     fake.seed_listing(LISTING_DEAD_B, should_auto_renew=True, state="active")
     cap = ListingAutorenewOff(fake)
-    cfg = _cfg(enabled=True, weekly_catalog_pct_cap=1.0)
-    assert cfg.autonomy.monthly_spend_cap_usd == 0.00  # shipped default, unchanged
+    cfg = _cfg(enabled=True, weekly_catalog_pct_cap=1.0, monthly_spend_cap_usd=0.00)
 
     run(conn, USER_ID, cfg, [cap], today=TODAY)
     action_id = read_all(conn, "action.proposed")[0].payload["action_id"]

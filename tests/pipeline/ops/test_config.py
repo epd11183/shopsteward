@@ -158,7 +158,10 @@ def test_apply_treats_a_stored_config_that_no_longer_validates_as_changed(conn):
 
     assert ops_config.apply(conn, USER_ID) is True
     rebuild_ops(conn)
-    assert ops_config.get_ops_config(conn, USER_ID).autonomy.enabled is False
+    # apply() lands whatever the defaults file currently says -- compare to
+    # the file rather than a hardcoded value.
+    applied = ops_config.get_ops_config(conn, USER_ID)
+    assert applied.autonomy.enabled == ops_config.load_ops_config().autonomy.enabled
 
 
 def test_ops_config_apply_cli_seeds_then_is_a_noop(tmp_path, monkeypatch):
