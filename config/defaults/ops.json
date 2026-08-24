@@ -32,7 +32,8 @@
     "data_quality": true,
     "autonomy": true,
     "captions": true,
-    "pins": true
+    "pins": true,
+    "pin_experiments": true
   },
   "reprice": {
     "min_price_usd": 3.0,

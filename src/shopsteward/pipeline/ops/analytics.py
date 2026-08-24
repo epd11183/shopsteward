@@ -23,6 +23,7 @@ from shopsteward.pipeline.ops.models import (
     DeadListing,
     ListingSales,
     OpsConfig,
+    PinExperimentResult,
     ProductTypeStat,
     RevenueWindow,
     ShootMoreSuggestion,
@@ -65,6 +66,27 @@ def _views_delta(rows: list[sqlite3.Row]) -> int | None:
     if len(rows) < 2:
         return None
     return rows[-1]["views"] - rows[0]["views"]
+
+
+def _views_rate_per_day(rows: list[sqlite3.Row], window_days: int) -> float | None:
+    """Like _views_delta, but a rate (divided by `window_days`) -- guarded
+    against a sync gap distorting that division. `rows` must include a
+    `day` column: the ACTUAL span between the first and last observation
+    must cover nearly the whole window (>= window_days - 1, i.e. what two
+    daily syncs exactly at the window's edges naturally produce) before a
+    rate is returned at all -- e.g. 2 observations 3 days apart inside a
+    7-day window must NOT be divided by 7 as if they spanned the full
+    window (that would understate the true daily rate). Same "absence, not
+    a distorted number" convention as _dead_listing_candidates's
+    min_observed_days guard: too-thin coverage returns None, never a
+    number computed from a gap."""
+    delta = _views_delta(rows)
+    if delta is None:
+        return None
+    span_days = (date.fromisoformat(rows[-1]["day"]) - date.fromisoformat(rows[0]["day"])).days
+    if span_days < window_days - 1:
+        return None
+    return delta / window_days
 
 
 def _classify_product_type(title: str, keywords: dict[str, list[str]]) -> str:
@@ -416,3 +438,83 @@ def data_quality_notes(
         )
 
     return notes
+
+
+def pin_experiment_readout(
+    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, as_of: date | None = None
+) -> list[PinExperimentResult]:
+    """P1 outcome readout (2026-08-24 design doc §3) over proj_pin_experiments
+    joined against this listing's own proj_listing_daily views history --
+    pure SQL, no LLM, no attribution claim. For each drafted pin, compares
+    the listing's views/day in the `cfg.windows.revenue_window_days` days
+    immediately before `drafted_at` (baseline) against the same-length
+    window immediately after (observed). Reuses revenue_window_days rather
+    than adding a new window knob (configuration-over-code precedent).
+
+    **Correlational only** -- a delta could be driven by anything, not
+    provably the pin. Both baseline_views_per_day and observed_views_per_day
+    are None (never 0) whenever they can't be measured yet:
+    - observed is None if fewer than window_days days have elapsed since
+      drafted_at (too early -- absence of data, not a zero reading).
+    - baseline is None if the listing's observed history doesn't reach back
+      window_days days before drafted_at (too new to have a real baseline),
+      or if there are fewer than two observations in that window
+      (`_views_delta`'s own rule).
+    Rendering the "too early"/"no baseline" cases honestly is the caller's
+    job (brief.py) -- this function never guesses a number to fill the gap.
+    """
+    as_of = _today(as_of)
+    window_days = cfg.windows.revenue_window_days
+    rows = conn.execute(
+        "SELECT listing_id, action_id, drafted_at FROM proj_pin_experiments "
+        "WHERE user_id=? ORDER BY drafted_at, action_id",
+        (user_id,),
+    ).fetchall()
+
+    out: list[PinExperimentResult] = []
+    for r in rows:
+        listing_id = r["listing_id"]
+        drafted_date = date.fromisoformat(r["drafted_at"][:10])
+
+        before_end = drafted_date - timedelta(days=1)
+        before_start = before_end - timedelta(days=window_days - 1)
+        after_start = drafted_date + timedelta(days=1)
+        after_end = after_start + timedelta(days=window_days - 1)
+
+        baseline: float | None = None
+        (min_day_str,) = conn.execute(
+            "SELECT MIN(day) FROM proj_listing_daily WHERE user_id=? AND listing_id=?",
+            (user_id, listing_id),
+        ).fetchone()
+        if min_day_str is not None and date.fromisoformat(min_day_str) <= before_start:
+            before_rows = conn.execute(
+                "SELECT day, views FROM proj_listing_daily WHERE user_id=? AND listing_id=? "
+                "AND day BETWEEN ? AND ? ORDER BY day",
+                (user_id, listing_id, before_start.isoformat(), before_end.isoformat()),
+            ).fetchall()
+            baseline = _views_rate_per_day(before_rows, window_days)
+
+        observed: float | None = None
+        if as_of >= after_end:
+            after_rows = conn.execute(
+                "SELECT day, views FROM proj_listing_daily WHERE user_id=? AND listing_id=? "
+                "AND day BETWEEN ? AND ? ORDER BY day",
+                (user_id, listing_id, after_start.isoformat(), after_end.isoformat()),
+            ).fetchall()
+            observed = _views_rate_per_day(after_rows, window_days)
+
+        delta_per_day = None if baseline is None or observed is None else observed - baseline
+
+        out.append(
+            PinExperimentResult(
+                listing_id=listing_id,
+                action_id=r["action_id"],
+                title=_title(conn, user_id, listing_id),
+                drafted_at=drafted_date.isoformat(),
+                days_since_posted=(as_of - drafted_date).days,
+                baseline_views_per_day=baseline,
+                observed_views_per_day=observed,
+                delta_views_per_day=delta_per_day,
+            )
+        )
+    return out

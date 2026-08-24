@@ -218,6 +218,11 @@ def generate_brief(
     autonomy = _autonomy_section(conn, user_id, cfg, as_of) if sections.autonomy else None
     caption_drafts = _caption_drafts(conn, user_id, as_of) if sections.captions else []
     pin_drafts = _pin_drafts(conn, user_id, as_of) if sections.pins else []
+    pin_experiments = (
+        analytics.pin_experiment_readout(conn, user_id, cfg, as_of=as_of)
+        if sections.pin_experiments
+        else []
+    )
 
     return Brief(
         generated_at=as_of,
@@ -237,6 +242,7 @@ def generate_brief(
         autonomy=autonomy,
         caption_drafts=caption_drafts,
         pin_drafts=pin_drafts,
+        pin_experiments=pin_experiments,
     )
 
 
@@ -283,6 +289,30 @@ def render_text(brief: Brief) -> str:
             lines.append(
                 f'  {p.title} -- board "{p.board_key}" -- {p.destination_url} -- "{p.description}"'
             )
+
+    if brief.pin_experiments:
+        lines.append("")
+        lines.append(
+            f"PIN EXPERIMENTS -- correlational only, NOT proof the pin caused it "
+            f"({len(brief.pin_experiments)})"
+        )
+        for x in brief.pin_experiments:
+            if x.observed_views_per_day is None:
+                lines.append(
+                    f"  {x.title} -- posted {x.days_since_posted}d ago -- too early to measure"
+                )
+            elif x.baseline_views_per_day is None:
+                lines.append(
+                    f"  {x.title} -- posted {x.days_since_posted}d ago -- "
+                    f"{x.observed_views_per_day:.1f} views/day since, no prior baseline "
+                    "(listing too new)"
+                )
+            else:
+                lines.append(
+                    f"  {x.title} -- posted {x.days_since_posted}d ago -- "
+                    f"{x.baseline_views_per_day:.1f} -> {x.observed_views_per_day:.1f} views/day "
+                    f"({x.delta_views_per_day:+.1f}) -- may be pin-driven, may be coincidental"
+                )
 
     lines.append("")
     lines.append("THE SHOP")

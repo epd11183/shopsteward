@@ -25,6 +25,7 @@ __all__ = [
     "ExecutionResult",
     "ListingSales",
     "OpsConfig",
+    "PinExperimentResult",
     "ProductTypeStat",
     "ProposedAction",
     "RefusalReason",
@@ -69,6 +70,7 @@ class _OpsBriefSections(BaseModel):
     autonomy: bool = True
     captions: bool = True
     pins: bool = True
+    pin_experiments: bool = True
 
 
 class _OpsLadder(BaseModel):
@@ -320,6 +322,25 @@ class ShootMoreSuggestion(BaseModel):
     revenue_usd: float
 
 
+class PinExperimentResult(BaseModel):
+    """One drafted pin's before/after views-per-day reading (P1, 2026-08-24
+    design doc §3) -- **correlational, not attribution**: a view-count
+    change around `drafted_at` could be driven by Etsy search, seasonality,
+    another capability's action, or nothing at all, never provably the pin
+    itself. `baseline_views_per_day`/`observed_views_per_day` are None, not
+    0, whenever there isn't enough elapsed time or listing history to
+    measure (`analytics._views_delta`'s absent-is-not-zero rule)."""
+
+    listing_id: int
+    action_id: str
+    title: str
+    drafted_at: str  # ISO date
+    days_since_posted: int
+    baseline_views_per_day: float | None
+    observed_views_per_day: float | None
+    delta_views_per_day: float | None  # None unless both sides are measurable
+
+
 # --- operator surface (PR3, M8a spec §8 PR3 / draft §6) ---------------------
 # Deterministic reads over proj_actions/proj_capability_state -- no LLM, no
 # network. Every field the operator needs to copy an action_id into
@@ -428,3 +449,6 @@ class Brief(BaseModel):
     # `social.pinterest_post` Variant A (2026-08-24 design doc §2/§3) --
     # default-empty, same reasoning as caption_drafts above.
     pin_drafts: list[BriefPin] = Field(default_factory=list)
+    # P1 outcome readout (2026-08-24 design doc §3) -- default-empty, same
+    # reasoning as pin_drafts above. Gated on brief_sections.pin_experiments.
+    pin_experiments: list[PinExperimentResult] = Field(default_factory=list)

@@ -32,11 +32,27 @@ M8a spec §3/§8.1) fold the action.*/capability.* event stream. Both fold
 functions are exposed as capability_states()/action_rows() so runner.py and
 governor.py can read live ladder/action state without depending on
 rebuild_ops() having just run -- they read straight from the event log,
-llm_ledger.py precedent."""
+llm_ledger.py precedent.
+
+proj_pin_experiments (P1, 2026-08-24 design doc §3) folds
+`social.pin_drafted` events into one row per drafted pin, keyed on
+(user_id, action_id) -- the grain the design calls for (a listing can be
+pinned more than once over time, once the cooldown passes). The event
+payload's `destination_url` carries the join key directly: pinterest_post.py's
+_destination_url() embeds `utm_content={action_id[:12]}`, so the action_id is
+recovered by parsing that query parameter out of `destination_url` and
+matching it against the 12-char prefix of the listing's actual executed
+social.pinterest_post action_ids (from action_rows()). This is an exact join
+on data the event already carries -- unlike zipping drafted-events
+(execution order) against action_rows() (proposal order), which silently
+mis-attributes whenever two pins for the same listing are approved out of
+proposal order (fully reachable: pinterest_post's max_tier is Tier.PROPOSE,
+so execution order is whatever order the operator runs `ops approve` in)."""
 
 import json
 import sqlite3
 from datetime import UTC, datetime
+from urllib.parse import parse_qs, urlsplit
 
 from shopsteward.core.events import read_all
 from shopsteward.core.sync import read_live_observed
@@ -70,6 +86,12 @@ CREATE TABLE proj_actions (
     state TEXT NOT NULL, reason TEXT NOT NULL, inputs_hash TEXT NOT NULL,
     cost_usd REAL NOT NULL, before_json TEXT, after_json TEXT,
     proposed_at TEXT, resolved_at TEXT,
+    PRIMARY KEY (user_id, action_id)
+);
+DROP TABLE IF EXISTS proj_pin_experiments;
+CREATE TABLE proj_pin_experiments (
+    user_id INTEGER NOT NULL, listing_id INTEGER NOT NULL, action_id TEXT NOT NULL,
+    drafted_at TEXT NOT NULL,
     PRIMARY KEY (user_id, action_id)
 );
 DROP TABLE IF EXISTS proj_capability_state;
@@ -137,6 +159,64 @@ def action_rows(conn: sqlite3.Connection) -> list[dict]:
             row["state"] = "failed"
             row["resolved_at"] = e.created_at
     return list(rows.values())
+
+
+def _action_id_from_destination_url(destination_url: object) -> str | None:
+    """Parse the `utm_content` query parameter (the action_id[:12] prefix
+    pinterest_post.py's _destination_url() embeds) out of a pin's
+    destination_url. Returns None if absent/malformed."""
+    if not isinstance(destination_url, str):
+        return None
+    values = parse_qs(urlsplit(destination_url).query).get("utm_content")
+    return values[0] if values else None
+
+
+def _pin_experiment_rows(conn: sqlite3.Connection) -> list[dict]:
+    """Recover each `social.pin_drafted` event's action_id from the
+    utm_content prefix embedded in its own destination_url (see module
+    docstring), matched against that listing's actual executed
+    social.pinterest_post action_ids. Rows whose prefix matches no known
+    action_id (malformed/legacy event) are skipped rather than guessed."""
+    action_ids_by_target: dict[tuple[int, int], list[str]] = {}
+    for row in action_rows(conn):
+        if row["capability"] != "social.pinterest_post" or row["state"] != "executed":
+            continue
+        try:
+            listing_id = int(row["target_id"])
+        except ValueError:
+            continue
+        action_ids_by_target.setdefault((row["user_id"], listing_id), []).append(row["action_id"])
+
+    out: list[dict] = []
+    for e in read_all(conn, "social.pin_drafted"):
+        listing_id = e.payload.get("listing_id")
+        if listing_id is None:
+            continue
+        prefix = _action_id_from_destination_url(e.payload.get("destination_url"))
+        if prefix is None:
+            continue
+        drafted_at = e.payload.get("drafted_at") or e.created_at
+        if drafted_at is None:
+            continue
+        match = next(
+            (
+                aid
+                for aid in action_ids_by_target.get((e.user_id, listing_id), [])
+                if aid.startswith(prefix)
+            ),
+            None,
+        )
+        if match is None:
+            continue
+        out.append(
+            {
+                "user_id": e.user_id,
+                "listing_id": listing_id,
+                "action_id": match,
+                "drafted_at": drafted_at,
+            }
+        )
+    return out
 
 
 def _fold_capability_states(conn: sqlite3.Connection) -> dict[tuple[int, str], CapabilityState]:
@@ -281,6 +361,12 @@ def rebuild_ops(conn: sqlite3.Connection) -> None:
                 row["proposed_at"],
                 row["resolved_at"],
             ),
+        )
+
+    for row in _pin_experiment_rows(conn):
+        conn.execute(
+            "INSERT OR REPLACE INTO proj_pin_experiments VALUES (?,?,?,?)",
+            (row["user_id"], row["listing_id"], row["action_id"], row["drafted_at"]),
         )
 
     for (uid, cap_key), st in _fold_capability_states(conn).items():
