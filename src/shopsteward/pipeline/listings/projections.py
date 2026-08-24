@@ -61,6 +61,20 @@ proj_asset_store_config (assetstoreconfig.seeded/.updated, asset_store_
 config.py precedent) and proj_asset_store (asset.archived, archive.py) --
 the managed local archive of untouched original masters, keyed by
 (user_id, photo_id, format) so a TIFF+JPEG pair coexists.
+
+Source-photo-match backfill (design: 2026-08-2x-etsy-source-photo-match)
+adds one more fold onto proj_listing_drafts: listing.source_adopted (from
+pipeline/listings/adopt.py, an operator-invoked CLI, never autonomous)
+inserts a row keyed by its own draft_id = f"adopted-{etsy_listing_id}"
+(distinct from any sha256 draft_id a real build would use) with
+state='adopted', title/price/pod_config_hash left NULL -- push.py's
+`title IS NOT NULL AND price IS NOT NULL` filter, gate3.py's _QUEUE_STATES,
+and pod/provider.py's `pod_config_hash IS NOT NULL` filter all therefore
+ignore it; it exists purely so source_assets.resolve_source() can find the
+linkage. listing.source_match_revoked is the undo path: it DELETEs the
+derived row (never the event -- events stay immutable; this is a
+projection-table correction, not a rewrite of history) for the same
+computed draft_id.
 """
 
 import json
@@ -368,6 +382,36 @@ def rebuild_listings(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "INSERT OR REPLACE INTO proj_asset_store_config VALUES (?,?,?)",
                 (e.user_id, p["name"], json.dumps(p["config"])),
+            )
+
+        elif e.type == "listing.source_adopted":
+            conn.execute(
+                "INSERT INTO proj_listing_drafts VALUES "
+                "(?,?,?,?,NULL,'etsy_digital',NULL,'etsy',NULL,NULL,?,NULL,'[]',NULL,NULL,NULL,"
+                "NULL,'[]',NULL,'adopted',?,NULL,NULL,NULL,NULL,'[]',NULL,NULL,NULL) "
+                "ON CONFLICT(user_id, draft_id) DO UPDATE SET "
+                "landing_file_id=excluded.landing_file_id, photo_id=excluded.photo_id, "
+                "etsy_listing_id=excluded.etsy_listing_id, title=NULL, price=NULL, "
+                "pod_config_hash=NULL, state='adopted'",
+                (
+                    e.user_id,
+                    p["draft_id"],
+                    p.get("landing_file_id"),
+                    p.get("photo_id"),
+                    str(p["etsy_listing_id"]),
+                    e.created_at,
+                ),
+            )
+
+        elif e.type == "listing.source_match_revoked":
+            # The append-only-safe undo: the OLD source_adopted event stays
+            # in the log forever (never UPDATE/DELETE an events row); only
+            # this DERIVED projection row is removed. draft_id is
+            # recomputed the same deterministic way adopt.py wrote it --
+            # this event's payload carries only etsy_listing_id.
+            conn.execute(
+                "DELETE FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
+                (e.user_id, f"adopted-{p['etsy_listing_id']}"),
             )
 
         elif e.type == "asset.archived":

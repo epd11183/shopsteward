@@ -14,6 +14,7 @@ from shopsteward.adapters.etsy.models import (
     EtsyFileRef,
     EtsyImageRef,
     EtsyListing,
+    EtsyListingImage,
     EtsyListingRef,
     EtsyListingUpdate,
     EtsyReceipt,
@@ -22,6 +23,12 @@ from shopsteward.adapters.etsy.models import (
 
 BASE = "https://openapi.etsy.com/v3/application"
 _LISTING_STATES = ("active", "expired")
+# Etsy's image CDN hosts (url_570xN values observed on real listings) --
+# download_image() only ever needs to fetch from these, so anything else is
+# rejected outright rather than followed (closes an SSRF-shape gap: an
+# attacker-influenced API response could otherwise point this at an arbitrary
+# internal or third-party host).
+_ALLOWED_IMAGE_HOSTS = {"i.etsystatic.com"}
 
 
 def _encode_form_data(model: pydantic.BaseModel) -> dict[str, str | bool | int | float]:
@@ -107,6 +114,21 @@ class LiveEtsyAdapter:
         params: dict[str, int] = {"min_created": min_created} if min_created is not None else {}
         rows = self._paginate(f"/shops/{self._shop_id}/receipts", **params)
         return [EtsyReceipt.model_validate(r) for r in rows]
+
+    def get_listing_images(self, listing_id: int) -> list[EtsyListingImage]:
+        body = self._get(f"/shops/{self._shop_id}/listings/{listing_id}/images")
+        return [EtsyListingImage.model_validate(r) for r in body["results"]]
+
+    def download_image(self, url: str) -> bytes:
+        # Etsy's image CDN (url_570xN) is a public asset URL -- no auth
+        # header needed and none is sent (a fresh, unauthenticated client
+        # avoids leaking the shop's bearer token to a third-party host).
+        host = httpx.URL(url).host
+        if host not in _ALLOWED_IMAGE_HOSTS:
+            raise ValueError(f"download_image: host {host!r} is not an allowed Etsy CDN host")
+        resp = httpx.get(url, timeout=30.0)
+        resp.raise_for_status()
+        return resp.content
 
 
 class LiveEtsyWriteAdapter:

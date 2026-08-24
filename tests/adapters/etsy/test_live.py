@@ -60,6 +60,52 @@ def test_pagination_follows_count() -> None:
     assert len(adapter.list_listings()) == 4
 
 
+@respx.mock
+def test_get_listing_images_parses_results() -> None:
+    respx.get(f"{BASE}/shops/100001/listings/555/images").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "count": 1,
+                "results": [
+                    {
+                        "listing_image_id": 9001,
+                        "rank": 1,
+                        "url_570xN": "https://cdn.example/img.jpg",
+                        "full_width": 570,
+                        "full_height": 570,
+                    }
+                ],
+            },
+        )
+    )
+    adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
+    images = adapter.get_listing_images(555)
+    assert len(images) == 1
+    assert images[0].listing_image_id == 9001
+    assert images[0].url_570xN == "https://cdn.example/img.jpg"
+
+
+@respx.mock
+def test_download_image_sends_no_auth_header() -> None:
+    route = respx.get("https://i.etsystatic.com/img.jpg").mock(
+        return_value=httpx.Response(200, content=b"\xff\xd8jpegbytes")
+    )
+    adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
+    data = adapter.download_image("https://i.etsystatic.com/img.jpg")
+    assert data == b"\xff\xd8jpegbytes"
+    sent = route.calls.last.request
+    assert "authorization" not in sent.headers
+    assert "x-api-key" not in sent.headers
+
+
+@respx.mock
+def test_download_image_rejects_disallowed_host() -> None:
+    adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
+    with pytest.raises(ValueError, match="not an allowed"):
+        adapter.download_image("https://evil.example/img.jpg")
+
+
 # --- LiveEtsyWriteAdapter ---------------------------------------------------
 
 

@@ -10,6 +10,7 @@ from shopsteward.adapters.etsy.models import (
     EtsyFileRef,
     EtsyImageRef,
     EtsyListing,
+    EtsyListingImage,
     EtsyListingRef,
     EtsyListingUpdate,
     EtsyReceipt,
@@ -36,6 +37,17 @@ class FixtureEtsyAdapter:
         if min_created is not None:
             receipts = [r for r in receipts if r.created_timestamp >= min_created]
         return receipts
+
+    def get_listing_images(self, listing_id: int) -> list[EtsyListingImage]:
+        # listing_images.json maps listing_id (string key, JSON has no int
+        # keys) -> list of image rows. `url_570xN` here is a filename
+        # relative to the fixture dir, not a real CDN URL -- this is a fake,
+        # download_image below resolves it the same way.
+        rows = self._load("listing_images").get(str(listing_id), [])
+        return [EtsyListingImage.model_validate(r) for r in rows]
+
+    def download_image(self, url: str) -> bytes:
+        return (self._dir / url).read_bytes()
 
 
 class FakeEtsyWriteAdapter:

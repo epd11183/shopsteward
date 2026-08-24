@@ -15,7 +15,7 @@ from shopsteward.editing.cli import edit_app
 from shopsteward.etsy_cli import etsy_app
 from shopsteward.mockups.cli import mockups_app
 from shopsteward.pipeline.cli import pipeline_app
-from shopsteward.pipeline.listings.cli import listings_app
+from shopsteward.pipeline.listings.cli import archive_app, listings_app
 from shopsteward.pipeline.listings.pod.cli import pod_app
 from shopsteward.pipeline.ops.cli import ops_app
 
@@ -37,6 +37,7 @@ app.add_typer(pipeline_app, name="pipeline")
 app.add_typer(mockups_app, name="mockups")
 app.add_typer(etsy_app, name="etsy")
 app.add_typer(listings_app, name="listings")
+app.add_typer(archive_app, name="archive")
 app.add_typer(pod_app, name="pod")
 app.add_typer(ops_app, name="ops")
 app.add_typer(shop_app, name="shop")

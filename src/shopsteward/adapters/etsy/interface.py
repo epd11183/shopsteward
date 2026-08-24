@@ -7,6 +7,7 @@ from shopsteward.adapters.etsy.models import (
     EtsyFileRef,
     EtsyImageRef,
     EtsyListing,
+    EtsyListingImage,
     EtsyListingRef,
     EtsyListingUpdate,
     EtsyReceipt,
@@ -20,6 +21,13 @@ class EtsyAdapter(Protocol):
     def get_shop(self) -> EtsyShop: ...
     def list_listings(self) -> list[EtsyListing]: ...
     def list_receipts(self, min_created: int | None = None) -> list[EtsyReceipt]: ...
+    def get_listing_images(self, listing_id: int) -> list[EtsyListingImage]: ...
+    def download_image(self, url: str) -> bytes:
+        """Fetch raw image bytes for a `url_570xN` from get_listing_images.
+        Lives on the adapter (not a bare httpx call in core code) so core
+        never imports an SDK/HTTP client directly -- same rule that keeps
+        every other external call behind this Protocol."""
+        ...
 
 
 class EtsyWriteError(RuntimeError):

@@ -42,6 +42,18 @@ class EtsyListing(BaseModel):
         return self.price.as_float
 
 
+class EtsyListingImage(BaseModel):
+    """getListingImages response row (listings_r scope, already held -- no
+    new scope). Used by the source-photo-match backfill (archive adopt-local)
+    to fetch a listing's product image for perceptual hashing."""
+
+    listing_image_id: int
+    rank: int = 1
+    url_570xN: str
+    full_width: int | None = None
+    full_height: int | None = None
+
+
 class EtsyTransaction(BaseModel):
     transaction_id: int
     listing_id: int

@@ -21,6 +21,7 @@ from shopsteward.adapters.copy.tags import MAX_TAGS as _MAX_TAGS
 from shopsteward.adapters.copy.tags import validate_tag
 
 __all__ = [
+    "AdoptReport",
     "AssetStoreConfig",
     "BuildReport",
     "CopyInputs",
@@ -30,6 +31,8 @@ __all__ = [
     "ListingConfig",
     "ListingDraft",
     "ListingImage",
+    "MatchConfig",
+    "MatchResult",
     "PricingRules",
     "SellableFile",
 ]
@@ -88,6 +91,16 @@ class ListingConfig(BaseModel):
     etsy: _ListingConfigEtsy
 
 
+class MatchConfig(BaseModel):
+    """Perceptual-hash match thresholds for the `archive adopt-local`
+    backfill (design: source-photo-match). Config-over-code (CLAUDE.md) --
+    lives nested in AssetStoreConfig rather than a parallel config file
+    since it only ever governs the same archive/adopt flow."""
+
+    max_distance: int = 6
+    min_margin: int = 4
+
+
 class AssetStoreConfig(BaseModel):
     """Config for the managed local archive (source-asset head, design
     2026-08-11): where the untouched original master bytes are copied so a
@@ -102,6 +115,26 @@ class AssetStoreConfig(BaseModel):
     name: str
     root: str
     enabled: bool
+    match: MatchConfig = Field(default_factory=MatchConfig)
+
+
+class MatchResult(BaseModel):
+    """One row of the `archive adopt-local` dry-run table: a live Etsy
+    listing's classification against the local candidate files."""
+
+    listing_id: int
+    local_path: str | None
+    distance: int | None
+    verdict: str  # "match" | "ambiguous" | "unmatched" | "pinned"
+
+
+class AdoptReport(BaseModel):
+    matched: int = 0
+    ambiguous: int = 0
+    unmatched: int = 0
+    pinned: int = 0
+    adopted: int = 0
+    revoked: int = 0
 
 
 class ListingImage(BaseModel):
