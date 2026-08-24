@@ -8,7 +8,14 @@ import respx
 from shopsteward.adapters.etsy.auth import EtsyTokens, EtsyTokenStore
 from shopsteward.adapters.etsy.interface import EtsyWriteError
 from shopsteward.adapters.etsy.live import LiveEtsyAdapter, LiveEtsyWriteAdapter
-from shopsteward.adapters.etsy.models import EtsyDraftSpec, EtsyListingUpdate
+from shopsteward.adapters.etsy.models import (
+    EtsyDraftSpec,
+    EtsyListingInventory,
+    EtsyListingOffering,
+    EtsyListingProduct,
+    EtsyListingUpdate,
+    EtsyPropertyValue,
+)
 
 BASE = "https://openapi.etsy.com/v3/application"
 
@@ -100,6 +107,82 @@ def test_list_reviews_raises_on_403_insufficient_scope() -> None:
 
 
 @respx.mock
+def test_list_shop_sections_fetches_once_not_paginated() -> None:
+    # Real endpoint takes no limit/offset and always returns everything in
+    # one response (review finding, 2026-08-24) -- assert the actual sent
+    # request carries neither param, since a plain respx mock would match
+    # (and mask the bug) even if the adapter still sent them.
+    route = respx.get(f"{BASE}/shops/100001/sections").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "count": 2,
+                "results": [
+                    {
+                        "shop_section_id": 1,
+                        "title": "Section 1",
+                        "rank": 1,
+                        "user_id": 500001,
+                        "active_listing_count": 2,
+                    },
+                    {
+                        "shop_section_id": 2,
+                        "title": "Section 2",
+                        "rank": 2,
+                        "user_id": 500001,
+                        "active_listing_count": 1,
+                    },
+                ],
+            },
+        )
+    )
+    adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
+    sections = adapter.list_shop_sections()
+    assert len(sections) == 2
+    assert {s.shop_section_id for s in sections} == {1, 2}
+    assert route.call_count == 1
+    sent_params = dict(route.calls.last.request.url.params)
+    assert "offset" not in sent_params
+    assert "limit" not in sent_params
+
+
+@respx.mock
+def test_list_taxonomy_nodes_parses_nested_tree() -> None:
+    respx.get(f"{BASE}/seller-taxonomy/nodes").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "count": 1,
+                "results": [
+                    {
+                        "id": 68887,
+                        "level": 1,
+                        "name": "Art & Collectibles",
+                        "parent_id": None,
+                        "children": [
+                            {
+                                "id": 68888,
+                                "level": 2,
+                                "name": "Photography",
+                                "parent_id": 68887,
+                                "children": [],
+                                "full_path_taxonomy_ids": [68887, 68888],
+                            }
+                        ],
+                        "full_path_taxonomy_ids": [68887],
+                    }
+                ],
+            },
+        )
+    )
+    adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
+    nodes = adapter.list_taxonomy_nodes()
+    assert len(nodes) == 1
+    assert nodes[0].name == "Art & Collectibles"
+    assert nodes[0].children[0].name == "Photography"
+
+
+@respx.mock
 def test_get_listing_images_parses_results() -> None:
     respx.get(f"{BASE}/listings/555/images").mock(
         return_value=httpx.Response(
@@ -145,6 +228,73 @@ def test_get_listing_images_raises_on_non_404_error() -> None:
     adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
     with pytest.raises(httpx.HTTPStatusError):
         adapter.get_listing_images(555)
+
+
+@respx.mock
+def test_get_listing_inventory_parses_and_normalizes_price() -> None:
+    respx.get(f"{BASE}/listings/555/inventory").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "products": [
+                    {
+                        "product_id": 1,
+                        "sku": "abc",
+                        "is_deleted": False,
+                        "offerings": [
+                            {
+                                "offering_id": 11,
+                                "quantity": 5,
+                                "is_enabled": True,
+                                "is_deleted": False,
+                                "price": {
+                                    "amount": 1200,
+                                    "divisor": 100,
+                                    "currency_code": "USD",
+                                },
+                                "readiness_state_id": 1,
+                            }
+                        ],
+                        "property_values": [],
+                    }
+                ],
+                "price_on_property": [],
+                "quantity_on_property": [],
+                "sku_on_property": [],
+                "readiness_state_on_property": [],
+            },
+        )
+    )
+    adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
+    inventory = adapter.get_listing_inventory(555)
+    assert len(inventory.products) == 1
+    product = inventory.products[0]
+    assert product.product_id == 1
+    assert product.sku == "abc"
+    offering = product.offerings[0]
+    assert offering.offering_id == 11
+    assert offering.price == 12.0  # Money normalized to a plain float
+    assert offering.readiness_state_id == 1
+
+
+@respx.mock
+def test_get_listing_inventory_returns_empty_on_404() -> None:
+    respx.get(f"{BASE}/listings/555/inventory").mock(
+        return_value=httpx.Response(404, json={"error": "not found"})
+    )
+    adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
+    inventory = adapter.get_listing_inventory(555)
+    assert inventory.products == []
+
+
+@respx.mock
+def test_get_listing_inventory_raises_on_non_404_error() -> None:
+    respx.get(f"{BASE}/listings/555/inventory").mock(
+        return_value=httpx.Response(500, json={"error": "server error"})
+    )
+    adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
+    with pytest.raises(httpx.HTTPStatusError):
+        adapter.get_listing_inventory(555)
 
 
 @respx.mock
@@ -258,6 +408,32 @@ def test_create_draft_listing_sends_form_urlencoded_body(tmp_path) -> None:
     # createDraftListing has no `state` request field at all -- the
     # endpoint inherently creates drafts (Etsy OpenAPI spec).
     assert "state" not in body
+
+
+@respx.mock
+def test_create_shop_section_sends_form_urlencoded_body(tmp_path) -> None:
+    route = respx.post(f"{BASE}/shops/100001/sections").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "shop_section_id": 100002,
+                "title": "Wildlife",
+                "rank": 1,
+                "user_id": 500001,
+                "active_listing_count": 0,
+            },
+        )
+    )
+    adapter = _write_adapter(tmp_path)
+    section = adapter.create_shop_section("Wildlife")
+
+    assert section.shop_section_id == 100002
+    assert section.title == "Wildlife"
+    sent = route.calls.last.request
+    assert sent.headers["x-api-key"] == "k"
+    assert sent.headers["content-type"] == "application/x-www-form-urlencoded"
+    body = dict(urllib.parse.parse_qsl(sent.content.decode()))
+    assert body["title"] == "Wildlife"
 
 
 @respx.mock
@@ -519,6 +695,99 @@ def test_update_listing_price_put_failure_raises(tmp_path) -> None:
 
     with pytest.raises(EtsyWriteError, match="bad price"):
         adapter.update_listing_price(555, 9.50)
+
+
+@respx.mock
+def test_update_listing_inventory_sends_writable_fields_and_parses_response(tmp_path) -> None:
+    route = respx.put(f"{BASE}/listings/555/inventory").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "products": [
+                    {
+                        "product_id": 1,
+                        "sku": "print-11x14",
+                        "is_deleted": False,
+                        "offerings": [
+                            {
+                                "offering_id": 11,
+                                "quantity": 3,
+                                "is_enabled": True,
+                                "is_deleted": False,
+                                "price": {
+                                    "amount": 1400,
+                                    "divisor": 100,
+                                    "currency_code": "USD",
+                                },
+                                "readiness_state_id": 42,
+                            }
+                        ],
+                        "property_values": [],
+                    }
+                ],
+                "price_on_property": [],
+                "quantity_on_property": [],
+                "sku_on_property": [],
+                "readiness_state_on_property": [],
+            },
+        )
+    )
+    adapter = _write_adapter(tmp_path)
+    inventory = EtsyListingInventory(
+        products=[
+            EtsyListingProduct(
+                sku="print-11x14",
+                property_values=[
+                    EtsyPropertyValue(property_id=1, values=["11x14"]),
+                ],
+                offerings=[
+                    EtsyListingOffering(quantity=3, price=14.0, readiness_state_id=42),
+                ],
+            )
+        ]
+    )
+
+    result = adapter.update_listing_inventory(555, inventory)
+
+    import json as _json
+
+    sent = route.calls.last.request
+    body = _json.loads(sent.content)
+    product = body["products"][0]
+    assert product["sku"] == "print-11x14"
+    offering = product["offerings"][0]
+    assert offering["price"] == 14.0  # decimal, not a Money object
+    assert offering["quantity"] == 3
+    assert offering["readiness_state_id"] == 42
+    assert "product_id" not in product  # response-only key never sent
+    assert "offering_id" not in offering  # response-only key never sent
+    assert result.products[0].offerings[0].price == 14.0  # Money normalized back
+
+
+@respx.mock
+def test_update_listing_inventory_omits_empty_on_property_arrays(tmp_path) -> None:
+    route = respx.put(f"{BASE}/listings/555/inventory").mock(
+        return_value=httpx.Response(200, json={"products": []})
+    )
+    adapter = _write_adapter(tmp_path)
+
+    adapter.update_listing_inventory(555, EtsyListingInventory())
+
+    import json as _json
+
+    body = _json.loads(route.calls.last.request.content)
+    assert body == {"products": []}
+
+
+@respx.mock
+def test_update_listing_inventory_put_failure_raises(tmp_path) -> None:
+    respx.put(f"{BASE}/listings/555/inventory").mock(
+        return_value=httpx.Response(400, json={"error": "bad inventory"})
+    )
+    adapter = _write_adapter(tmp_path)
+
+    with pytest.raises(EtsyWriteError, match="bad inventory"):
+        adapter.update_listing_inventory(555, EtsyListingInventory())
 
 
 @respx.mock

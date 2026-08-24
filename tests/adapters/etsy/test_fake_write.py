@@ -2,7 +2,13 @@ import pytest
 
 from shopsteward.adapters.etsy.fake import FakeEtsyWriteAdapter
 from shopsteward.adapters.etsy.interface import EtsyWriteError
-from shopsteward.adapters.etsy.models import EtsyDraftSpec, EtsyListingUpdate
+from shopsteward.adapters.etsy.models import (
+    EtsyDraftSpec,
+    EtsyListingInventory,
+    EtsyListingOffering,
+    EtsyListingProduct,
+    EtsyListingUpdate,
+)
 
 
 def _spec(**overrides: object) -> EtsyDraftSpec:
@@ -123,6 +129,38 @@ def test_update_listing_price_unknown_listing_raises() -> None:
     assert exc_info.value.status_code == 404
 
 
+def test_update_listing_inventory_assigns_ids_and_stores_result() -> None:
+    adapter = FakeEtsyWriteAdapter()
+    ref = adapter.create_draft_listing(_spec())
+    inventory = EtsyListingInventory(
+        products=[
+            EtsyListingProduct(
+                sku="print-11x14",
+                offerings=[EtsyListingOffering(quantity=3, price=14.0)],
+            )
+        ]
+    )
+
+    result = adapter.update_listing_inventory(ref.listing_id, inventory)
+
+    assert len(result.products) == 1
+    product = result.products[0]
+    assert product.product_id is not None
+    assert product.sku == "print-11x14"
+    offering = product.offerings[0]
+    assert offering.offering_id is not None
+    assert offering.price == 14.0
+    assert offering.quantity == 3
+    assert adapter.listings[ref.listing_id]["inventory"] == result
+
+
+def test_update_listing_inventory_unknown_listing_raises() -> None:
+    adapter = FakeEtsyWriteAdapter()
+    with pytest.raises(EtsyWriteError) as exc_info:
+        adapter.update_listing_inventory(9999, EtsyListingInventory())
+    assert exc_info.value.status_code == 404
+
+
 def test_calls_log_records_every_invocation() -> None:
     adapter = FakeEtsyWriteAdapter()
     ref = adapter.create_draft_listing(_spec())
@@ -131,3 +169,18 @@ def test_calls_log_records_every_invocation() -> None:
 
     names = [name for name, _ in adapter.calls]
     assert names == ["create_draft_listing", "upload_listing_image", "upload_listing_file"]
+
+
+def test_create_shop_section_returns_draft_style_section() -> None:
+    adapter = FakeEtsyWriteAdapter()
+    section = adapter.create_shop_section("Wildlife")
+    assert section.title == "Wildlife"
+    assert section.shop_section_id == 1
+
+
+def test_create_shop_section_ids_are_sequential() -> None:
+    adapter = FakeEtsyWriteAdapter()
+    first = adapter.create_shop_section("Wildlife")
+    second = adapter.create_shop_section("National Parks")
+    assert second.shop_section_id == first.shop_section_id + 1
+    assert [name for name, _ in adapter.calls] == ["create_shop_section", "create_shop_section"]

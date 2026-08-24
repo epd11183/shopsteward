@@ -17,11 +17,14 @@ from shopsteward.adapters.etsy.models import (
     EtsyImageRef,
     EtsyListing,
     EtsyListingImage,
+    EtsyListingInventory,
     EtsyListingRef,
     EtsyListingUpdate,
     EtsyReceipt,
     EtsyReview,
     EtsyShop,
+    EtsyShopSection,
+    EtsyTaxonomyNode,
 )
 
 BASE = "https://openapi.etsy.com/v3/application"
@@ -145,6 +148,24 @@ class LiveEtsyAdapter:
         rows = self._paginate(f"/shops/{self._shop_id}/reviews")
         return [EtsyReview.model_validate(r) for r in rows]
 
+    def list_shop_sections(self) -> list[EtsyShopSection]:
+        # getShopSections -- the real spec takes NO limit/offset params and
+        # always returns the full section list in one response (review
+        # finding, 2026-08-24: this originally called _paginate, which sends
+        # offset on every call; Etsy ignores it and just returns everything
+        # again, so a shop with >100 sections would get duplicated rows).
+        # Still routes through _get, so it inherits the 429-retry.
+        body = self._get(f"/shops/{self._shop_id}/sections")
+        return [EtsyShopSection.model_validate(r) for r in body["results"]]
+
+    def list_taxonomy_nodes(self) -> list[EtsyTaxonomyNode]:
+        # getSellerTaxonomyNodes -- global (no {shop_id}), returns the whole
+        # tree in one response, not a paginated list (no limit/offset in
+        # the real spec), so this calls _get directly rather than
+        # _paginate.
+        body = self._get("/seller-taxonomy/nodes")
+        return [EtsyTaxonomyNode.model_validate(r) for r in body["results"]]
+
     def get_listing_images(self, listing_id: int) -> list[EtsyListingImage]:
         # A 404 here means the listing has no images available at this
         # endpoint (e.g. an old/expired listing) -- treat that as "no
@@ -168,6 +189,18 @@ class LiveEtsyAdapter:
         resp.raise_for_status()
         return resp.content
 
+    def get_listing_inventory(self, listing_id: int) -> EtsyListingInventory:
+        # getListingInventory -- a 404 means the listing has no inventory
+        # record (never edited via Etsy's inventory tools), same "absence
+        # is not an error" treatment get_listing_images gives a 404.
+        try:
+            body = self._get(f"/listings/{listing_id}/inventory")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return EtsyListingInventory()
+            raise
+        return EtsyListingInventory.model_validate(body)
+
 
 class LiveEtsyWriteAdapter:
     """Live Etsy Open API v3 write client (PRD §13 decision 41). A separate
@@ -189,6 +222,13 @@ class LiveEtsyWriteAdapter:
         if resp.status_code >= 400:
             raise EtsyWriteError(resp.status_code, _safe_error(resp))
         return resp.json()
+
+    def create_shop_section(self, title: str) -> EtsyShopSection:
+        # createShopSection is form-urlencoded (Etsy OpenAPI spec), a single
+        # `title` field -- no comma-join concerns (_encode_form_data isn't
+        # needed for a lone scalar field).
+        body = self._request("POST", f"/shops/{self._shop_id}/sections", data={"title": title})
+        return EtsyShopSection.model_validate(body)
 
     def create_draft_listing(self, spec: EtsyDraftSpec) -> EtsyListingRef:
         # createDraftListing is application/x-www-form-urlencoded, not JSON
@@ -274,6 +314,61 @@ class LiveEtsyWriteAdapter:
                 out["sku"] = product["sku"]
             products.append(out)
         self._request("PUT", f"/listings/{listing_id}/inventory", json={"products": products})
+
+    def update_listing_inventory(
+        self, listing_id: int, inventory: EtsyListingInventory
+    ) -> EtsyListingInventory:
+        # *** WARNING -- READ interface.EtsyWriteAdapter.update_listing_inventory'S
+        # DOCSTRING BEFORE CALLING THIS. *** This sets a listing's ENTIRE
+        # products/offerings/property_values structure -- CLAUDE.md's
+        # "POD-first listing creation for physical SKUs" rule forbids
+        # touching a Gelato/Printful-backed listing's SKU/variation
+        # structure this way. This method has NO digital-only guard; any
+        # future caller must apply `_is_conservatively_digital()` (see
+        # `pipeline/ops/capabilities/reprice.py`) plus reprice's
+        # `listingdraft.provider_linked` check FIRST. See the Protocol
+        # docstring for the full warning -- this is a label, not a lock.
+        #
+        # response-only keys (product_id, is_deleted, offering_id) are
+        # rejected by the real PUT with HTTP 400 "Array contains invalid
+        # keys" (same finding update_listing_price's whitelist above
+        # documents) -- model_dump strips them via exclude_none plus the
+        # explicit field selection below.
+        body: dict[str, object] = {
+            "products": [
+                {
+                    **({"sku": p.sku} if p.sku else {}),
+                    "property_values": [
+                        pv.model_dump(exclude_none=True) for pv in p.property_values
+                    ],
+                    "offerings": [
+                        {
+                            "price": o.price,
+                            "quantity": o.quantity,
+                            "is_enabled": o.is_enabled,
+                            **(
+                                {"readiness_state_id": o.readiness_state_id}
+                                if o.readiness_state_id is not None
+                                else {}
+                            ),
+                        }
+                        for o in p.offerings
+                    ],
+                }
+                for p in inventory.products
+            ]
+        }
+        for field in (
+            "price_on_property",
+            "quantity_on_property",
+            "sku_on_property",
+            "readiness_state_on_property",
+        ):
+            values = getattr(inventory, field)
+            if values:
+                body[field] = values
+        resp = self._request("PUT", f"/listings/{listing_id}/inventory", json=body)
+        return EtsyListingInventory.model_validate(resp)
 
     def update_listing_state(self, listing_id: int, state: str) -> None:
         # Dedicated method, not a field on EtsyListingUpdate (M8b slice 4b,

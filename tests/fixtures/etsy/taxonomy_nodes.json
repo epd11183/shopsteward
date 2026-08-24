@@ -1,0 +1,22 @@
+{
+  "count": 1,
+  "results": [
+    {
+      "id": 68887,
+      "level": 1,
+      "name": "Art & Collectibles",
+      "parent_id": null,
+      "children": [
+        {
+          "id": 68888,
+          "level": 2,
+          "name": "Photography",
+          "parent_id": 68887,
+          "children": [],
+          "full_path_taxonomy_ids": [68887, 68888]
+        }
+      ],
+      "full_path_taxonomy_ids": [68887]
+    }
+  ]
+}

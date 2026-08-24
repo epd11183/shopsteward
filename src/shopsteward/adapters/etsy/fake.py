@@ -11,11 +11,15 @@ from shopsteward.adapters.etsy.models import (
     EtsyImageRef,
     EtsyListing,
     EtsyListingImage,
+    EtsyListingInventory,
+    EtsyListingProduct,
     EtsyListingRef,
     EtsyListingUpdate,
     EtsyReceipt,
     EtsyReview,
     EtsyShop,
+    EtsyShopSection,
+    EtsyTaxonomyNode,
     Money,
 )
 
@@ -42,6 +46,12 @@ class FixtureEtsyAdapter:
     def list_reviews(self) -> list[EtsyReview]:
         return [EtsyReview.model_validate(r) for r in self._load("reviews")["results"]]
 
+    def list_shop_sections(self) -> list[EtsyShopSection]:
+        return [EtsyShopSection.model_validate(r) for r in self._load("shop_sections")["results"]]
+
+    def list_taxonomy_nodes(self) -> list[EtsyTaxonomyNode]:
+        return [EtsyTaxonomyNode.model_validate(r) for r in self._load("taxonomy_nodes")["results"]]
+
     def get_listing_images(self, listing_id: int) -> list[EtsyListingImage]:
         # listing_images.json maps listing_id (string key, JSON has no int
         # keys) -> list of image rows. `url_570xN` here is a filename
@@ -52,6 +62,13 @@ class FixtureEtsyAdapter:
 
     def download_image(self, url: str) -> bytes:
         return (self._dir / url).read_bytes()
+
+    def get_listing_inventory(self, listing_id: int) -> EtsyListingInventory:
+        # listing_inventory.json maps listing_id (string key) -> a full
+        # getListingInventory response body, same "no fixture row = empty
+        # result" shape get_listing_images uses for an unknown listing_id.
+        row = self._load("listing_inventory").get(str(listing_id))
+        return EtsyListingInventory.model_validate(row) if row else EtsyListingInventory()
 
 
 class FakeEtsyWriteAdapter:
@@ -68,6 +85,9 @@ class FakeEtsyWriteAdapter:
         self._next_listing_id = 1000
         self._next_image_id = 1
         self._next_file_id = 1
+        self._next_section_id = 1
+        self._next_product_id = 1
+        self._next_offering_id = 1
         self.listings: dict[int, dict[str, Any]] = {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
@@ -76,6 +96,15 @@ class FakeEtsyWriteAdapter:
         if row is None:
             raise EtsyWriteError(404, f"unknown Etsy listing_id {listing_id}")
         return row
+
+    def create_shop_section(self, title: str) -> EtsyShopSection:
+        section_id = self._next_section_id
+        self._next_section_id += 1
+        section = EtsyShopSection(
+            shop_section_id=section_id, title=title, rank=section_id, user_id=1
+        )
+        self.calls.append(("create_shop_section", {"section_id": section_id, "title": title}))
+        return section
 
     def create_draft_listing(self, spec: EtsyDraftSpec) -> EtsyListingRef:
         listing_id = self._next_listing_id
@@ -169,6 +198,43 @@ class FakeEtsyWriteAdapter:
         row = self._require(listing_id)
         row["price"] = price
         self.calls.append(("update_listing_price", {"listing_id": listing_id, "price": price}))
+
+    def update_listing_inventory(
+        self, listing_id: int, inventory: EtsyListingInventory
+    ) -> EtsyListingInventory:
+        # *** WARNING -- see interface.EtsyWriteAdapter.update_listing_inventory's
+        # docstring before calling this from any capability: no digital-only
+        # guard exists at this layer (CLAUDE.md POD-first rule). *** Mirrors
+        # the real PUT response -- assigns fresh product_id/offering_id to
+        # each row (the live API's response-only identifiers) and stores the
+        # result so a later get_listing_inventory-shaped read (if ever
+        # added to this fake) would see it; there is no separate read fake
+        # method here since EtsyWriteAdapter has no such read.
+        row = self._require(listing_id)
+        stored: list[EtsyListingProduct] = []
+        for product in inventory.products:
+            offerings = []
+            for offering in product.offerings:
+                offering_id = self._next_offering_id
+                self._next_offering_id += 1
+                offerings.append(offering.model_copy(update={"offering_id": offering_id}))
+            product_id = self._next_product_id
+            self._next_product_id += 1
+            stored.append(
+                product.model_copy(update={"product_id": product_id, "offerings": offerings})
+            )
+        result = EtsyListingInventory(
+            products=stored,
+            price_on_property=inventory.price_on_property,
+            quantity_on_property=inventory.quantity_on_property,
+            sku_on_property=inventory.sku_on_property,
+            readiness_state_on_property=inventory.readiness_state_on_property,
+        )
+        row["inventory"] = result
+        self.calls.append(
+            ("update_listing_inventory", {"listing_id": listing_id, "inventory": inventory})
+        )
+        return result
 
     def update_listing_state(self, listing_id: int, state: str) -> None:
         # Dedicated method, not a field on EtsyListingUpdate (M8b slice 4b,

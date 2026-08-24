@@ -1,6 +1,6 @@
 """Pydantic models mirroring the Etsy Open API v3 shapes we consume."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Money(BaseModel):
@@ -40,6 +40,32 @@ class EtsyListing(BaseModel):
     @property
     def price_usd(self) -> float:
         return self.price.as_float
+
+
+class EtsyShopSection(BaseModel):
+    """getShopSections / createShopSection response row (shops_r/shops_w
+    scopes, already held -- no new scope). Dead code until a future
+    storefront-organization variant wires it up (Pinterest
+    pin_analytics/account_analytics precedent) -- no current caller."""
+
+    shop_section_id: int
+    title: str
+    rank: int = 0
+    user_id: int
+    active_listing_count: int = 0
+
+
+class EtsyTaxonomyNode(BaseModel):
+    """getSellerTaxonomyNodes response row (GET /seller-taxonomy/nodes) --
+    a global, non-shop-scoped taxonomy tree; `children` nests recursively.
+    Dead code until a future variant wires it up -- no current caller."""
+
+    id: int
+    level: int = 0
+    name: str
+    parent_id: int | None = None
+    children: list["EtsyTaxonomyNode"] = Field(default_factory=list)
+    full_path_taxonomy_ids: list[int] = Field(default_factory=list)
 
 
 class EtsyListingImage(BaseModel):
@@ -148,3 +174,66 @@ class EtsyListingUpdate(BaseModel):
     description: str | None = None
     tags: list[str] | None = None
     should_auto_renew: bool | None = None
+
+
+class EtsyPropertyValue(BaseModel):
+    """A single variation property (e.g. "Size") on an inventory product --
+    both the GET .../inventory response shape and the PUT request shape use
+    this identical structure (confirmed against the real Etsy OpenAPI spec)."""
+
+    property_id: int
+    property_name: str | None = None
+    scale_id: int | None = None
+    value_ids: list[int] = Field(default_factory=list)
+    values: list[str] = Field(default_factory=list)
+
+
+class EtsyListingOffering(BaseModel):
+    """One priced/quantified offering within an inventory product. `price`
+    is normalized to a plain float here: Etsy's real GET .../inventory
+    response nests it as Money{amount,divisor,currency_code}, but the real
+    PUT .../inventory request takes a plain decimal (e.g. `"price": 8.00`,
+    confirmed against the real Etsy OpenAPI spec/tutorial) -- one model
+    round-trips both directions via the validator below instead of needing
+    two separate offering shapes. `offering_id` is response-only (None on a
+    product you're about to PUT)."""
+
+    offering_id: int | None = None
+    quantity: int
+    is_enabled: bool = True
+    is_deleted: bool = False
+    price: float
+    readiness_state_id: int | None = None
+
+    @field_validator("price", mode="before")
+    @classmethod
+    def _normalize_money(cls, v: object) -> object:
+        if isinstance(v, dict) and "amount" in v and "divisor" in v:
+            return v["amount"] / v["divisor"]
+        return v
+
+
+class EtsyListingProduct(BaseModel):
+    """One product (a distinct SKU/variation combination) within a listing's
+    inventory. `product_id` is response-only (None on a product you're about
+    to PUT)."""
+
+    product_id: int | None = None
+    sku: str = ""
+    is_deleted: bool = False
+    offerings: list[EtsyListingOffering] = Field(default_factory=list)
+    property_values: list[EtsyPropertyValue] = Field(default_factory=list)
+
+
+class EtsyListingInventory(BaseModel):
+    """getListingInventory / updateListingInventory shape (GET and PUT
+    .../listings/{listing_id}/inventory, confirmed against the real Etsy
+    OpenAPI spec). This is the endpoint that can set a listing's entire
+    variation/product structure -- see `EtsyWriteAdapter.update_listing_inventory`
+    for the write-safety warning that governs any future caller."""
+
+    products: list[EtsyListingProduct] = Field(default_factory=list)
+    price_on_property: list[int] = Field(default_factory=list)
+    quantity_on_property: list[int] = Field(default_factory=list)
+    sku_on_property: list[int] = Field(default_factory=list)
+    readiness_state_on_property: list[int] = Field(default_factory=list)

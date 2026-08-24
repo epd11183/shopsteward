@@ -8,11 +8,14 @@ from shopsteward.adapters.etsy.models import (
     EtsyImageRef,
     EtsyListing,
     EtsyListingImage,
+    EtsyListingInventory,
     EtsyListingRef,
     EtsyListingUpdate,
     EtsyReceipt,
     EtsyReview,
     EtsyShop,
+    EtsyShopSection,
+    EtsyTaxonomyNode,
 )
 
 _MAX_ERROR_LEN = 500
@@ -29,6 +32,18 @@ class EtsyAdapter(Protocol):
         (core.sync.sync_etsy), not swallowed here."""
         ...
 
+    def list_shop_sections(self) -> list[EtsyShopSection]:
+        """getShopSections (shops_r scope, already held -- no new scope).
+        Dead code until a future storefront-organization variant -- no
+        current caller anywhere in this codebase."""
+        ...
+
+    def list_taxonomy_nodes(self) -> list[EtsyTaxonomyNode]:
+        """getSellerTaxonomyNodes -- a global taxonomy tree, not shop-scoped
+        (no {shop_id} in the path). Dead code until a future variant -- no
+        current caller."""
+        ...
+
     def get_listing_images(self, listing_id: int) -> list[EtsyListingImage]:
         """Returns [] if the listing has no images available (including a
         404 from the images endpoint, e.g. an old/expired listing) -- not
@@ -40,6 +55,16 @@ class EtsyAdapter(Protocol):
         Lives on the adapter (not a bare httpx call in core code) so core
         never imports an SDK/HTTP client directly -- same rule that keeps
         every other external call behind this Protocol."""
+        ...
+
+    def get_listing_inventory(self, listing_id: int) -> EtsyListingInventory:
+        """getListingInventory (GET .../listings/{listing_id}/inventory,
+        listings_r scope, already held -- no new scope). Read-only and safe
+        for ANY listing, POD or digital -- it never modifies anything.
+        Returns an empty EtsyListingInventory (products=[]) for a listing
+        with no inventory record (e.g. one never edited via Etsy's
+        inventory tools), same "absence is not an error" shape as
+        get_listing_images."""
         ...
 
 
@@ -73,6 +98,12 @@ class EtsyWriteAdapter(Protocol):
     EtsyListingUpdate -- can never touch state. Accepts only
     "active"/"inactive"."""
 
+    def create_shop_section(self, title: str) -> EtsyShopSection:
+        """createShopSection (shops_r + shops_w scopes, already held -- no
+        new scope). Dead code until a future storefront-organization
+        variant -- no current caller anywhere in this codebase."""
+        ...
+
     def create_draft_listing(self, spec: EtsyDraftSpec) -> EtsyListingRef: ...
     def upload_listing_image(self, listing_id: int, image: bytes, *, rank: int) -> EtsyImageRef: ...
     def upload_listing_file(
@@ -81,5 +112,47 @@ class EtsyWriteAdapter(Protocol):
     def update_listing(self, listing_id: int, fields: EtsyListingUpdate) -> EtsyListing: ...
     def update_listing_price(self, listing_id: int, price: float) -> None: ...
     def update_listing_state(self, listing_id: int, state: str) -> None: ...
+
+    def update_listing_inventory(
+        self, listing_id: int, inventory: EtsyListingInventory
+    ) -> EtsyListingInventory:
+        """updateListingInventory (PUT .../listings/{listing_id}/inventory).
+        Sets a listing's ENTIRE products/offerings/property_values array --
+        i.e. its full SKU and variation structure, not just price.
+
+        *** WARNING -- READ BEFORE CALLING, THIS METHOD HAS NO GUARD. ***
+        CLAUDE.md's "POD-first listing creation for physical SKUs" rule
+        states, verbatim: "Gelato/Printful APIs create the product and push
+        the Etsy draft; we then enrich the draft (title, tags, description,
+        images, price) via the Etsy API. Never modify provider-set SKU
+        values or variation structure." Calling this method against a
+        POD-backed listing (one Gelato/Printful created) can rewrite exactly
+        the SKU/variation structure that rule forbids touching.
+
+        This adapter method deliberately does NOT check whether a listing is
+        POD or digital -- that is a business-logic judgment call the adapter
+        layer has no way to make on its own, matching how every other write
+        primitive here (update_listing, update_listing_price, ...) is
+        unopinionated and leaves eligibility to the capability that calls
+        it. ANY future capability that calls update_listing_inventory MUST
+        first apply the same digital-only eligibility check
+        `listing.reprice` uses before ever calling updateListingInventory:
+        `_is_conservatively_digital()` in
+        `shopsteward/pipeline/ops/capabilities/reprice.py`, PLUS reprice's
+        authoritative `listingdraft.provider_linked` event-log check (a
+        listing_id that ever appears there is POD-backed, full stop,
+        regardless of title -- note this is authoritative only for a
+        listing this app itself created via the POD flow and logged;
+        a POD listing created outside ShopSteward has no such event, so
+        the title heuristic is still the only signal for that case).
+
+        Be explicit with yourself about what this docstring is and is not:
+        it is a label on a loaded gun, not a safety catch. As of this
+        writing NO capability in this codebase calls
+        update_listing_inventory at all, so there is nothing here or
+        upstream enforcing the digital-only check yet -- do not mistake
+        this warning for an enforced guard."""
+        ...
+
     def publish_listing(self, listing_id: int) -> EtsyListing: ...
     def delete_listing(self, listing_id: int) -> None: ...

@@ -1,0 +1,26 @@
+{
+  "111": {
+    "products": [
+      {
+        "product_id": 5001,
+        "sku": "",
+        "is_deleted": false,
+        "offerings": [
+          {
+            "offering_id": 6001,
+            "quantity": 5,
+            "is_enabled": true,
+            "is_deleted": false,
+            "price": {"amount": 1200, "divisor": 100, "currency_code": "USD"},
+            "readiness_state_id": null
+          }
+        ],
+        "property_values": []
+      }
+    ],
+    "price_on_property": [],
+    "quantity_on_property": [],
+    "sku_on_property": [],
+    "readiness_state_on_property": []
+  }
+}
