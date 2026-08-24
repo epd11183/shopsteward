@@ -295,6 +295,16 @@ class LiveEtsyWriteAdapter:
                     "price": price,
                     "quantity": o.get("quantity"),
                     "is_enabled": o.get("is_enabled", True),
+                    # readiness_state_id links the offering to its processing
+                    # profile (Etsy processing-profiles migration, live since
+                    # 2026-07). Dropping it here would strip the profile from
+                    # every offering on reprice -- or 400 against a listing
+                    # with readiness_state_on_property set.
+                    **(
+                        {"readiness_state_id": o["readiness_state_id"]}
+                        if o.get("readiness_state_id") is not None
+                        else {}
+                    ),
                 }
                 for o in product.get("offerings", [])
             ]
@@ -313,7 +323,22 @@ class LiveEtsyWriteAdapter:
             if product.get("sku"):
                 out["sku"] = product["sku"]
             products.append(out)
-        self._request("PUT", f"/listings/{listing_id}/inventory", json={"products": products})
+        body: dict[str, object] = {"products": products}
+        # Round-trip the *_on_property arrays -- omitting them on a listing
+        # that has one set (e.g. readiness_state_on_property after the
+        # processing-profiles migration) makes the PUT fail or clear the
+        # property linkage. price_on_property stays safe here because the
+        # reprice capability only ever targets variation-less digital
+        # listings (see _is_conservatively_digital guard at the call site).
+        for field in (
+            "price_on_property",
+            "quantity_on_property",
+            "sku_on_property",
+            "readiness_state_on_property",
+        ):
+            if inventory.get(field):
+                body[field] = inventory[field]
+        self._request("PUT", f"/listings/{listing_id}/inventory", json=body)
 
     def update_listing_inventory(
         self, listing_id: int, inventory: EtsyListingInventory

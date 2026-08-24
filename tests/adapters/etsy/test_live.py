@@ -669,6 +669,53 @@ def test_update_listing_price_whitelists_inventory_put_body(tmp_path) -> None:
     assert "offering_id" not in offering
     assert "is_deleted" not in offering
     assert "sku" not in product  # empty sku omitted entirely
+    # no readiness_state_id in the GET -> none in the PUT, and no
+    # *_on_property arrays are invented
+    assert "readiness_state_id" not in offering
+    assert "readiness_state_on_property" not in body
+
+
+@respx.mock
+def test_update_listing_price_preserves_readiness_state(tmp_path) -> None:
+    # Processing-profiles migration (live 2026-07): offerings can carry a
+    # readiness_state_id and the inventory record a readiness_state_on_property
+    # array. A reprice must round-trip both -- dropping them strips the
+    # processing profile (or 400s against the *_on_property linkage).
+    respx.get(f"{BASE}/listings/555/inventory").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "products": [
+                    {
+                        "product_id": 1,
+                        "property_values": [],
+                        "offerings": [
+                            {
+                                "offering_id": 11,
+                                "quantity": 5,
+                                "is_enabled": True,
+                                "price": {"amount": 1200, "divisor": 100, "currency_code": "USD"},
+                                "readiness_state_id": 18201076875,
+                            }
+                        ],
+                    }
+                ],
+                "readiness_state_on_property": [507],
+            },
+        )
+    )
+    put_route = respx.put(f"{BASE}/listings/555/inventory").mock(
+        return_value=httpx.Response(200, json={"products": []})
+    )
+    adapter = _write_adapter(tmp_path)
+
+    adapter.update_listing_price(555, 9.50)
+
+    import json as _json
+
+    body = _json.loads(put_route.calls.last.request.content)
+    assert body["products"][0]["offerings"][0]["readiness_state_id"] == 18201076875
+    assert body["readiness_state_on_property"] == [507]
 
 
 @respx.mock
