@@ -12,6 +12,7 @@ from shopsteward.core.events import Event, append, read_all
 class SyncResult(BaseModel):
     shops: int = 0
     listings: int = 0
+    listing_images: int = 0
     receipts: int = 0
 
 
@@ -79,6 +80,25 @@ def sync_etsy(conn: sqlite3.Connection, adapter: EtsyAdapter, user_id: int) -> S
             Event(user_id=user_id, type="etsy.listing.observed", payload=listing.model_dump()),
         )
         result.listings += 1
+        # One live call per listing (N+1) -- fine at this shop's scale
+        # (~27 listings); would need batching if the catalog grew into the
+        # hundreds+.
+        images = adapter.get_listing_images(listing.listing_id)
+        append(
+            conn,
+            Event(
+                user_id=user_id,
+                type="etsy.listing.images.observed",
+                payload={
+                    "listing_id": listing.listing_id,
+                    "images": [
+                        img.model_dump(include={"listing_image_id", "rank", "url_570xN"})
+                        for img in images
+                    ],
+                },
+            ),
+        )
+        result.listing_images += 1
     prior_sales = _sale_events_for_user(conn, user_id)
     last_ts = max((e.payload["created_timestamp"] for e in prior_sales), default=None)
     seen_ids = {e.payload["receipt_id"] for e in prior_sales}

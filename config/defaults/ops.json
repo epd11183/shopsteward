@@ -31,7 +31,8 @@
     "shoot_more": true,
     "data_quality": true,
     "autonomy": true,
-    "captions": true
+    "captions": true,
+    "pins": true
   },
   "reprice": {
     "min_price_usd": 3.0,
@@ -49,6 +50,15 @@
   },
   "caption": {
     "max_len": 2200
+  },
+  "pinterest": {
+    "cooldown_days": 30,
+    "max_title_len": 100,
+    "max_description_len": 500,
+    "max_alt_text_len": 500,
+    "boards": {
+      "wall_art": "Nature & Landscape Wall Art"
+    }
   },
   "autonomy": {
     "enabled": false,

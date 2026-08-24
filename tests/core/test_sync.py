@@ -27,6 +27,18 @@ def test_sync_appends_observation_events(conn):
     assert types.count("etsy.sale.observed") == 10
 
 
+def test_sync_appends_listing_images_observed_per_listing(conn):
+    result = sync_etsy(conn, FixtureEtsyAdapter(FIXTURES), user_id=1)
+    assert result.listing_images == 7
+    events = read_all(conn, "etsy.listing.images.observed")
+    assert len(events) == 7
+    by_listing = {e.payload["listing_id"]: e.payload["images"] for e in events}
+    assert by_listing[111] == [
+        {"listing_image_id": 9001, "rank": 1, "url_570xN": "sample_listing.jpg"}
+    ]
+    assert by_listing[222] == []  # no fixture row for this listing -- empty is valid
+
+
 def test_resync_is_incremental_on_receipts(conn):
     sync_etsy(conn, FixtureEtsyAdapter(FIXTURES), user_id=1)
     sync_etsy(conn, FixtureEtsyAdapter(FIXTURES), user_id=1)

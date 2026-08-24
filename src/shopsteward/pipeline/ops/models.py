@@ -17,6 +17,7 @@ __all__ = [
     "BriefAutonomy",
     "BriefCaption",
     "BriefLadderRow",
+    "BriefPin",
     "BriefProposal",
     "BriefRefusal",
     "CapabilityState",
@@ -67,6 +68,7 @@ class _OpsBriefSections(BaseModel):
     data_quality: bool = True
     autonomy: bool = True
     captions: bool = True
+    pins: bool = True
 
 
 class _OpsLadder(BaseModel):
@@ -127,6 +129,23 @@ class _OpsCaption(BaseModel):
     max_len: int = Field(gt=0)
 
 
+class _OpsPinterest(BaseModel):
+    # `social.pinterest_post` Variant A (`social.pin_drafted`, 2026-08-24
+    # design doc §2/§3) -- cooldown_days is the anti-spam control replacing
+    # a sales gate (design §2.1: a pin is cheap, deletable, and long-lived,
+    # so eligibility is coverage-first, not proof-first). max_*_len are
+    # PRODUCT limits kept within Pinterest's real ceilings (title<=100,
+    # description<=800, alt_text<=500) -- not values copied 1:1 from
+    # Pinterest's API spec that could be wrong. `boards` is a config-
+    # declared board_key -> board name map so the LLM can never invent a
+    # board (design §2.2).
+    cooldown_days: int = Field(gt=0)
+    max_title_len: int = Field(gt=0)
+    max_description_len: int = Field(gt=0)
+    max_alt_text_len: int = Field(gt=0)
+    boards: dict[str, str] = Field(default_factory=dict)
+
+
 class _OpsAutonomy(BaseModel):
     # Chassis master switch + caps (M8a spec §3, draft §5). enabled and
     # monthly_spend_cap_usd MUST default false/0.00 -- nothing auto-executes,
@@ -167,6 +186,7 @@ class OpsConfig(BaseModel):
     seo_edit: _OpsSeoEdit
     renew: _OpsRenew
     caption: _OpsCaption
+    pinterest: _OpsPinterest
 
 
 # --- autonomy chassis (PR1) --------------------------------------------------
@@ -359,6 +379,21 @@ class BriefCaption(BaseModel):
     drafted_at: str  # ISO datetime, from the event payload
 
 
+class BriefPin(BaseModel):
+    """One recent `social.pin_drafted` (Variant A, draft-only) -- the
+    operator copy-pastes it into Pinterest by hand. No Pinterest call,
+    ever, mirroring BriefCaption above."""
+
+    listing_id: int
+    title: str
+    description: str
+    alt_text: str
+    board_key: str
+    destination_url: str
+    image_url: str
+    drafted_at: str  # ISO datetime, from the event payload
+
+
 class BriefAutonomy(BaseModel):
     enabled: bool
     halted: bool
@@ -390,3 +425,6 @@ class Brief(BaseModel):
     # construction (or any caller that never touches this) stays valid
     # without passing it. Gated on brief_sections.captions.
     caption_drafts: list[BriefCaption] = Field(default_factory=list)
+    # `social.pinterest_post` Variant A (2026-08-24 design doc §2/§3) --
+    # default-empty, same reasoning as caption_drafts above.
+    pin_drafts: list[BriefPin] = Field(default_factory=list)

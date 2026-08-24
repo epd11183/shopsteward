@@ -182,6 +182,7 @@ def run_cmd(
     from shopsteward.pipeline.ops.capabilities.caption_draft import SocialCaptionDraft
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
     from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
+    from shopsteward.pipeline.ops.capabilities.pinterest_post import SocialPinterestPost
     from shopsteward.pipeline.ops.capabilities.renew import ListingRenew
     from shopsteward.pipeline.ops.capabilities.reprice import ListingReprice
     from shopsteward.pipeline.ops.capabilities.seo_edit import ListingSeoEdit
@@ -212,6 +213,9 @@ def run_cmd(
     # No adapter at all -- execute() only ever appends an event, so this is
     # never gated on --live-autonomy either (no Meta/IG/FB call anywhere).
     register(SocialCaptionDraft())
+    # No adapter at all either -- Variant A only, no Pinterest call
+    # anywhere (2026-08-24 design doc §2, item 2 of the sign-off register).
+    register(SocialPinterestPost())
 
     db = db_path()
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -373,6 +377,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
     from shopsteward.pipeline.ops.capabilities.caption_draft import SocialCaptionDraft
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
     from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
+    from shopsteward.pipeline.ops.capabilities.pinterest_post import SocialPinterestPost
     from shopsteward.pipeline.ops.capabilities.renew import ListingRenew
     from shopsteward.pipeline.ops.capabilities.reprice import ListingReprice
     from shopsteward.pipeline.ops.capabilities.seo_edit import ListingSeoEdit
@@ -391,6 +396,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
     register(OpsTuneThreshold())
     register(ListingGapfillReprint(build_print_file_host(live=False)))
     register(SocialCaptionDraft())
+    register(SocialPinterestPost())
 
 
 @ops_app.command("approve")

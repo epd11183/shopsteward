@@ -41,6 +41,8 @@ from shopsteward.adapters.planner.interface import (
 from shopsteward.core.events import Event, append
 from shopsteward.pipeline.llm_ledger import monthly_spend
 from shopsteward.pipeline.ops import analytics
+from shopsteward.pipeline.ops.capabilities.pinterest_post import _candidates as _pin_candidates
+from shopsteward.pipeline.ops.capabilities.pinterest_post import _last_pinned_at
 from shopsteward.pipeline.ops.capabilities.seo_edit import _latest_observed
 from shopsteward.pipeline.ops.models import OpsConfig, ProposedAction
 from shopsteward.pipeline.ops.registry import Capability
@@ -155,6 +157,27 @@ def _zero_tag_listings(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -
     return out
 
 
+def _pin_eligible_listings(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> list[dict]:
+    """listing_id/title for every `social.pinterest_post`-eligible listing
+    (active, has an image, outside the cooldown -- pinterest_post.py's own
+    `_candidates()`), ordered LEAST-RECENTLY-PINNED FIRST (design §2.1: an
+    explore policy, not an exploit one -- coverage across the whole catalog,
+    never a taste ranking). materialize()'s own `_candidates()` still
+    re-grounds and drops anything ineligible; this is target discovery
+    (courtesy to the model, ordering hint), not the safety boundary."""
+    targets = _pin_candidates(conn, user_id, cfg)
+    rows = [
+        {
+            "listing_id": t.listing_id,
+            "title": t.title,
+            "last_pinned_at": _last_pinned_at(conn, user_id, t.listing_id),
+        }
+        for t in targets.values()
+    ]
+    rows.sort(key=lambda r: (r["last_pinned_at"] is not None, r["last_pinned_at"] or ""))
+    return rows
+
+
 def _build_facts_json(
     conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, capabilities: list[Capability]
 ) -> str:
@@ -193,6 +216,13 @@ def _build_facts_json(
         # slice 6). materialize() still re-grounds against the SAME
         # analytics.top_sellers() and drops anything ineligible.
         "top_sellers": [s.model_dump(mode="json") for s in sellers],
+        # social.pinterest_post Variant A is ALSO planner-only (propose()
+        # always []) -- without this block the LLM has no target ids for it
+        # (2026-08-24 design doc §2). Deliberately NOT gated on
+        # top_sellers()/dead/trending (design §2.1) -- least-recently-pinned
+        # first, a coverage policy, not a proof-first one. materialize()'s
+        # _candidates() still re-grounds.
+        "pin_eligible_listings": _pin_eligible_listings(conn, user_id, cfg),
         "candidate_target_ids": {
             cap.key: [a.target_id for a in cap.propose(conn, user_id, cfg)] for cap in capabilities
         },
@@ -246,6 +276,10 @@ def plan_proposals(
         reprice_max_pct_change=cfg.reprice.max_pct_change,
         seo_edit_min_lifetime_views=cfg.seo_edit.min_lifetime_views,
         caption_max_len=cfg.caption.max_len,
+        pinterest_max_title_len=cfg.pinterest.max_title_len,
+        pinterest_max_description_len=cfg.pinterest.max_description_len,
+        pinterest_max_alt_text_len=cfg.pinterest.max_alt_text_len,
+        pinterest_board_keys=sorted(cfg.pinterest.boards),
     )
 
     try:

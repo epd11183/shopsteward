@@ -18,6 +18,7 @@ from shopsteward.pipeline.ops.models import (
     BriefAutonomy,
     BriefCaption,
     BriefLadderRow,
+    BriefPin,
     BriefProposal,
     BriefRefusal,
     OpsConfig,
@@ -133,6 +134,32 @@ def _caption_drafts(conn: sqlite3.Connection, user_id: int, as_of: date) -> list
     return out
 
 
+def _pin_drafts(conn: sqlite3.Connection, user_id: int, as_of: date) -> list[BriefPin]:
+    """Recent `social.pin_drafted` events (Variant A, 2026-08-24 design doc
+    §2) -- the operator's copy-paste-to-Pinterest queue. Same 7-day
+    lookback as DONE/REFUSED/captions (no config knob yet, same ponytail as
+    `_DONE_REFUSED_WINDOW_DAYS`)."""
+    out = []
+    for e in read_all(conn, "social.pin_drafted"):
+        if e.user_id != user_id or not _within_window(
+            e.created_at, as_of, _DONE_REFUSED_WINDOW_DAYS
+        ):
+            continue
+        out.append(
+            BriefPin(
+                listing_id=e.payload["listing_id"],
+                title=e.payload["title"],
+                description=e.payload["description"],
+                alt_text=e.payload["alt_text"],
+                board_key=e.payload["board_key"],
+                destination_url=e.payload["destination_url"],
+                image_url=e.payload["image_url"],
+                drafted_at=e.payload["drafted_at"],
+            )
+        )
+    return out
+
+
 def _autonomy_section(
     conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, as_of: date
 ) -> BriefAutonomy:
@@ -190,6 +217,7 @@ def generate_brief(
     refused_recent = _refused_recent(conn, user_id, as_of) if sections.autonomy else []
     autonomy = _autonomy_section(conn, user_id, cfg, as_of) if sections.autonomy else None
     caption_drafts = _caption_drafts(conn, user_id, as_of) if sections.captions else []
+    pin_drafts = _pin_drafts(conn, user_id, as_of) if sections.pins else []
 
     return Brief(
         generated_at=as_of,
@@ -208,6 +236,7 @@ def generate_brief(
         refused_recent=refused_recent,
         autonomy=autonomy,
         caption_drafts=caption_drafts,
+        pin_drafts=pin_drafts,
     )
 
 
@@ -246,6 +275,14 @@ def render_text(brief: Brief) -> str:
         lines.append(f"CAPTIONS TO POST (copy to IG/FB) ({len(brief.caption_drafts)})")
         for c in brief.caption_drafts:
             lines.append(f'  {c.title} -- "{c.caption}"')
+
+    if brief.pin_drafts:
+        lines.append("")
+        lines.append(f"PINS TO POST (copy to Pinterest) ({len(brief.pin_drafts)})")
+        for p in brief.pin_drafts:
+            lines.append(
+                f'  {p.title} -- board "{p.board_key}" -- {p.destination_url} -- "{p.description}"'
+            )
 
     lines.append("")
     lines.append("THE SHOP")

@@ -93,6 +93,10 @@ def test_plan_system_prompt_reflects_cfg_not_hardcoded_numbers() -> None:
         reprice_max_pct_change=0.31,
         seo_edit_min_lifetime_views=42,
         caption_max_len=321,
+        pinterest_max_title_len=99,
+        pinterest_max_description_len=444,
+        pinterest_max_alt_text_len=333,
+        pinterest_board_keys=["wall_art"],
     )
 
     adapter.plan("{}", [], limits)
@@ -103,13 +107,18 @@ def test_plan_system_prompt_reflects_cfg_not_hardcoded_numbers() -> None:
     assert "31" in system_prompt  # max_pct_change rendered as a percentage
     assert "42" in system_prompt
     assert "321" in system_prompt
-    # params guidance for the three content-generating capabilities:
+    assert "99" in system_prompt
+    assert "444" in system_prompt
+    assert "333" in system_prompt
+    assert "wall_art" in system_prompt
+    # params guidance for the content-generating capabilities:
     assert "price_usd" in system_prompt
     assert "title" in system_prompt
     assert "tags" in system_prompt
     assert "description" in system_prompt
     assert "1-5000" in system_prompt
     assert "caption" in system_prompt
+    assert "board_key" in system_prompt
 
 
 @respx.mock

@@ -67,6 +67,15 @@ class PlannerLimits(BaseModel):
     reprice_max_pct_change: float
     seo_edit_min_lifetime_views: int
     caption_max_len: int
+    # `social.pinterest_post` Variant A (2026-08-24 design doc §2.2) -- the
+    # LLM's `board_key` must be one of these keys; nothing else this
+    # capability writes needs a numeric bound of its own (title/description/
+    # alt_text limits are already Pinterest's own real ceilings, spelled out
+    # in the prompt text directly rather than threaded through here).
+    pinterest_max_title_len: int
+    pinterest_max_description_len: int
+    pinterest_max_alt_text_len: int
+    pinterest_board_keys: list[str]
 
 
 class CapabilityDescriptor(BaseModel):

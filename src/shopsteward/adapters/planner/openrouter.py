@@ -82,6 +82,14 @@ def _plan_system_prompt(limits: PlannerLimits) -> str:
         "out-of-bounds or unchanged guess is dropped, never adjusted).\n"
         '- social.caption_draft: "caption" (a non-empty string, at most '
         f"{limits.caption_max_len} characters).\n"
+        '- social.pinterest_post: "title" (a non-empty string, at most '
+        f'{limits.pinterest_max_title_len} characters), "description" (a '
+        f"non-empty string, at most {limits.pinterest_max_description_len} "
+        'characters), "alt_text" (a non-empty string, at most '
+        f'{limits.pinterest_max_alt_text_len} characters), and "board_key" '
+        f"(one of exactly these keys: {', '.join(limits.pinterest_board_keys)} -- "
+        "any other value is dropped). Never propose a destination URL "
+        "yourself; it is computed for you.\n"
         "listing.autorenew_off, listing.autorenew_on, listing.deactivate, and "
         "listing.renew take no params -- do not invent any for them.\n"
         "(listing.seo_edit's eligible targets are already either active "
