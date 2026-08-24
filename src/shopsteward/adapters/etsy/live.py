@@ -116,7 +116,15 @@ class LiveEtsyAdapter:
         return [EtsyReceipt.model_validate(r) for r in rows]
 
     def get_listing_images(self, listing_id: int) -> list[EtsyListingImage]:
-        body = self._get(f"/shops/{self._shop_id}/listings/{listing_id}/images")
+        # A 404 here means the listing has no images available at this
+        # endpoint (e.g. an old/expired listing) -- treat that as "no
+        # images", same as an empty results list, instead of raising.
+        try:
+            body = self._get(f"/shops/{self._shop_id}/listings/{listing_id}/images")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return []
+            raise
         return [EtsyListingImage.model_validate(r) for r in body["results"]]
 
     def download_image(self, url: str) -> bytes:

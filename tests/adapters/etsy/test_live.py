@@ -87,6 +87,28 @@ def test_get_listing_images_parses_results() -> None:
 
 
 @respx.mock
+def test_get_listing_images_returns_empty_on_404() -> None:
+    # An old/expired listing can 404 at this endpoint -- treat that the
+    # same as "no images", not an error (plan_matches already handles the
+    # no-images case).
+    respx.get(f"{BASE}/shops/100001/listings/555/images").mock(
+        return_value=httpx.Response(404, json={"error": "not found"})
+    )
+    adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
+    assert adapter.get_listing_images(555) == []
+
+
+@respx.mock
+def test_get_listing_images_raises_on_non_404_error() -> None:
+    respx.get(f"{BASE}/shops/100001/listings/555/images").mock(
+        return_value=httpx.Response(500, json={"error": "server error"})
+    )
+    adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
+    with pytest.raises(httpx.HTTPStatusError):
+        adapter.get_listing_images(555)
+
+
+@respx.mock
 def test_download_image_sends_no_auth_header() -> None:
     route = respx.get("https://i.etsystatic.com/img.jpg").mock(
         return_value=httpx.Response(200, content=b"\xff\xd8jpegbytes")
