@@ -64,7 +64,7 @@
     "enabled": false,
     "daily_action_cap": 10,
     "per_capability_daily_cap": 5,
-    "weekly_catalog_pct_cap": 0.10,
+    "weekly_catalog_pct_cap": 1.0,
     "monthly_spend_cap_usd": 0.00,
     "proposal_ttl_days": 14,
     "planner_enabled": false,
