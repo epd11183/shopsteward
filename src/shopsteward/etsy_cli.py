@@ -12,8 +12,12 @@ etsy_app = typer.Typer(no_args_is_help=True, help="Etsy OAuth token management."
 
 _DEFAULT_SCOPES_STR = " ".join(DEFAULT_SCOPES)
 
-# listings_w added for M5a (PRD §13 decision 41); everything else stays denied.
-_ALLOWED_SCOPES = {"listings_r", "listings_w", "transactions_r", "shops_r"}
+# listings_w added for M5a (PRD §13 decision 41); feedback_r added
+# 2026-08-24 for review-velocity reading (roadmap P4, operator-approved
+# explicitly in-session per CLAUDE.md's rewritten governance -- see
+# adapters/etsy/auth.py's DEFAULT_SCOPES for the matching change).
+# Everything else stays denied.
+_ALLOWED_SCOPES = {"listings_r", "listings_w", "transactions_r", "shops_r", "feedback_r"}
 
 
 def _format_delta(seconds: float) -> str:
