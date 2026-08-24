@@ -402,8 +402,9 @@ class BriefCaption(BaseModel):
 
 class BriefPin(BaseModel):
     """One recent `social.pin_drafted` (Variant A, draft-only) -- the
-    operator copy-pastes it into Pinterest by hand. No Pinterest call,
-    ever, mirroring BriefCaption above."""
+    operator copy-pastes it into Pinterest by hand, then runs
+    `ops mark-posted <action_id>` to drop it from this queue. No Pinterest
+    call, ever, mirroring BriefCaption above."""
 
     listing_id: int
     title: str
@@ -413,6 +414,10 @@ class BriefPin(BaseModel):
     destination_url: str
     image_url: str
     drafted_at: str  # ISO datetime, from the event payload
+    # The resolved action_id for `ops mark-posted` -- None if it couldn't be
+    # resolved (malformed/legacy destination_url); such a row is never
+    # dropped by the posted-filter since it can't be matched either way.
+    action_id: str | None = None
 
 
 class BriefAutonomy(BaseModel):

@@ -52,3 +52,6 @@ Thumbs.db
 # they record real paths and commands from this machine.
 receipts/
 review-receipts/
+
+# Operational scratch docs -- real live listing IDs/shop copy, not source.
+pins_to_post.md

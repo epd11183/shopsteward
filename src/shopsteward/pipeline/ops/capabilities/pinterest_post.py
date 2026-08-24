@@ -51,6 +51,7 @@ from shopsteward.core.events import Event, append, read_all
 from shopsteward.core.sync import read_live_observed
 from shopsteward.pipeline.ops.config import get_ops_config, ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
+from shopsteward.pipeline.ops.projections import _action_id_from_destination_url
 from shopsteward.pipeline.ops.registry import compute_action_id
 
 _PIN_EVENT_TYPES = ("social.pin_drafted", "social.pin_posted")
@@ -183,6 +184,55 @@ def _build_action(
         expires_at=expires_at,
         params={**valid, "destination_url": destination_url, "image_url": target.image_url},
     )
+
+
+def mark_posted(conn: sqlite3.Connection, user_id: int, action_id: str) -> bool:
+    """`ops mark-posted` (cli.py): append `social.pin_posted` for the
+    `social.pin_drafted` event whose destination_url embeds this action_id's
+    own 12-char utm_content prefix (`_destination_url()`'s convention,
+    projections.py's `_action_id_from_destination_url` join-key precedent).
+    Returns True if a new event was appended, False if this action_id was
+    already marked posted (safe no-op). Raises ValueError if no drafted pin
+    matches `action_id` at all -- never a partial/crashing write."""
+    if len(action_id) != 64:
+        # A bare 12-char utm_content prefix would otherwise match here too
+        # (action_id[:12] == action_id for a 12-char input) and get stored
+        # as a truncated "action_id" that _pin_drafts()'s full-id exclusion
+        # check would never recognize -- always require the real action_id
+        # (registry.py's compute_action_id is a sha256 hexdigest, 64 chars).
+        raise ValueError(f"action_id must be the full 64-char id, got {action_id!r}")
+    drafted = next(
+        (
+            e
+            for e in read_all(conn, "social.pin_drafted")
+            if e.user_id == user_id
+            and _action_id_from_destination_url(e.payload.get("destination_url")) == action_id[:12]
+        ),
+        None,
+    )
+    if drafted is None:
+        raise ValueError(f"no drafted pin found for action_id {action_id!r}")
+
+    already_posted = any(
+        e.user_id == user_id and e.payload.get("action_id") == action_id
+        for e in read_all(conn, "social.pin_posted")
+    )
+    if already_posted:
+        return False
+
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="social.pin_posted",
+            payload={
+                "listing_id": drafted.payload["listing_id"],
+                "action_id": action_id,
+                "posted_at": datetime.now(UTC).isoformat(),
+            },
+        ),
+    )
+    return True
 
 
 class SocialPinterestPost:

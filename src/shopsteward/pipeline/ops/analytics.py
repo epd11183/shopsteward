@@ -34,6 +34,19 @@ from shopsteward.pipeline.ops.models import (
 
 _SIZE_RE = re.compile(r"(\d+)\s*[x×]\s*(\d+)", re.IGNORECASE)
 
+# ponytail: cap by ROW COUNT (most-recent-N by drafted_at), not by a
+# drafted_at day-window -- a day-window risks truncating a row whose own
+# before/after measurement window (cfg.windows.revenue_window_days) hasn't
+# finished yet, which would wrongly hide a "too early to measure" row rather
+# than an already-measured one. A count cap avoids that in practice: rows
+# most likely to still be unmeasured are the newest, and ORDER BY drafted_at
+# DESC LIMIT keeps the newest first, so a too-early row is the LAST to be
+# dropped, not the first -- correct as long as fewer than this many pins are
+# ever drafted within a single measurement window (true today, given
+# planner_max_per_capability_per_run: 1). Raise if the operator ever wants a
+# longer history than this default -- add a windows.* config knob then.
+_PIN_EXPERIMENTS_MAX_ROWS = 100
+
 
 def _today(as_of: date | None) -> date:
     return as_of or datetime.now(UTC).date()
@@ -465,11 +478,18 @@ def pin_experiment_readout(
     """
     as_of = _today(as_of)
     window_days = cfg.windows.revenue_window_days
-    rows = conn.execute(
-        "SELECT listing_id, action_id, drafted_at FROM proj_pin_experiments "
-        "WHERE user_id=? ORDER BY drafted_at, action_id",
-        (user_id,),
-    ).fetchall()
+    # Most-recent-_PIN_EXPERIMENTS_MAX_ROWS first (see module-level comment
+    # on the constant), then reversed back to the original oldest-first
+    # display order.
+    rows = list(
+        reversed(
+            conn.execute(
+                "SELECT listing_id, action_id, drafted_at FROM proj_pin_experiments "
+                "WHERE user_id=? ORDER BY drafted_at DESC, action_id DESC LIMIT ?",
+                (user_id, _PIN_EXPERIMENTS_MAX_ROWS),
+            ).fetchall()
+        )
+    )
 
     out: list[PinExperimentResult] = []
     for r in rows:

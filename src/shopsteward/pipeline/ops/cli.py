@@ -490,6 +490,39 @@ def reject_cmd(
         conn.close()
 
 
+@ops_app.command("mark-posted")
+def mark_posted_cmd(
+    action_id: Annotated[
+        str, typer.Argument(help="action_id from `ops brief`'s PINS TO POST/DONE")
+    ],
+) -> None:
+    """Record that a drafted Pinterest pin (`social.pin_drafted`, Variant A)
+    was posted by hand: appends `social.pin_posted`, which drops it out of
+    `ops brief`'s PINS TO POST copy-paste queue. Pure record-keeping -- no
+    governor, no adapter, no Pinterest call of any kind. Safe to run twice
+    (a repeat call for an already-posted action_id is a no-op)."""
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.pipeline.ops.capabilities.pinterest_post import mark_posted
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        try:
+            appended = mark_posted(conn, DEFAULT_USER_ID, action_id)
+        except ValueError as exc:
+            typer.secho(f"mark-posted failed: {exc}", fg="red")
+            raise typer.Exit(code=1) from exc
+        if appended:
+            typer.echo(f"marked posted: {action_id}")
+        else:
+            typer.echo(f"already marked posted: {action_id}")
+    finally:
+        conn.close()
+
+
 @ops_app.command("undo")
 def undo_cmd(
     action_id: Annotated[str, typer.Argument(help="action_id from `ops brief`'s DONE")],

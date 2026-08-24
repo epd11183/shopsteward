@@ -25,7 +25,11 @@ from shopsteward.pipeline.ops.models import (
     ProposedAction,
     Tier,
 )
-from shopsteward.pipeline.ops.projections import action_rows, capability_states
+from shopsteward.pipeline.ops.projections import (
+    _action_id_from_destination_url,
+    action_rows,
+    capability_states,
+)
 
 # ponytail: fixed 7-day lookback for DONE/REFUSED, not a config knob -- add
 # one under cfg.windows if the operator ever wants a longer/shorter Brief
@@ -134,20 +138,64 @@ def _caption_drafts(conn: sqlite3.Connection, user_id: int, as_of: date) -> list
     return out
 
 
+def _pin_action_ids_by_listing(conn: sqlite3.Connection, user_id: int) -> dict[int, list[str]]:
+    """listing_id -> executed `social.pinterest_post` action_ids for this
+    user -- the same action_rows()-derived lookup projections.py's
+    `_pin_experiment_rows()` builds, mirrored here (not imported) since it's
+    a query over action_rows(), not a helper function, per that module's own
+    docstring precedent."""
+    out: dict[int, list[str]] = {}
+    for row in action_rows(conn):
+        if (
+            row["user_id"] != user_id
+            or row["capability"] != "social.pinterest_post"
+            or row["state"] != "executed"
+        ):
+            continue
+        try:
+            listing_id = int(row["target_id"])
+        except ValueError:
+            continue
+        out.setdefault(listing_id, []).append(row["action_id"])
+    return out
+
+
 def _pin_drafts(conn: sqlite3.Connection, user_id: int, as_of: date) -> list[BriefPin]:
     """Recent `social.pin_drafted` events (Variant A, 2026-08-24 design doc
     §2) -- the operator's copy-paste-to-Pinterest queue. Same 7-day
     lookback as DONE/REFUSED/captions (no config knob yet, same ponytail as
-    `_DONE_REFUSED_WINDOW_DAYS`)."""
+    `_DONE_REFUSED_WINDOW_DAYS`). Excludes any draft whose OWN action_id (not
+    just its listing_id -- a listing can have more than one pin over time,
+    cooldown-permitting) has a `social.pin_posted` event, i.e. the operator
+    has already run `ops mark-posted` for it."""
+    posted_action_ids = {
+        e.payload.get("action_id")
+        for e in read_all(conn, "social.pin_posted")
+        if e.user_id == user_id
+    }
+    action_ids_by_listing = _pin_action_ids_by_listing(conn, user_id)
+
     out = []
     for e in read_all(conn, "social.pin_drafted"):
         if e.user_id != user_id or not _within_window(
             e.created_at, as_of, _DONE_REFUSED_WINDOW_DAYS
         ):
             continue
+        listing_id = e.payload["listing_id"]
+        prefix = _action_id_from_destination_url(e.payload.get("destination_url"))
+        action_id = next(
+            (
+                aid
+                for aid in action_ids_by_listing.get(listing_id, [])
+                if prefix is not None and aid.startswith(prefix)
+            ),
+            None,
+        )
+        if action_id is not None and action_id in posted_action_ids:
+            continue  # marked posted -- drop from the copy-paste queue
         out.append(
             BriefPin(
-                listing_id=e.payload["listing_id"],
+                listing_id=listing_id,
                 title=e.payload["title"],
                 description=e.payload["description"],
                 alt_text=e.payload["alt_text"],
@@ -155,6 +203,7 @@ def _pin_drafts(conn: sqlite3.Connection, user_id: int, as_of: date) -> list[Bri
                 destination_url=e.payload["destination_url"],
                 image_url=e.payload["image_url"],
                 drafted_at=e.payload["drafted_at"],
+                action_id=action_id,
             )
         )
     return out
@@ -286,8 +335,10 @@ def render_text(brief: Brief) -> str:
         lines.append("")
         lines.append(f"PINS TO POST (copy to Pinterest) ({len(brief.pin_drafts)})")
         for p in brief.pin_drafts:
+            mark_posted = f" -- mark posted: ops mark-posted {p.action_id}" if p.action_id else ""
             lines.append(
-                f'  {p.title} -- board "{p.board_key}" -- {p.destination_url} -- "{p.description}"'
+                f'  {p.title} -- board "{p.board_key}" -- {p.destination_url} -- '
+                f'"{p.description}"{mark_posted}'
             )
 
     if brief.pin_experiments:
