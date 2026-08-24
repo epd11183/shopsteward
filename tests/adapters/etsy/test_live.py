@@ -109,6 +109,32 @@ def test_get_listing_images_raises_on_non_404_error() -> None:
 
 
 @respx.mock
+def test_get_retries_on_429_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    # sync_etsy()'s N+1 per-listing image fetch trips Etsy's per-second rate
+    # limit on shops with more than a handful of listings -- confirmed live.
+    slept: list[float] = []
+    monkeypatch.setattr(time, "sleep", slept.append)
+    respx.get(f"{BASE}/listings/555/images").mock(
+        side_effect=[
+            httpx.Response(429, headers={"Retry-After": "1"}),
+            httpx.Response(200, json={"results": []}),
+        ]
+    )
+    adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
+    assert adapter.get_listing_images(555) == []
+    assert slept == [1.0]
+
+
+@respx.mock
+def test_get_raises_after_exhausting_429_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(time, "sleep", lambda _delay: None)
+    respx.get(f"{BASE}/listings/555/images").mock(return_value=httpx.Response(429))
+    adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
+    with pytest.raises(httpx.HTTPStatusError):
+        adapter.get_listing_images(555)
+
+
+@respx.mock
 def test_download_image_sends_no_auth_header() -> None:
     route = respx.get("https://i.etsystatic.com/img.jpg").mock(
         return_value=httpx.Response(200, content=b"\xff\xd8jpegbytes")

@@ -4,6 +4,8 @@ pipeline.live_gate.live_etsy_read_open() (PRD §8.4, M1). LiveEtsyWriteAdapter
 below stays separately gated (live_etsy_write_open(), M5a) -- this class has
 no write methods at all, so the read path can never reach one."""
 
+import time
+
 import httpx
 import pydantic
 
@@ -82,9 +84,23 @@ class LiveEtsyAdapter:
         )
 
     def _get(self, path: str, **params: int | str) -> dict:
-        resp = self._client.get(f"{BASE}{path}", params=params)
-        resp.raise_for_status()
-        return resp.json()
+        # Retry-with-backoff on 429 only -- sync_etsy() makes one call per
+        # listing (N+1) for images, which trips Etsy's per-second rate limit
+        # on shops with more than a handful of listings even though the
+        # daily quota is nowhere close. Every other status still raises
+        # immediately; this is not a general retry policy.
+        max_attempts = 4
+        for attempt in range(max_attempts):
+            resp = self._client.get(f"{BASE}{path}", params=params)
+            if resp.status_code != 429:
+                resp.raise_for_status()
+                return resp.json()
+            if attempt == max_attempts - 1:
+                resp.raise_for_status()
+            retry_after = resp.headers.get("Retry-After")
+            delay = float(retry_after) if retry_after else 2.0 * (2**attempt)
+            time.sleep(delay)
+        raise AssertionError("unreachable")  # pragma: no cover
 
     def _paginate(self, path: str, **params: int | str) -> list[dict]:
         results: list[dict] = []
