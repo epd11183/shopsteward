@@ -139,7 +139,11 @@ def test_not_active_listing_is_not_eligible(conn):
 def test_views_below_minimum_is_not_eligible(conn):
     cfg = _cfg()
     _seed_listing(
-        conn, LISTING_DIGITAL, "Loon Digital Download", views=cfg.seo_edit.min_lifetime_views - 1
+        conn,
+        LISTING_DIGITAL,
+        "Loon Digital Download",
+        views=cfg.seo_edit.min_lifetime_views - 1,
+        tags=["loon"],  # non-empty -- isolates the views gate from the zero-tags branch
     )
     rebuild_core(conn)
     rebuild_ops(conn)
@@ -151,7 +155,7 @@ def test_views_below_minimum_is_not_eligible(conn):
 def test_a_sale_in_the_revenue_window_is_not_eligible(conn):
     from tests.pipeline.ops.helpers import seed_sale_observed
 
-    _seed_listing(conn, LISTING_DIGITAL, "Loon Digital Download")
+    _seed_listing(conn, LISTING_DIGITAL, "Loon Digital Download", tags=["loon"])
     seed_sale_observed(
         conn,
         receipt_id=8001,
@@ -286,6 +290,93 @@ def test_expired_listing_with_only_fixture_polluted_sales_is_not_eligible(
     cap = ListingSeoEdit(FakeEtsyWriteAdapter())
 
     assert cap.materialize(conn, USER_ID, _cfg(), _intent(str(listing_id), title="X")) is None
+
+
+# --- eligibility: zero-tag active listings (operator report, 2026-08) ------
+
+LISTING_ZERO_TAGS = 941  # active, 0 tags, 1 view -- eligible regardless of views
+
+
+def test_zero_tag_active_listing_is_eligible_regardless_of_low_views(conn):
+    _seed_listing(conn, LISTING_ZERO_TAGS, "Untagged Print", views=1, tags=[])
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cap = ListingSeoEdit(FakeEtsyWriteAdapter())
+
+    action = cap.materialize(
+        conn, USER_ID, _cfg(), _intent(str(LISTING_ZERO_TAGS), title="Untagged Print Restyled")
+    )
+    assert action is not None
+    assert action.target_id == str(LISTING_ZERO_TAGS)
+
+
+def test_zero_tag_listing_that_also_qualifies_under_views_is_not_double_counted(conn):
+    cfg = _cfg()
+    _seed_listing(
+        conn, LISTING_ZERO_TAGS, "Untagged Print", views=cfg.seo_edit.min_lifetime_views, tags=[]
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+
+    from shopsteward.pipeline.ops.capabilities.seo_edit import _eligible
+
+    targets = _eligible(conn, USER_ID, cfg)
+    assert list(targets).count(str(LISTING_ZERO_TAGS)) == 1
+    # A dict key can never repeat, so the count above can't actually catch a
+    # missing de-dup guard -- assert the branch-1 (zero-tags-first) ordering
+    # directly: this fails if branch order is ever inverted.
+    assert "zero tags" in targets[str(LISTING_ZERO_TAGS)].reason
+
+
+def test_a_few_tags_is_not_eligible_under_the_default_zero_threshold(conn):
+    cfg = _cfg()
+    assert cfg.seo_edit.min_tags_before_flagged == 0
+    _seed_listing(conn, LISTING_ZERO_TAGS, "Lightly Tagged Print", views=1, tags=["a", "b"])
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cap = ListingSeoEdit(FakeEtsyWriteAdapter())
+
+    assert cap.materialize(conn, USER_ID, cfg, _intent(str(LISTING_ZERO_TAGS), title="X")) is None
+
+
+def test_e2e_zero_tag_listing_materialize_execute_round_trip(conn):
+    _seed_listing(conn, LISTING_ZERO_TAGS, "Untagged Print", views=1, tags=[])
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    ops_config.seed(conn, USER_ID)
+    rebuild_ops(conn)
+    fake = FakeEtsyWriteAdapter()
+    fake.seed_listing(LISTING_ZERO_TAGS, state="active", title="Untagged Print", tags=[])
+    cap = ListingSeoEdit(fake)
+    cfg = _cfg(enabled=True, weekly_catalog_pct_cap=1.0)
+
+    action = cap.materialize(
+        conn,
+        USER_ID,
+        cfg,
+        _intent(
+            str(LISTING_ZERO_TAGS),
+            title="Untagged Print Fine Art",
+            tags=["loon", "lake", "art"],
+        ),
+    )
+    assert action is not None
+
+    run(conn, USER_ID, cfg, [cap], today=TODAY, proposals=[action])
+    action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
+    approved = approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
+    assert approved.executed == 1
+
+    update_calls = [c for c in fake.calls if c[0] == "update_listing"]
+    assert len(update_calls) == 1
+    assert update_calls[0][1]["fields"] == {
+        "title": "Untagged Print Fine Art",
+        "tags": ["loon", "lake", "art"],
+    }
+    executed_event = [
+        e for e in read_all(conn, "action.executed") if e.payload["action_id"] == action_id
+    ][0]
+    assert executed_event.payload["before"]["tags"] == []
 
 
 # --- materialize(): structural validation + diff ----------------------------

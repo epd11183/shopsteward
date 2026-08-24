@@ -97,6 +97,14 @@ class _OpsSeoEdit(BaseModel):
     # kept as its own knob since the two capabilities' signal thresholds
     # aren't required to track each other.
     min_lifetime_views: int = Field(gt=0)
+    # Third eligibility branch (operator report, 2026-08): an active listing
+    # with this few tags is search-invisible by construction -- flagged
+    # regardless of views/sale-window, since "not enough traffic to judge
+    # yet" doesn't apply to a listing Etsy can never surface at all. `ge=0`,
+    # not `gt=0` like the sibling knobs above -- 0 is the operator's exact
+    # ask ("zero tags") and IS the sensible default; configurable only in
+    # case the operator later wants a slightly less strict bar.
+    min_tags_before_flagged: int = Field(ge=0, default=0)
 
 
 class _OpsRenew(BaseModel):

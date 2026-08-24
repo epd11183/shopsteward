@@ -40,7 +40,8 @@
     "min_lifetime_views": 25
   },
   "seo_edit": {
-    "min_lifetime_views": 25
+    "min_lifetime_views": 25,
+    "min_tags_before_flagged": 0
   },
   "renew": {
     "min_lifetime_sales": 1,

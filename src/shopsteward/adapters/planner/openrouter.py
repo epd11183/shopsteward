@@ -86,9 +86,10 @@ def _plan_system_prompt(limits: PlannerLimits) -> str:
         "listing.renew take no params -- do not invent any for them.\n"
         "(listing.seo_edit's eligible targets are already either active "
         f"listings with at least {limits.seo_edit_min_lifetime_views} "
-        "lifetime views and no recent sale, or expired listings with real "
-        "historical sales -- you never need to check either condition "
-        "yourself, it's given for context.)"
+        "lifetime views and no recent sale, expired listings with real "
+        "historical sales, or active listings with (near-)zero tags "
+        "(search-invisible regardless of views) -- you never need to check "
+        "any of these conditions yourself, it's given for context.)"
     )
 
 

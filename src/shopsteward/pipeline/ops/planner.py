@@ -136,6 +136,25 @@ def _expired_with_sales(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) 
     return out
 
 
+def _zero_tag_listings(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> list[dict]:
+    """listing_id/title for every ACTIVE listing at or below
+    `cfg.seo_edit.min_tags_before_flagged` tags -- `listing.seo_edit`'s third
+    eligibility branch (search-invisible by construction, never gated on
+    views). Target discovery only, same "courtesy to the model, not the
+    safety boundary" as `_expired_with_sales` -- materialize()'s `_eligible()`
+    still re-grounds."""
+    rows = conn.execute(
+        "SELECT listing_id, title FROM proj_listings WHERE user_id=? AND state='active'",
+        (user_id,),
+    ).fetchall()
+    out = []
+    for r in rows:
+        listing = _latest_observed(conn, user_id, r["listing_id"])
+        if listing is not None and len(listing.tags) <= cfg.seo_edit.min_tags_before_flagged:
+            out.append({"listing_id": r["listing_id"], "title": r["title"]})
+    return out
+
+
 def _build_facts_json(
     conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, capabilities: list[Capability]
 ) -> str:
@@ -150,6 +169,7 @@ def _build_facts_json(
     viewed_not_sold = analytics.viewed_not_sold(conn, user_id)
     sellers = analytics.top_sellers(conn, user_id, cfg)
     expired_with_sales = _expired_with_sales(conn, user_id, cfg)
+    zero_tag_listings = _zero_tag_listings(conn, user_id, cfg)
     facts = {
         "dead_listings": [dl.model_dump(mode="json") for dl in dead],
         "trending": [t.model_dump(mode="json") for t in trend],
@@ -163,6 +183,11 @@ def _build_facts_json(
         # historical sales -- same real target ids listing.renew proposes
         # for reactivation). materialize()'s _eligible() still re-grounds.
         "expired_with_sales": expired_with_sales,
+        # listing.seo_edit's THIRD eligibility branch (active + at-or-below
+        # cfg.seo_edit.min_tags_before_flagged tags -- search-invisible by
+        # construction, never gated on views). materialize()'s _eligible()
+        # still re-grounds.
+        "zero_tag_listings": zero_tag_listings,
         # social.caption_draft is ALSO planner-only (propose() always []) --
         # without this block the LLM has no target ids for it either (M8b
         # slice 6). materialize() still re-grounds against the SAME

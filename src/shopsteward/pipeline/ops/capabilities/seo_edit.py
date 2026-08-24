@@ -27,6 +27,18 @@ are NEVER used to gate this branch: confirmed empirically that Etsy's API
 returns `views: 0` for every expired listing regardless of real sales
 history.
 
+**A third branch flags active listings with (near-)zero tags, regardless of
+views or sale-window** (operator report, 2026-08: two real live listings had
+0-1 lifetime views AND `current_tags == []`, falling through both branches
+above). A listing with no tags is search-invisible by construction -- Etsy
+cannot surface it for ANY query -- so "not enough traffic to judge yet"
+never applies; the defect is provable without waiting on views. Gated by
+`cfg.seo_edit.min_tags_before_flagged` (default 0 -- the operator's exact
+ask was "zero tags", not "few tags"). Checked FIRST in `_eligible()` (the
+more urgent defect) and shares the same `if key in out: continue` de-dup
+guard the other branches use, so a listing already claimed by branch 1
+(active + enough views) is never flagged twice.
+
 **Planner-only, like `ops.tune_threshold`'s trigger is SQL but this
 capability's COPY is not**: `propose()` always returns `[]` -- writing good
 SEO copy is exactly the "deterministic heuristic too blunt" case (design
@@ -107,14 +119,18 @@ def _latest_observed(conn: sqlite3.Connection, user_id: int, listing_id: int) ->
 def _eligible(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> dict[str, _Target]:
     """target_id -> the eligible-for-SEO-edit facts for that listing -- the
     ONE grounding function shared by materialize() and execute() so the two
-    can never disagree. Two independent branches, never double-counting a
-    listing (a listing is exactly one of active/expired):
+    can never disagree. Three branches, checked in this order, never
+    double-counting a listing (the `if key in out: continue` de-dup guard):
 
-    1. Active, viewed but not selling -> copy/SEO may be the problem (the
+    1. Active with (near-)zero tags -- search-invisible by construction,
+       checked FIRST since it's the more urgent defect and must never be
+       skipped just because branch 2 also would have claimed the listing
+       (module docstring). `views`/sale-window are NEVER checked here.
+    2. Active, viewed but not selling -> copy/SEO may be the problem (the
        same signal analytics.viewed_not_sold surfaces on the Brief, applied
        here with a revenue-window bound rather than lifetime, to match
        reprice's own eligibility shape).
-    2. Expired with genuine historical sales -- the same bar `listing.renew`
+    3. Expired with genuine historical sales -- the same bar `listing.renew`
        uses (`cfg.renew.min_lifetime_sales` against `proj_sale_items`, which
        only ever holds real, non-fixture sale line-items -- see renew.py's
        module docstring). `views` is NEVER checked for this branch (module
@@ -132,6 +148,25 @@ def _eligible(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> dict[st
         (user_id,),
     ).fetchall()
     for r in active_rows:
+        key = str(r["listing_id"])
+        listing = _latest_observed(conn, user_id, r["listing_id"])
+        if listing is not None and len(listing.tags) <= cfg.seo_edit.min_tags_before_flagged:
+            out[key] = _Target(
+                listing_id=r["listing_id"],
+                current_title=r["title"],
+                current_tags=listing.tags,
+                current_description=listing.description,
+                lifetime_views=r["views"],
+                reason=(
+                    f"{r['title']} -- zero tags, invisible to Etsy search -- "
+                    "add title/tags/description."
+                ),
+            )
+
+    for r in active_rows:
+        key = str(r["listing_id"])
+        if key in out:
+            continue  # already claimed by the zero-tags branch above
         if r["views"] < cfg.seo_edit.min_lifetime_views:
             continue
         sold_in_window = conn.execute(
