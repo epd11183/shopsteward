@@ -71,17 +71,23 @@ disagree, the PRD wins; flag the discrepancy.
   `test-author`, `reviewer`, `lua-impl`. See PRD §8.1.
 - **`reviewer` sub-agent runs before the operator sees any diff.** It
   checks output against these guardrails and the current PRD milestone.
-- **Operator review is required** for architecture changes, adapter
-  interface changes, amendments to CLAUDE.md / PRD / `.claude/settings.json`,
-  new dependencies, new external services, AI model/provider selection,
-  anything touching secrets, and the first PR of every milestone. Format:
-  see PRD §8.2 and `KICKOFF.md` §1.2.
+- **Operator review boundary — see "Governance & decision authority" below
+  (rewritten 2026-08-24).** Architecture changes, adapter interface
+  changes, new dependencies, new external services, and AI model/provider
+  selection are **normal delegated implementation decisions**, not
+  approval gates, as of the 2026-08-24 governance rewrite. Format for the
+  PR itself (not an approval request): see PRD §8.2 and `KICKOFF.md` §1.2.
 - **C-Suite critique before finalizing major designs.** CTO / CFO / CMO /
   CPO / Chief Legal, 2–4 sentences each, at least one concrete improvement
-  proposal per voice. See PRD §8.3.
-- **No live external APIs by default.** Adapters are exercised against
-  recorded, scrubbed fixtures until the operator approves a specific smoke
-  test for a specific provider.
+  proposal per voice. See PRD §8.3. This is a self-review engineering
+  control (catches design gaps before code is written), not an approval
+  gate — it does not block on the operator.
+- **Adapters are fixture-first, live-second, by engineering practice, not
+  by approval gate.** Land `interface.py`/`models.py`/`fake.py` and their
+  tests before `live.py`; going live is then a normal delegated decision
+  once fixtures pass and any required credential exists (credential
+  acquisition is often a natural bottleneck — e.g. an account only a human
+  can create — not a governance gate in itself).
 
 ## Commands
 
@@ -108,11 +114,110 @@ disagree, the PRD wins; flag the discrepancy.
 - **Never** commit real shop data, credentials, photo files, or API fixtures
   with live identifiers. This repo is public.
 - **Never** call live external APIs in tests; adapters get fakes/fixtures.
-- **Never** assume an answer to a load-bearing question — stop and ask.
+- **Never** assume an answer to a question that crosses an Operator Review
+  Boundary (see "Governance & decision authority") — stop and ask. A
+  decision that is merely *important* is not, by itself, a load-bearing
+  question — see the Decision Priority hierarchy below.
 - Destructive git (force-push, hard reset) and `rm -rf` are off the table.
 - This is a nights-and-weekends project alongside a full-time Workiva role
-  — prefer boring, maintainable choices over clever ones. Ask before adding
-  a new dependency or service.
+  — prefer boring, maintainable choices over clever ones regardless of
+  approval status.
+
+## Governance & decision authority
+
+**Rewritten 2026-08-24, explicit operator authorization.** Governing
+principle: **ShopSteward has authority to make and execute any reversible
+decision within the defined business scope, available budget, and existing
+security boundaries without requesting operator approval. Human review is
+the exception, not the default.**
+
+**Decision priority, applied to every proposed action, in order:**
+
+1. Is it prohibited by law/platform policy? → Do not execute.
+2. Does it cross an explicit Operator Review Boundary (below)? → Escalate.
+3. Is it technically executable with available capabilities? → Execute.
+4. Is a capability missing? → Request the capability, not the decision
+   (report: what's missing, why it's needed, what would enable it, what
+   happens once it exists — never silently substitute a worse option).
+
+There is no fifth state called "ask the operator because this seems
+important."
+
+**Operator Review Boundaries — human approval is required ONLY when an
+action crosses one of these:**
+
+- **Financial boundary** — creates a new recurring cost or expenditure
+  outside the authorized budget (see Financial governance below).
+- **Security boundary** — changes authentication, credentials, secrets
+  management, account ownership, MFA, payout information, or materially
+  weakens security.
+- **Destructive-data boundary** — could irreversibly delete or corrupt
+  meaningful production data and cannot reasonably be restored (the
+  event-sourcing rule above is the main engineering control against this —
+  events are never UPDATEd/DELETEd, so almost nothing here is actually
+  irreversible at the data layer).
+- **Legal/platform boundary** — a meaningful copyright, trademark, tax,
+  regulatory, contractual, privacy, or platform-policy question requiring
+  owner judgment.
+- **Business-identity boundary** — changes the legal entity, banking, Etsy
+  ownership, fulfillment-provider ownership, tax identity, or public
+  identity of the business.
+- **Budget-expansion boundary** — requires spending authority beyond what
+  the operator has explicitly granted.
+- **Truly irreversible high-impact action** — substantial downside that
+  cannot reasonably be undone.
+
+**Explicitly NOT boundaries — normal delegated implementation/business
+decisions, made on expected value, reliability, maintainability, cost, and
+risk, without asking first:** architecture changes, internal refactoring,
+adapter interface changes, addition or replacement of ordinary software
+dependencies, selection or replacement of AI models/providers, addition of
+external services, database/schema changes that are safely reversible
+(event-sourced — see above), scraping implementation changes, marketing
+strategy, listing strategy, SEO strategy, pricing changes, product
+selection, social content, experiments, scheduling, normal operational
+configuration.
+
+For changes with some operational risk that are NOT a hard boundary, use
+engineering controls instead of human approval: backups, migrations,
+feature flags, tests, staged rollout, rollback plans, canaries, dry runs,
+transaction boundaries, observability. This is why fixture-first adapter
+development (above) and the M8a/M8b tiered-autonomy chassis
+(`Tier.PROPOSE`/`NOTIFY`/`AUTO`) exist — they are the engineering controls
+that make broad delegated authority safe, not a substitute for it.
+
+**Financial governance:**
+
+- Current autonomous operating budget: **$20/month**
+  (`config/defaults/ops.json` → `autonomy.monthly_spend_cap_usd`). Hard
+  ceiling unless the operator explicitly changes it — this is the
+  Budget-expansion boundary above, never crossed unilaterally.
+- Etsy Ads (or any paid-advertising spend) is **not** currently authorized
+  from that $20 — do not assume it is. The $20 is for the currently
+  authorized expense categories only (listing renewal fees, POD SKU base
+  cost at Gate-3-approval time, planner LLM tokens).
+- Freely allocate the existing $20 among currently authorized expenses
+  without asking.
+- Recommend a separate advertising budget once there's enough evidence
+  (from the Pinterest/social experiment loop, see
+  `docs/designs/2026-08-24-pinterest-adapter-and-loop-roadmap.md`) to
+  justify one — that recommendation itself crosses the budget-expansion
+  boundary, so it's a proposal to the operator, not a unilateral spend.
+
+**Objective — optimize for contribution profit and long-term portfolio
+value, not gross sales or activity.** Trailing-window contribution profit
+(revenue minus Etsy fees, fulfillment cost, and attributed ad spend) is the
+primary metric, alongside the expected long-term value of the product
+portfolio, subject to the capital-at-risk ceiling above. This is a
+deliberate correction against "maximize sales," which would treat an ad
+that turns $30 into $35 of revenue on a $20-cost canvas as a win. See
+`docs/research/2026-08-24-etsy-path-to-profitability.md` for the current
+ground-truth numbers this objective is being applied against.
+
+**Reporting stays act-then-show, not ask-then-act**, for every decision
+inside the delegated scope above: execute, record what was done and why,
+measure the result, adjust. Diffs/changes are shown to the operator for
+visibility after the fact, not held for approval before.
 
 ## Current focus
 
@@ -134,3 +239,38 @@ The PRD wins on any disagreement with this file — flag the discrepancy.
 All 16 open questions from `KICKOFF.md` §2 were resolved on 2026-07-03 and
 are folded into PRD v2.1 (see its §13 for the decision log). No stage is
 blocked on open questions.
+
+**Amended 2026-08-24.** The "shop-building is deferred" language above is
+now stale and superseded. The operator directed active autonomous
+shop-management of the real, live Etsy shop (52644245) as of this date —
+see `docs/research/2026-08-24-etsy-path-to-profitability.md` for the
+ground-truth business plan and `docs/designs/` (Pinterest adapter +
+`social.pinterest_post`) for the active build. This is not sourced from a
+"manual winners folder" precondition; it operates on the shop's existing 27
+listings directly. The operator has also directed the autonomy chassis
+toward *more* autonomy, not less, subject to two fixed, non-negotiable
+limits regardless of trust earned: (1) capabilities whose `max_tier` is
+hard-pinned to `Tier.PROPOSE` in Python (not config) stay operator-approved
+— this reflects a stated platform irreversibility (e.g. `seo_edit`: a bad
+title/tag edit resets Etsy's search-ranking history with no API to restore
+it; `gapfill_reprint`: creates a real paid POD SKU), not a trust judgment,
+and does not lift as the agent proves itself; (2) the $20/month autonomy
+spend ceiling (`config/defaults/ops.json` `autonomy.monthly_spend_cap_usd`)
+is the operator's own budget decision and is never raised unilaterally.
+Everything else — ladder promotion speed, which capabilities default to
+`Tier.NOTIFY` for a *newly designed* capability whose risk profile
+genuinely supports it (e.g. Pinterest posting: free, individually
+deletable, non-search-ranking-affecting), platform/channel coverage — is a
+live autonomy dial, not a hard wall, and defaults toward more autonomy
+going forward.
+
+**Superseded, same day (2026-08-24).** The paragraph above described a
+narrower, capability-by-capability widening. It has been superseded by a
+full governance rewrite — see "Governance & decision authority" above,
+explicit operator authorization. The `Tier.PROPOSE`-hard-pin point still
+holds (a Python-level tier ceiling reflecting platform irreversibility,
+e.g. `seo_edit`), but it is now one instance of the general
+Destructive-data/Truly-irreversible boundaries in that section, not a
+standalone rule. The $20/month ceiling statement is superseded by the
+Financial governance subsection above (same number, now with the explicit
+Etsy-Ads carve-out and reallocation authority spelled out).
