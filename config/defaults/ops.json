@@ -37,10 +37,10 @@
     "min_price_usd": 3.0,
     "max_pct_change": 0.40,
     "default_reduction_pct": 0.10,
-    "min_lifetime_views": 25
+    "min_lifetime_views": 5
   },
   "seo_edit": {
-    "min_lifetime_views": 25,
+    "min_lifetime_views": 5,
     "min_tags_before_flagged": 0
   },
   "renew": {
