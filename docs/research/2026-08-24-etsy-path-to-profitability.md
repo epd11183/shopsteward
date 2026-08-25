@@ -14,6 +14,36 @@ Pulled from `ops brief` and Etsy live sync, not estimated:
 - **Autonomy spend to date: $0.40 of the $20/month cap** (two $0.20 renewals). Governed capabilities (`renew`, `seo_edit`, `reprice`) are live and already executing on real listings under operator-approved policy.
 - **Archive linkage:** as of today, 8 of 27 listings have a confirmed local source photo on file (via the new `archive adopt-local` pHash matcher), unlocking `listing.gapfill_reprint` *in principle* for those 8 — see §3 for why "in principle" is doing real work in that sentence.
 
+### Amendment 2026-08-24 (post-review, full sync + sold_out sync fix) — the baseline above is stale
+
+The numbers above stand as written — they're what I believed when I wrote the plan — but the /autoplan review caught that they were wrong, and materially so. Corrected ground truth after the 2026-08-24 full Etsy sync and the `sold_out` sync fix:
+
+- **~125 synced listings, not 27.** Roughly 34 are active-ish per the Etsy dashboard reconciliation; the rest are expired/inactive/sold-out states the old sync never pulled. Specifically: the `sold_out` sync bug made 5+ listings — including *sold* ones — invisible to me when §1 was written. I was planning around a catalog I couldn't see.
+- **~12 lifetime sales, not "effectively 2."** The shop is not a zero-evidence shop; it's a thin-evidence shop. That's a different problem with different levers.
+- **4 reviews synced** (the "0 reviews, zero algorithm trust" framing in §4 overstated it).
+- **Autonomy spend to date: $1.40 of the $20 cap**, not $0.40.
+- **~75% of historical sales came from the operator's personal IG/FB network**, not Etsy search. This single fact drove the review's premise-gate decision (Decision #2 below): the plan's Pinterest-first framing missed that the shop's only proven channel is the owned one, so owned-channel IG/FB caption drafts are now in scope alongside pins.
+
+Everything downstream of §1 should be read through this correction: the "chicken-and-egg, no sale to bootstrap from" framing in §2 is weaker than written (there are ~12 sales to learn from, several on listings I couldn't previously see), and the traffic-bottleneck diagnosis survives but the "zero evidence" rhetoric doesn't.
+
+### Positioning
+
+One thing the corrected numbers don't change: what this shop actually sells. These are real photographs of real places, taken by a named photographer (PhotosByEricD) — against a marketplace flooding with AI-generated prints that are cheap, infinite, and interchangeable. That's the one differentiator nobody can copy, and it's the spine of everything customer-facing going forward: every title, every tag, every pin description, every board name leads with the real photo / real place / real photographer angle. Not as a gimmick line appended to copy — as the organizing principle the copy is built around.
+
+### Unit economics (per-sale, current fee schedule)
+
+Two SKU types, two very different structures. Fee rates below are Etsy's published US fee schedule (listing $0.20, transaction 6.5%, payment processing 3% + $0.25); Gelato base costs are from `config/defaults/pod.json` (verified 2026-08-04); contribution figures are computed from those. Offsite Ads fees (12–15% if Etsy's ad brings the sale) are excluded — they'd come off the top when they apply.
+
+| | Digital @ $9.45 | Digital @ $7.19 | Digital @ $17.09 | Canvas 12x18 @ $89 (Gelato) |
+|---|---|---|---|---|
+| Listing fee (published) | $0.20 | $0.20 | $0.20 | $0.20 |
+| Transaction 6.5% (computed) | $0.61 | $0.47 | $1.11 | $5.79 |
+| Processing 3% + $0.25 (computed) | $0.53 | $0.47 | $0.76 | $2.92 |
+| Fulfillment cost | $0 | $0 | $0 | $25.39 (pod.json base_cost) |
+| **Contribution per sale (computed)** | **~$8.11 (86%)** | **~$6.06 (84%)** | **~$15.02 (88%)** | **~$54.70 (61%)** |
+
+The digital prices are the ones actually appearing in the review trail; the canvas row uses the `canvas_12x18_hor` retail_override ($89) and base_cost ($25.39) from pod.json — other canvas/acrylic/poster variants have their own base costs in the same file. Any canvas actually listed below its base cost (e.g. a ~$17 canvas) would be contribution-*negative* — worth checking during register reconciliation. Takeaway: digital downloads are nearly pure margin and cost $0.20 to try; canvas margin is real but every sale carries ~$25+ of capital at risk through the POD base cost.
+
 ## 2. The actual bottleneck is traffic, not conversion or catalog breadth
 
 It would be easy to read "16 listings viewed but never sold" as a conversion problem — bad titles, bad photos, wrong price — and go fix those. I don't think that's honest with these numbers. A listing with 5–20 *lifetime* views doesn't have a conversion problem yet; it doesn't have a large enough sample to have any problem *diagnosed*. Etsy's own search algorithm won't meaningfully favor a listing until it has enough of a track record to rank on — and almost nothing here has that.
@@ -52,6 +82,17 @@ Sources: [Gelato — How To Get More Traffic On Etsy](https://www.gelato.com/blo
 - I'll expand archive-matching coverage to more of the remaining 19 unlinked listings as photo access allows, so more of the catalog is reprint-eligible by the time it matters.
 
 **Phase 3 — conditional, self-funded only, not the $20 floor:** the AI-generated novel (non-photo) product idea you raised. I'm deliberately **not** prioritizing this now, and want to be direct about why: there is zero evidence yet that this niche's buyers want anything beyond photography-based wall art, generating art costs real OpenRouter tokens plus a Gelato/Printful base cost per test SKU, and the shop hasn't yet proven it can sell what it already has. Spending the fixed $20 on a new speculative product line before Phase 1/2 prove out would be optimizing the wrong stage of the funnel. If Phase 1/2 produce real revenue, I'd revisit this as a small (1–2 SKU) test funded by that revenue — and per CLAUDE.md, using a new AI-generation flow for real published designs is worth a deliberate go/no-go conversation with you at that point, not something I'd quietly turn on. The hard guardrail stays intact regardless: AI never touches or regenerates an existing photograph — this would only ever be wholly new, separately-generated artwork.
+
+### Pin experiment: pre-registered thresholds (set before looking at results, 2026-08-25)
+
+Writing these down now, before any pin has data, so I can't move the goalposts later. All numbers are operator-adjustable — but adjust them *before* the readout, not after.
+
+- **Readout trigger:** 30 days after the first pin posts, OR 20 posted pins, whichever comes first.
+- **Kill/review gate:** if at readout, pin-attributed outbound clicks (UTM joins) **= 0** AND no pinned listing shows a views-delta above its own pre-pin baseline, the Pinterest channel goes **under review** — no more pin drafting until the operator decides.
+- **P2 build gate:** the P3 live-posting build (and the P2 read adapter per TD1) is justified only if drafts are actually being posted (≥10 of the drafted pins posted) AND UTM-attributed outbound clicks **≥ 5** at readout. Below that, live-posting automation would be automating a channel with no demonstrated pull.
+- **Success signal (not required, but what "working" looks like):** ≥ 25 outbound clicks or ≥ 1 pin-attributed sale by readout.
+- **The "Pinterest drives ~33% of Etsy's external traffic" stat (§4) is hereby downgraded to hypothesis.** It came from two content-marketing blogs, both review voices flagged it, and it stays a hypothesis until the operator pulls Etsy Shop Stats traffic-source data for *this shop* (dashboard-only — there's no API for it).
+- **Holdout rule (one line):** never pin and `seo_edit`/`renew` the same listing in the same measurement window — enforced in the governor, so a views-delta can't be double-attributed.
 
 ## 6. What I need from you
 

@@ -4,7 +4,7 @@ precondition_ok, cost) let test_e2e_autonomy.py/test_governor.py/
 test_registry.py drive every governor refusal and ladder transition without
 touching Etsy or any other adapter."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.pipeline.ops.config import ops_config_hash
@@ -22,6 +22,7 @@ class StubCapability:
         targets: dict[str, dict] | None = None,
         cost_usd: float = 0.0,
         undoable: bool = True,
+        day: date | None = None,
     ) -> None:
         self.key = key
         self.max_tier = max_tier
@@ -33,6 +34,16 @@ class StubCapability:
         }
         self.execute_calls: list[str] = []
         self.undo_calls: list[str] = []
+        # E1 test hook: real capabilities bake `datetime.now(UTC).date()`
+        # into their own action_id (registry.compute_action_id's `day`
+        # component) -- run()'s injected `today` param is never consulted
+        # for this. `self.day`, when set, stands in for that real wall-clock
+        # day so tests can mint two different action_ids for the SAME
+        # target across two simulated calendar days without waiting on the
+        # actual clock (E1's "two runner.run() calls on consecutive
+        # injected days" scenario). None (default) preserves every existing
+        # call site's real wall-clock behavior unchanged.
+        self.day = day
         if not undoable:
             self.undo = None  # type: ignore[assignment]  -- registry() must refuse this above T2
 
@@ -40,7 +51,7 @@ class StubCapability:
         # UTC, matching the DB's own strftime('...','now') created_at on
         # every event -- keeps this in sync with runner.py's day-bucketed
         # governor checks (daily cap, budget month, portfolio week).
-        today_date = datetime.now(UTC).date()
+        today_date = self.day or datetime.now(UTC).date()
         today = today_date.isoformat()
         cfg_hash = ops_config_hash(cfg)
         out: dict[str, ProposedAction] = {}

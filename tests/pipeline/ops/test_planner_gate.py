@@ -106,7 +106,10 @@ def test_unknown_prohibited_and_hallucinated_intents_are_all_dropped(conn):
 
     reasons = {(e.payload["reason"], e.payload["capability_key"]) for e in _dropped(conn)}
     assert ("customer_contact_barred", "listing.send_buyer_message") in reasons
-    assert ("ungrounded", "listing.autorenew_off") in reasons
+    # E10: split "ungrounded" -- target_id 999999 was never in
+    # listing.autorenew_off's own propose() targets (only 601 is), so this
+    # is a genuinely hallucinated target, not merely a stale candidate.
+    assert ("hallucinated_target", "listing.autorenew_off") in reasons
     assert len(_dropped(conn)) == 2
 
 
@@ -293,6 +296,161 @@ def test_facts_json_includes_expired_with_sales_for_seo_edit_target_discovery(co
             "lifetime_sales": 1,
         }
     ]
+
+
+def test_proven_listings_facts_block_and_grounded_ids_use_the_widened_proven_set(conn):
+    """T12 (operator-approved 2026-08-25 /autoplan gate): a listing sold 45
+    days ago -- outside the old revenue_window_days=7 gate, inside the new
+    proven_window_days=90 -- must appear in facts_json's "proven_listings"
+    block (M3: renamed from "top_sellers" -- that label sent verbatim to
+    the copy LLM is a plausible route to "bestseller" copy for a listing
+    that has never sold) AND be accepted (not dropped `not_a_candidate`/
+    `hallucinated_target`) as a social.caption_draft intent target, since
+    materialize() now grounds against the same widened set."""
+    from shopsteward.pipeline.ops.capabilities.caption_draft import SocialCaptionDraft
+
+    LISTING_WIDENED = 703
+    seed_listing_observed_on(
+        conn, listing_id=LISTING_WIDENED, title="Widened Seller", day=TODAY, views=10
+    )
+    seed_sale_observed(
+        conn,
+        receipt_id=9102,
+        day=TODAY - timedelta(days=45),
+        transactions=[(LISTING_WIDENED, 91021, 1, 87.0)],
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    register(SocialCaptionDraft())
+    cfg = _cfg(enabled=True)
+    adapter = FakePlannerAdapter(
+        plan=[
+            ProposalIntent(
+                capability_key="social.caption_draft",
+                target_id=str(LISTING_WIDENED),
+                params={"caption": "Fresh off the press!"},
+                reason="widened proven seller",
+            )
+        ]
+    )
+
+    proposals = plan_proposals(
+        conn, USER_ID, cfg, adapter, list(REGISTRY.values()), soft_cap_usd=10.0
+    )
+
+    (facts_json,) = adapter.plan_calls
+    facts = json.loads(facts_json)
+    assert LISTING_WIDENED in {row["listing_id"] for row in facts["proven_listings"]}
+    assert [p.target_id for p in proposals] == [str(LISTING_WIDENED)]
+    assert _dropped(conn) == []
+
+
+def test_proven_listings_facts_block_labels_a_zero_sales_row_honestly(conn):
+    """M3: a listing proven ONLY by the views-velocity arm (rising views,
+    zero sales ever) must show up in facts_json's "proven_listings" block
+    with units=0/revenue_usd=0.0 -- never silently rounded up, and never
+    under the old "top_sellers" key, which would assert something false
+    about a listing that has never sold."""
+    LISTING_RISING = 704
+    for offset, views in ((-29, 10), (0, 20)):  # delta=10 >= default min_delta=5
+        seed_listing_observed_on(
+            conn,
+            listing_id=LISTING_RISING,
+            title="Rising, Never Sold",
+            day=TODAY + timedelta(days=offset),
+            views=views,
+        )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cfg = _cfg(enabled=True)
+    adapter = FakePlannerAdapter(plan=[])
+
+    plan_proposals(conn, USER_ID, cfg, adapter, list(REGISTRY.values()), soft_cap_usd=10.0)
+
+    (facts_json,) = adapter.plan_calls
+    facts = json.loads(facts_json)
+    assert "top_sellers" not in facts
+    (row,) = [r for r in facts["proven_listings"] if r["listing_id"] == LISTING_RISING]
+    assert row["units"] == 0
+    assert row["revenue_usd"] == 0.0
+
+
+# --- E10: split "ungrounded" into hallucinated vs not-a-candidate -----------
+
+
+def test_never_offered_target_is_dropped_as_hallucinated(conn):
+    """A target_id never in ANY facts-json block this capability draws from
+    -- genuinely invented by the LLM, not merely stale."""
+    _seed_dead(conn, LISTING_DEAD_A)
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cap = ListingAutorenewOff(FakeEtsyWriteAdapter())
+    register(cap)
+    cfg = _cfg(enabled=True)
+    adapter = FakePlannerAdapter(
+        plan=[
+            ProposalIntent(
+                capability_key="listing.autorenew_off", target_id="424242", reason="invented"
+            )
+        ]
+    )
+
+    proposals = plan_proposals(conn, USER_ID, cfg, adapter, [cap], soft_cap_usd=10.0)
+
+    assert proposals == []
+    dropped = _dropped(conn)
+    assert len(dropped) == 1
+    assert dropped[0].payload["reason"] == "hallucinated_target"
+
+
+def test_offered_but_no_longer_eligible_target_is_dropped_as_not_a_candidate(conn):
+    """A target_id that WAS in the pin-eligible facts block (still is, at
+    materialize() time too) but whose params are invalid/unknown -- not a
+    hallucinated id, just not a valid proposal for it right now."""
+    from shopsteward.pipeline.ops.capabilities.pinterest_post import SocialPinterestPost
+
+    listing_id = 801
+    seed_listing_observed_on(conn, listing_id=listing_id, title="Loon Print", day=TODAY, views=10)
+    append(
+        conn,
+        Event(
+            user_id=USER_ID,
+            type="etsy.listing.images.observed",
+            payload={
+                "listing_id": listing_id,
+                "images": [
+                    {"listing_image_id": 1, "rank": 1, "url_570xN": "https://example.com/i.jpg"}
+                ],
+            },
+        ),
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cap = SocialPinterestPost()
+    register(cap)
+    cfg = _cfg(enabled=True)
+    adapter = FakePlannerAdapter(
+        plan=[
+            ProposalIntent(
+                capability_key="social.pinterest_post",
+                target_id=str(listing_id),
+                params={
+                    "title": "x",
+                    "description": "x",
+                    "alt_text": "x",
+                    "board_key": "not_a_real_board",
+                },
+                reason="valid target, bad board",
+            )
+        ]
+    )
+
+    proposals = plan_proposals(conn, USER_ID, cfg, adapter, [cap], soft_cap_usd=10.0)
+
+    assert proposals == []
+    dropped = _dropped(conn)
+    assert len(dropped) == 1
+    assert dropped[0].payload["reason"] == "not_a_candidate"
 
 
 def test_materialize_and_propose_share_grounding_and_agree(conn):

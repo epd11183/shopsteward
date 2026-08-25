@@ -107,8 +107,8 @@ CREATE TABLE proj_capability_state (
 def action_rows(conn: sqlite3.Connection) -> list[dict]:
     """Fold every user's action.* events into proj_actions rows (state =
     latest terminal: proposed -> approved -> executed | refused | rejected
-    | undone | failed). Pure fold over the event log -- callable before or
-    after rebuild_ops() has run."""
+    | undone | failed | expired | superseded). Pure fold over the event log
+    -- callable before or after rebuild_ops() has run."""
     rows: dict[tuple[int, str], dict] = {}
     for e in read_all(conn, "action."):
         p = e.payload
@@ -157,6 +157,19 @@ def action_rows(conn: sqlite3.Connection) -> list[dict]:
             row["resolved_at"] = e.created_at
         elif kind == "failed":
             row["state"] = "failed"
+            row["resolved_at"] = e.created_at
+        elif kind == "expired":
+            # E1(b): a pending proposal past its own expires_at, swept by
+            # runner.run() -- terminal, never blocks a fresh proposal for
+            # the same (capability, target_id) again.
+            row["state"] = "expired"
+            row["resolved_at"] = e.created_at
+        elif kind == "superseded":
+            # E1(c): a still-pending sibling proposal for the SAME
+            # (capability, target_id) as one that just executed -- terminal,
+            # re-governing it would just re-decide something already
+            # decided for this target this cycle.
+            row["state"] = "superseded"
             row["resolved_at"] = e.created_at
     return list(rows.values())
 

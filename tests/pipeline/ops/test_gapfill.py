@@ -151,7 +151,7 @@ def _seed_seller_missing_one_ineligible_format(
 
 
 def _seed_seller_with_a_genuinely_buildable_missing_format(
-    conn, tmp_path, *, listing_id, photo_id, file_id, units=5
+    conn, tmp_path, *, listing_id, photo_id, file_id, units=5, sale_day=None
 ):
     """Builds a real (landscape) photo against a pod.json NARROWED to
     `poster` only, links that draft to `listing_id`, then WIDENS the catalog
@@ -183,9 +183,54 @@ def _seed_seller_with_a_genuinely_buildable_missing_format(
     seed_sale_observed(
         conn,
         receipt_id=90000 + listing_id,
-        day=TODAY,
+        day=sale_day or TODAY,
         transactions=[(listing_id, 990000 + listing_id, units, 87.00)],
     )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    return draft_id
+
+
+def _seed_views_velocity_seller_with_a_genuinely_buildable_missing_format(
+    conn, tmp_path, *, listing_id, photo_id, file_id
+):
+    """M5 (guardrail review, 2026-08-25): same shape as
+    `_seed_seller_with_a_genuinely_buildable_missing_format`, but the
+    listing is proven ONLY by `proven_listings()`'s views-velocity arm --
+    zero sales, ever. This is the arm that newly puts real POD money behind
+    a listing with no sales evidence, and the arm whose `reason` text M2
+    fixed; no capability-level test drove it through propose() before."""
+    from datetime import timedelta
+
+    _enable_asset_store(conn, tmp_path)
+    _limit_pod_formats(conn, tmp_path, ["poster"])
+    _land(conn, tmp_path, file_id=file_id, photo_id=photo_id)
+    report = build_pod_drafts(conn, USER_ID, print_file_host=FakePrintFileHost())
+    assert report.drafts_built == 1  # poster only
+
+    draft_id = conn.execute(
+        "SELECT draft_id FROM proj_listing_drafts WHERE user_id=? AND format='poster'", (USER_ID,)
+    ).fetchone()["draft_id"]
+    _link_draft_to_listing(conn, draft_id=draft_id, listing_id=listing_id)
+    rebuild_listings(conn)
+
+    full = pod_config.load_pod_config().model_dump(by_alias=True)
+    full_path = tmp_path / "full_pod_views.json"
+    full_path.write_text(json.dumps(full))
+    pod_config.apply(conn, USER_ID, full_path)
+    rebuild_pod_config(conn)
+
+    from tests.pipeline.ops.helpers import seed_listing_observed_on
+
+    # delta=10, >= default views_velocity_min_delta=5, zero sales ever.
+    for offset, views in ((-29, 10), (0, 20)):
+        seed_listing_observed_on(
+            conn,
+            listing_id=listing_id,
+            title=f"Listing {listing_id} (rising, never sold)",
+            day=TODAY + timedelta(days=offset),
+            views=views,
+        )
     rebuild_core(conn)
     rebuild_ops(conn)
     return draft_id
@@ -220,6 +265,67 @@ def test_proven_seller_with_archived_source_is_proposed_for_a_missing_format(con
     assert action.undo_available is False
     assert "top seller (5 sold)" in action.reason
     assert "no canvas_portrait yet" in action.reason
+
+
+def test_a_sale_45_days_ago_the_old_7d_gate_excluded_is_now_proposed(conn, tmp_path):
+    """T12 (operator-approved 2026-08-25 /autoplan gate): a listing sold 45
+    days ago -- outside the old revenue_window_days=7 gate, inside the new
+    proven_window_days=90 -- must be proposed."""
+    from datetime import timedelta
+
+    _seed_seller_with_a_genuinely_buildable_missing_format(
+        conn,
+        tmp_path,
+        listing_id=LISTING_SELLER,
+        photo_id="p1",
+        file_id="f1",
+        units=5,
+        sale_day=TODAY - timedelta(days=45),
+    )
+    cap = ListingGapfillReprint(FakePrintFileHost())
+
+    actions = cap.propose(conn, USER_ID, _cfg())
+
+    proposed_types = {a.params["product_type"] for a in actions}
+    assert "acrylic" in proposed_types
+    (acrylic,) = [a for a in actions if a.params["product_type"] == "acrylic"]
+    assert "top seller (5 sold)" in acrylic.reason
+
+
+def test_views_velocity_zero_sales_listing_is_proposed_with_honest_reason(conn, tmp_path):
+    """M5/M2 (guardrail review, 2026-08-25): a listing proven ONLY by the
+    T12 views-velocity arm (rising views, zero sales ever) must still be
+    proposed for a genuinely missing, eligible format -- but its `reason`
+    must never call it "the proven winner" (M2: that lands verbatim on a
+    Gate-3 card authorizing a REAL PAID POD SKU)."""
+    _seed_views_velocity_seller_with_a_genuinely_buildable_missing_format(
+        conn, tmp_path, listing_id=LISTING_SELLER, photo_id="p1", file_id="f1"
+    )
+    cap = ListingGapfillReprint(FakePrintFileHost())
+
+    actions = cap.propose(conn, USER_ID, _cfg())
+
+    proposed_types = {a.params["product_type"] for a in actions}
+    assert "acrylic" in proposed_types
+    (acrylic,) = [a for a in actions if a.params["product_type"] == "acrylic"]
+    assert "rising views, no sales yet" in acrylic.reason
+    assert "proven winner" not in acrylic.reason  # M2 -- never for a zero-sales listing
+    assert "top seller" not in acrylic.reason
+
+
+def test_top_seller_reason_still_calls_it_the_proven_winner(conn, tmp_path):
+    """M2's positive case: a real sales-proof listing still gets the
+    original, accurate phrasing."""
+    _seed_seller_with_a_genuinely_buildable_missing_format(
+        conn, tmp_path, listing_id=LISTING_SELLER, photo_id="p1", file_id="f1", units=5
+    )
+    cap = ListingGapfillReprint(FakePrintFileHost())
+
+    actions = cap.propose(conn, USER_ID, _cfg())
+
+    (acrylic,) = [a for a in actions if a.params["product_type"] == "acrylic"]
+    assert "top seller (5 sold)" in acrylic.reason
+    assert "reprint the proven winner." in acrylic.reason
 
 
 def test_top_seller_with_no_archived_source_is_not_reprintable(conn, tmp_path):
@@ -460,7 +566,10 @@ def test_planner_gate_still_drops_unknown_policy_ungrounded_with_gapfill_registe
     assert proposals == []
     reasons = {e.payload["reason"] for e in read_all(conn, "planner.intent_dropped")}
     assert "unknown_capability" in reasons
-    assert "ungrounded" in reasons
+    # E10: split "ungrounded" -- 999999 was never a real listing_id gapfill_
+    # reprint's own propose() would ever surface, so this is a genuinely
+    # hallucinated target, not a stale one.
+    assert "hallucinated_target" in reasons
 
 
 # --- no secrets / no network -------------------------------------------------

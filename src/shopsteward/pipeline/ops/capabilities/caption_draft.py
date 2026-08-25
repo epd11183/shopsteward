@@ -23,10 +23,12 @@ writing a good caption is exactly the "deterministic heuristic too blunt"
 case (design §11.1); there is no sensible deterministic caption to
 generate. `_candidates()` is the ONE grounding function shared by
 materialize()/execute() (M8b slice-2 planner-safety contract): only a
-listing `analytics.top_sellers()` already blessed (real sales in the
-window) AND still `state=="active"` (same check `listing.seo_edit`'s
-`_eligible` uses) is ever eligible, so a hallucinated, non-selling, or
-since-deactivated target is always dropped, never guessed. The LLM's
+listing `analytics.proven_listings()` already blessed (T12, 2026-08-25: a
+sale within the trailing 90 days, a lifetime sale, or a views-velocity
+signal -- see that function's docstring) AND still `state=="active"` (same
+check `listing.seo_edit`'s `_eligible` uses) is ever eligible, so a
+hallucinated, non-selling, or since-deactivated target is always dropped,
+never guessed. The LLM's
 caption text is validated structurally (non-empty after stripping, `str`,
 `<= cfg.caption.max_len` -- Instagram's real limit) and DROPPED, never
 truncated -- the SQL-derived `reason` on the action is never the caption
@@ -69,7 +71,7 @@ def _candidates(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> dict[
     never guessed."""
     return {
         str(s.listing_id): s
-        for s in analytics.top_sellers(conn, user_id, cfg)
+        for s in analytics.proven_listings(conn, user_id, cfg)
         if _is_active(conn, user_id, s.listing_id)
     }
 
@@ -102,7 +104,7 @@ def _build_action(
         target_type="listing",
         target_id=str(target.listing_id),
         tier=Tier.PROPOSE,  # overwritten by the runner with the effective tier
-        reason=f"top seller ({target.units} sold) -- promo caption ready to post.",
+        reason=f"{analytics.proof_phrase(target)} -- promo caption ready to post.",
         inputs_hash=inputs_hash,
         estimated_cost_usd=0.0,
         undo_available=False,

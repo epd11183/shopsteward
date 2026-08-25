@@ -364,7 +364,9 @@ def test_e2e_zero_tag_listing_materialize_execute_round_trip(conn):
 
     run(conn, USER_ID, cfg, [cap], today=TODAY, proposals=[action])
     action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
-    approved = approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
+    approved = approve_action(
+        conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True
+    )
     assert approved.executed == 1
 
     update_calls = [c for c in fake.calls if c[0] == "update_listing"]
@@ -604,7 +606,7 @@ def test_tags_list_params_round_trip_through_action_proposed_event(conn):
     assert event.payload["params"] == {"tags": ["loon", "sunset", "art"]}
 
     approved = approve_action(
-        conn, USER_ID, event.payload["action_id"], [cap], cfg=cfg, today=TODAY
+        conn, USER_ID, event.payload["action_id"], [cap], cfg=cfg, today=TODAY, live_autonomy=True
     )
     assert approved.executed == 1
     update_calls = [c for c in fake.calls if c[0] == "update_listing"]
@@ -637,7 +639,9 @@ def test_e2e_description_change_execute_records_before_and_undo_restores(conn):
     run(conn, USER_ID, cfg, [cap], today=TODAY, proposals=[action])
     action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
 
-    approved = approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
+    approved = approve_action(
+        conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True
+    )
     assert approved.executed == 1
     assert fake.listings[LISTING_DIGITAL]["description"] == "A brand new description."
 
@@ -651,7 +655,7 @@ def test_e2e_description_change_execute_records_before_and_undo_restores(conn):
     assert executed_event.payload["before"] == {"description": "Original description."}
     assert executed_event.payload["after"] == {"description": "A brand new description."}
 
-    undo_action(conn, USER_ID, action_id, [cap])
+    undo_action(conn, USER_ID, action_id, [cap], live_autonomy=True)
     assert fake.listings[LISTING_DIGITAL]["description"] == "Original description."
     undone = [e for e in read_all(conn, "action.undone") if e.payload["action_id"] == action_id][0]
     assert undone.payload["restored_to"] == {"description": "Original description."}
@@ -683,7 +687,9 @@ def test_e2e_valid_intent_lands_at_t2_approve_sends_only_changed_fields_undo_res
 
     action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
 
-    approved = approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
+    approved = approve_action(
+        conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True
+    )
     assert approved.executed == 1
     assert fake.listings[LISTING_DIGITAL]["title"] == "Loon at Dusk Fine Art Print"
     assert fake.listings[LISTING_DIGITAL]["tags"] == ["loon"]  # untouched -- never sent
@@ -702,7 +708,7 @@ def test_e2e_valid_intent_lands_at_t2_approve_sends_only_changed_fields_undo_res
     assert executed_event.payload["after"] == {"title": "Loon at Dusk Fine Art Print"}
     assert executed_event.payload["cost_usd"] == 0.0
 
-    undo_action(conn, USER_ID, action_id, [cap])
+    undo_action(conn, USER_ID, action_id, [cap], live_autonomy=True)
     assert fake.listings[LISTING_DIGITAL]["title"] == "Loon at Dusk"
     undone = [e for e in read_all(conn, "action.undone") if e.payload["action_id"] == action_id][0]
     assert undone.payload["restored_to"] == {"title": "Loon at Dusk"}
@@ -740,7 +746,7 @@ def test_never_promoted_above_t2_even_with_enough_approvals_and_elapsed_days(con
     action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
 
     later = TODAY + timedelta(days=2)
-    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=later)
+    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=later, live_autonomy=True)
 
     promoted = [e for e in read_all(conn, "capability.") if e.type == "capability.promoted"]
     assert promoted == []
@@ -838,8 +844,8 @@ def test_update_listing_is_only_ever_called_with_title_or_tags(conn):
     assert action is not None
     run(conn, USER_ID, cfg, [cap], today=TODAY, proposals=[action])
     action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
-    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
-    undo_action(conn, USER_ID, action_id, [cap])
+    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True)
+    undo_action(conn, USER_ID, action_id, [cap], live_autonomy=True)
 
     update_calls = [c for c in fake.calls if c[0] == "update_listing"]
     assert len(update_calls) == 2  # execute + undo
@@ -873,8 +879,8 @@ def test_no_secret_in_any_payload_and_append_only(conn):
     assert action is not None
     run(conn, USER_ID, cfg, [cap], today=TODAY, proposals=[action])
     action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
-    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
-    undo_action(conn, USER_ID, action_id, [cap])
+    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True)
+    undo_action(conn, USER_ID, action_id, [cap], live_autonomy=True)
 
     import json
 

@@ -190,7 +190,26 @@ def _build_facts_json(
     dead = analytics.dead_listings(conn, user_id, cfg)
     trend = analytics.trending(conn, user_id, cfg)
     viewed_not_sold = analytics.viewed_not_sold(conn, user_id)
-    sellers = analytics.top_sellers(conn, user_id, cfg)
+    # T12 (2026-08-25): the widened capability-GATING set, not the brief's
+    # 7-day top_sellers() -- this block feeds social.caption_draft's target
+    # discovery (_EXTRA_TARGET_BLOCKS below), which now accepts everything
+    # analytics.proven_listings() does; must match or the LLM is shown
+    # targets materialize() would actually refuse.
+    #
+    # M3 (guardrail review, 2026-08-25): named `proven_listings` in the
+    # facts JSON, deliberately NOT `top_sellers` -- T12 widened this set to
+    # include zero-sales, views-velocity-only listings
+    # ({"units": 0, "revenue_usd": 0.0} rows), and the old `top_sellers`
+    # label sent verbatim to the copy LLM was a plausible route to
+    # "bestseller" copy for a listing that has never sold (Seller Policy
+    # §1.c.4 / policy entry E16 conditions 2/3: accuracy).
+    # M4 (guardrail review, 2026-08-25): bounded here (planner tokens bill
+    # against `tuning.vision.monthly_soft_cap_usd`) -- `analytics.
+    # top_sellers()`'s own `limit: int = 10` default, reused rather than a
+    # new magic number. `_candidates()`-grounding call sites
+    # (gapfill.py/caption_draft.py) call `proven_listings()` with NO limit;
+    # only this LLM-facing block is bounded.
+    sellers = analytics.proven_listings(conn, user_id, cfg, limit=10)
     expired_with_sales = _expired_with_sales(conn, user_id, cfg)
     zero_tag_listings = _zero_tag_listings(conn, user_id, cfg)
     facts = {
@@ -214,8 +233,11 @@ def _build_facts_json(
         # social.caption_draft is ALSO planner-only (propose() always []) --
         # without this block the LLM has no target ids for it either (M8b
         # slice 6). materialize() still re-grounds against the SAME
-        # analytics.top_sellers() and drops anything ineligible.
-        "top_sellers": [s.model_dump(mode="json") for s in sellers],
+        # analytics.proven_listings() (T12, 2026-08-25 -- widened beyond the
+        # brief's 7-day top_sellers()) and drops anything ineligible. M3:
+        # this block is named `proven_listings`, never `top_sellers` -- see
+        # the comment on `sellers` above.
+        "proven_listings": [s.model_dump(mode="json") for s in sellers],
         # social.pinterest_post Variant A is ALSO planner-only (propose()
         # always []) -- without this block the LLM has no target ids for it
         # (2026-08-24 design doc §2). Deliberately NOT gated on
@@ -228,6 +250,56 @@ def _build_facts_json(
         },
     }
     return json.dumps(facts, sort_keys=True)
+
+
+# E10 -- capability_key -> extra facts-json block(s) the LLM was shown for
+# it beyond its own propose() targets (mirrors _build_facts_json's own
+# capability-to-block wiring: each planner-only capability's docstring
+# there already names the block it draws candidates from).
+_EXTRA_TARGET_BLOCKS: dict[str, tuple[str, ...]] = {
+    "listing.seo_edit": ("expired_with_sales", "zero_tag_listings", "viewed_not_sold"),
+    "social.caption_draft": ("proven_listings",),  # M3: renamed from "top_sellers"
+    "social.pinterest_post": ("pin_eligible_listings",),
+}
+
+
+def _known_target_ids(
+    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, capability_key: str, cap: Capability
+) -> set[str]:
+    """E10 -- best-effort reconstruction of the target_ids the LLM was
+    actually offered for `capability_key` in `_build_facts_json()`, used
+    only to split a `materialize() is None` drop into two distinguishable
+    reasons: a target_id NEVER offered (a genuinely hallucinated id) versus
+    one that WAS offered (`not_a_candidate` -- corrected 2026-08-25, finding
+    6: this is broader than target STALENESS alone). `materialize()`
+    collapses every reason it might return None for into that one signal --
+    the target itself becoming ineligible since `_build_facts_json` ran
+    (cooldown expired into it, sold out, deactivated, etc), but ALSO the
+    LLM's own params being invalid/unknown for an otherwise-still-eligible
+    target (e.g. `board_key="not_a_real_board"`). `not_a_candidate` means
+    "materialize() refused it for some reason, and it wasn't a hallucinated
+    id" -- not specifically "no longer eligible". Splitting param-rejection
+    out into its own reason would need materialize() to report ITS OWN
+    reason instead of just None, the same Capability-protocol change this
+    function's own E10 note above already declined as not worth it for one
+    diagnostic string. Not exhaustive by construction -- a capability
+    outside `_EXTRA_TARGET_BLOCKS` falls back to whatever its own
+    `propose()` grounds, which is the only target list `_build_facts_json`
+    would ever have shown the LLM for it anyway (module docstring:
+    `candidate_target_ids`)."""
+    ids = {a.target_id for a in cap.propose(conn, user_id, cfg)}
+    blocks = _EXTRA_TARGET_BLOCKS.get(capability_key, ())
+    if "expired_with_sales" in blocks:
+        ids |= {str(d["listing_id"]) for d in _expired_with_sales(conn, user_id, cfg)}
+    if "zero_tag_listings" in blocks:
+        ids |= {str(d["listing_id"]) for d in _zero_tag_listings(conn, user_id, cfg)}
+    if "viewed_not_sold" in blocks:
+        ids |= {str(v.listing_id) for v in analytics.viewed_not_sold(conn, user_id)}
+    if "proven_listings" in blocks:
+        ids |= {str(s.listing_id) for s in analytics.proven_listings(conn, user_id, cfg)}
+    if "pin_eligible_listings" in blocks:
+        ids |= {str(row["listing_id"]) for row in _pin_eligible_listings(conn, user_id, cfg)}
+    return ids
 
 
 def _drop(
@@ -324,7 +396,22 @@ def plan_proposals(
 
         action = cap.materialize(conn, user_id, cfg, intent)
         if action is None:
-            _drop(conn, user_id, "ungrounded", intent.capability_key, intent.target_id)
+            # E10: split "ungrounded" into a genuinely hallucinated target
+            # (never offered to the LLM at all) versus one that WAS offered
+            # -- "not_a_candidate" here means "materialize() refused it for
+            # SOME reason", which includes both no-longer-eligible (cooldown,
+            # sold out, deactivated, etc, since _build_facts_json ran) AND
+            # invalid/unknown params for an otherwise-still-eligible target
+            # (e.g. a bad board_key -- see _known_target_ids's own docstring,
+            # corrected 2026-08-25 finding 6). ponytail: this is the cheap
+            # split, not full per-cause granularity (inactive vs imageless vs
+            # cooling-down vs bad-params); reaching that would need every
+            # capability's materialize() to report ITS OWN reason instead
+            # of just None, a Capability-protocol change touching every
+            # capability file, not justified by this alone.
+            known = _known_target_ids(conn, user_id, cfg, intent.capability_key, cap)
+            reason = "not_a_candidate" if intent.target_id in known else "hallucinated_target"
+            _drop(conn, user_id, reason, intent.capability_key, intent.target_id)
             continue
 
         if kept_counts.get(intent.capability_key, 0) >= max_per_cap:

@@ -176,7 +176,9 @@ def test_e2e_approve_executes_the_approved_listing_and_undo_restores_it(conn):
     }
     action_id_a = proposed[str(LISTING_DEAD_A)]
 
-    approved = approve_action(conn, USER_ID, action_id_a, [cap], cfg=cfg, today=TODAY)
+    approved = approve_action(
+        conn, USER_ID, action_id_a, [cap], cfg=cfg, today=TODAY, live_autonomy=True
+    )
 
     assert approved.executed == 1
     assert fake.listings[LISTING_DEAD_A]["should_auto_renew"] is False
@@ -194,7 +196,7 @@ def test_e2e_approve_executes_the_approved_listing_and_undo_restores_it(conn):
     assert executed_events[0].payload["after"] == {"should_auto_renew": False}
     assert executed_events[0].payload["cost_usd"] == 0.0
 
-    undo_action(conn, USER_ID, action_id_a, [cap])
+    undo_action(conn, USER_ID, action_id_a, [cap], live_autonomy=True)
 
     assert fake.listings[LISTING_DEAD_A]["should_auto_renew"] is True
     undone = [e for e in read_all(conn, "action.undone") if e.payload["action_id"] == action_id_a]
@@ -218,8 +220,12 @@ def test_e2e_second_approval_hits_the_daily_cap(conn):
     run(conn, USER_ID, cfg, [cap], today=TODAY)
     action_ids = [e.payload["action_id"] for e in read_all(conn, "action.proposed")]
 
-    first = approve_action(conn, USER_ID, action_ids[0], [cap], cfg=cfg, today=TODAY)
-    second = approve_action(conn, USER_ID, action_ids[1], [cap], cfg=cfg, today=TODAY)
+    first = approve_action(
+        conn, USER_ID, action_ids[0], [cap], cfg=cfg, today=TODAY, live_autonomy=True
+    )
+    second = approve_action(
+        conn, USER_ID, action_ids[1], [cap], cfg=cfg, today=TODAY, live_autonomy=True
+    )
 
     assert first.executed == 1
     assert second.executed == 0
@@ -257,7 +263,9 @@ def test_e2e_zero_cost_passes_a_zero_dollar_budget_cap(conn):
     run(conn, USER_ID, cfg, [cap], today=TODAY)
     action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
 
-    report = approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
+    report = approve_action(
+        conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True
+    )
 
     assert report.executed == 1  # $0.00 estimated cost never trips the $0.00 cap
     refused = [e for e in read_all(conn, "action.refused") if e.payload["action_id"] == action_id]
@@ -274,7 +282,7 @@ def test_e2e_every_executed_action_has_a_preceding_approved_and_no_secret_leaks(
 
     run(conn, USER_ID, cfg, [cap], today=TODAY)
     action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
-    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
+    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True)
 
     events = read_all(conn)
     first_approved_id: dict[str, int] = {}

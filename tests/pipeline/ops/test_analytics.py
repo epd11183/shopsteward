@@ -4,6 +4,8 @@ seasonal listing that a naive threshold must NOT mistake for dead. Every
 assertion here is pure analytics.py output -- no LLM, no network (see
 test_no_network_no_llm.py for the structural check)."""
 
+from datetime import timedelta
+
 import pytest
 
 from shopsteward.core.db import connect, migrate
@@ -18,6 +20,8 @@ from tests.pipeline.ops.helpers import (
     LISTING_SELLER,
     LISTING_VIEWED_NOT_SOLD,
     USER_ID,
+    seed_listing_observed_on,
+    seed_sale_observed,
     seed_two_year_shop,
 )
 
@@ -273,5 +277,171 @@ def test_analytics_functions_never_write_events(shop, cfg):
     analytics.size_breakdown(shop, USER_ID, cfg, as_of=AS_OF)
     analytics.shoot_more(shop, USER_ID, cfg, as_of=AS_OF)
     analytics.data_quality_notes(shop, USER_ID, cfg, as_of=AS_OF)
+    analytics.proven_listings(shop, USER_ID, cfg, as_of=AS_OF)
     after = len(read_all(shop))
     assert before == after
+
+
+# --- T12 (operator-approved 2026-08-25 /autoplan gate): proven_listings() --
+# widened capability-GATING eligibility, distinct from top_sellers()'s
+# brief-facing 7-day window -------------------------------------------------
+
+
+def test_proven_listings_includes_a_sale_45_days_ago_the_7d_gate_would_miss(cfg):
+    conn = connect(":memory:")
+    migrate(conn)
+    seed_listing_observed_on(
+        conn, listing_id=501, title="Aspen Grove Print", day=AS_OF - timedelta(days=45), views=50
+    )
+    seed_sale_observed(
+        conn,
+        receipt_id=1,
+        day=AS_OF - timedelta(days=45),
+        transactions=[(501, 1, 2, 50.0)],
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+
+    assert analytics.top_sellers(conn, USER_ID, cfg, as_of=AS_OF) == []
+    proven = analytics.proven_listings(conn, USER_ID, cfg, as_of=AS_OF)
+    assert [p.listing_id for p in proven] == [501]
+    assert proven[0].units == 2
+    assert proven[0].revenue_usd == pytest.approx(100.0)
+
+
+def test_proven_listings_includes_a_200_day_old_sale_via_the_lifetime_arm(cfg):
+    conn = connect(":memory:")
+    migrate(conn)
+    seed_listing_observed_on(
+        conn, listing_id=502, title="Old Barn Print", day=AS_OF - timedelta(days=200), views=30
+    )
+    seed_sale_observed(
+        conn,
+        receipt_id=2,
+        day=AS_OF - timedelta(days=200),
+        transactions=[(502, 2, 1, 60.0)],
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+
+    proven = analytics.proven_listings(conn, USER_ID, cfg, as_of=AS_OF)
+    assert [p.listing_id for p in proven] == [502]
+    assert proven[0].units == 1
+    assert proven[0].revenue_usd == pytest.approx(60.0)
+
+
+def test_proven_listings_excludes_zero_sales_no_view_history(cfg):
+    conn = connect(":memory:")
+    migrate(conn)
+    seed_listing_observed_on(conn, listing_id=503, title="Never Sold", day=AS_OF, views=10)
+    rebuild_core(conn)
+    rebuild_ops(conn)
+
+    assert analytics.proven_listings(conn, USER_ID, cfg, as_of=AS_OF) == []
+
+
+def test_proven_listings_views_velocity_arm_includes_a_rising_zero_sales_listing(cfg):
+    # delta=10, >= default min_delta=5
+    conn = connect(":memory:")
+    migrate(conn)
+    for offset, views in ((-29, 10), (0, 20)):
+        seed_listing_observed_on(
+            conn,
+            listing_id=504,
+            title="Rising Listing",
+            day=AS_OF + timedelta(days=offset),
+            views=views,
+        )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+
+    proven = analytics.proven_listings(conn, USER_ID, cfg, as_of=AS_OF)
+    assert [p.listing_id for p in proven] == [504]
+    assert proven[0].units == 0
+    assert proven[0].revenue_usd == 0.0
+
+
+def test_proven_listings_views_velocity_arm_excludes_growth_below_the_bar(cfg):
+    conn = connect(":memory:")
+    migrate(conn)
+    for offset, views in ((-29, 10), (0, 12)):  # delta=2, < default min_delta=5
+        seed_listing_observed_on(
+            conn,
+            listing_id=505,
+            title="Barely Moving",
+            day=AS_OF + timedelta(days=offset),
+            views=views,
+        )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+
+    assert analytics.proven_listings(conn, USER_ID, cfg, as_of=AS_OF) == []
+
+
+def test_proven_listings_views_velocity_arm_excludes_a_single_observation():
+    # _views_delta's own convention: fewer than two observations in the
+    # window is UNMEASURABLE, not zero growth -- must never read as eligible.
+    conn = connect(":memory:")
+    migrate(conn)
+    seed_listing_observed_on(conn, listing_id=506, title="One Reading Only", day=AS_OF, views=1000)
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cfg = load_ops_config()
+
+    assert analytics.proven_listings(conn, USER_ID, cfg, as_of=AS_OF) == []
+
+
+def test_data_quality_notes_reports_unmeasurable_views_velocity_count(cfg):
+    """L11 (guardrail review, 2026-08-25): a zero-sales listing with a
+    single view observation in the window is UNMEASURABLE for
+    `proven_listings()`'s views-velocity arm (c) -- excluded silently
+    there, but `data_quality_notes()` must say so explicitly, distinct
+    from the dead-listing note (a different window, a different check)."""
+    conn = connect(":memory:")
+    migrate(conn)
+    seed_listing_observed_on(conn, listing_id=701, title="One Reading Only", day=AS_OF, views=1000)
+    rebuild_core(conn)
+    rebuild_ops(conn)
+
+    assert analytics.proven_listings(conn, USER_ID, cfg, as_of=AS_OF) == []
+    notes = analytics.data_quality_notes(conn, USER_ID, cfg, as_of=AS_OF)
+    matches = [n for n in notes if "views-velocity arm" in n]
+    assert len(matches) == 1
+    assert "1 zero-sales listing(s)" in matches[0]
+
+
+def test_proven_listings_limit_keeps_highest_revenue_rows_default_unbounded(cfg):
+    """M4 (guardrail review, 2026-08-25): `limit=None` (the default) is
+    unbounded -- the capability `_candidates()` grounding call sites need
+    every real target, never a token-cost truncation. A caller that DOES
+    pass `limit` (planner.py's LLM-facing facts block) gets the
+    highest-revenue rows first, per the function's own sort order."""
+    conn = connect(":memory:")
+    migrate(conn)
+    for listing_id, units, revenue in ((601, 1, 30.0), (602, 2, 90.0), (603, 3, 60.0)):
+        seed_listing_observed_on(
+            conn, listing_id=listing_id, title=f"L{listing_id}", day=AS_OF, views=10
+        )
+        seed_sale_observed(
+            conn,
+            receipt_id=listing_id,
+            day=AS_OF,
+            transactions=[(listing_id, listing_id, units, revenue / units)],
+        )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+
+    unbounded = analytics.proven_listings(conn, USER_ID, cfg, as_of=AS_OF)
+    assert {p.listing_id for p in unbounded} == {601, 602, 603}
+
+    bounded = analytics.proven_listings(conn, USER_ID, cfg, as_of=AS_OF, limit=2)
+    assert [p.listing_id for p in bounded] == [602, 603]  # highest revenue first, 601 dropped
+
+
+def test_proof_phrase_distinguishes_sales_proof_from_velocity_proof():
+    from shopsteward.pipeline.ops.models import ListingSales
+
+    sold = ListingSales(listing_id=1, title="x", units=3, revenue_usd=10.0)
+    rising = ListingSales(listing_id=2, title="y", units=0, revenue_usd=0.0)
+    assert analytics.proof_phrase(sold) == "top seller (3 sold)"
+    assert analytics.proof_phrase(rising) == "rising views, no sales yet"

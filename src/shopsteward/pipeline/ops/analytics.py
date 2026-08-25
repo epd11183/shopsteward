@@ -192,6 +192,157 @@ def top_sellers(
     ]
 
 
+def proven_listings(
+    conn: sqlite3.Connection,
+    user_id: int,
+    cfg: OpsConfig,
+    as_of: date | None = None,
+    limit: int | None = None,
+) -> list[ListingSales]:
+    """Capability-GATING eligibility set (T12, operator-approved 2026-08-25
+    /autoplan gate: "Phase-2 trigger -- widened to trailing-90-day or
+    lifetime sale plus a views-velocity alternative"). **Distinct from
+    top_sellers()**, which stays exactly as-is for the brief's "what's
+    selling" 7-day section (brief.py:245) -- swapping that call site would
+    silently change what the operator's daily brief claims a 7-day window
+    means. This function is for `listing.gapfill_reprint`/
+    `social.caption_draft` eligibility only.
+
+    A listing is "proven" if ANY of:
+      (a) at least one sale within `cfg.windows.proven_window_days` (default
+          90d), OR
+      (b) at least `cfg.windows.proven_min_lifetime_sales` (default 1)
+          lifetime SALE-ITEM ROWS (L10, guardrail review 2026-08-25:
+          `COUNT(*)` over `proj_sale_items`, i.e. lifetime ORDERS/
+          transaction line items, NOT lifetime UNITS -- a single order for
+          3 prints of the same listing counts as 1 here, not 3) -- the "12
+          lifetime sales, sells about monthly" arm the operator explicitly
+          approved, OR
+      (c) views-velocity, ZERO-sales listings only: recent view growth over
+          `cfg.windows.views_velocity_window_days` clears
+          `cfg.windows.views_velocity_min_delta`. Per `_views_delta`'s
+          absent-is-not-zero convention, fewer than two observations in
+          that window is UNMEASURABLE, not zero growth -- and is EXCLUDED
+          here, not included: this gates a real POD draft / promo caption,
+          so an unmeasurable signal must never read as a green light.
+
+    `units`/`revenue_usd` are always LIFETIME totals, never the window that
+    made a listing eligible -- the same numbers surface verbatim in a
+    capability's `reason` text (e.g. "top seller (N sold)"), and a windowed
+    number there would misrepresent a listing proven by a 90-day-old sale
+    as if it had just sold that many units this week. A listing proven ONLY
+    by the views-velocity arm (c) has `units=0`/`revenue_usd=0.0` by
+    construction (it has no sales at all) -- callers must check
+    `units == 0` before describing a row as "N sold" (see `proof_phrase`).
+
+    L10 note: at the shipped defaults (`proven_window_days=90`,
+    `proven_min_lifetime_sales=1`), the lifetime arm (b) SUBSUMES the
+    window arm (a) -- any listing with >= 1 sale ever also has >= 1
+    lifetime sale-item row, so (b) alone would already catch it. This is
+    intended, not dead code to delete: (a) becomes load-bearing the moment
+    an operator raises `proven_min_lifetime_sales` above 1 (a listing with
+    exactly 1 recent sale and no other history must still count as
+    proven), and the two conditions read independently in code precisely
+    so that config change never needs a matching code change.
+
+    `limit` (M4, guardrail review 2026-08-25) defaults to `None` --
+    UNBOUNDED -- because this is also the safety-boundary grounding
+    function `listing.gapfill_reprint`/`social.caption_draft`'s own
+    `_candidates()` call for eligibility (materialize()'s re-derivation):
+    silently truncating that set would make an otherwise-eligible listing
+    ungrounded for no policy reason. Only `planner.py`'s `_build_facts_json`
+    -- which pays LLM tokens per row shown -- passes an explicit bound
+    (sorted by `-revenue_usd` first, so a real seller is always kept over a
+    views-velocity-only row before the cut)."""
+    as_of = _today(as_of)
+    agg_rows = conn.execute(
+        "SELECT listing_id, SUM(quantity) AS units, SUM(quantity*price_usd) AS revenue_usd, "
+        "COUNT(*) AS lifetime_sales, MAX(sale_date) AS last_sale_date "
+        "FROM proj_sale_items WHERE user_id=? GROUP BY listing_id",
+        (user_id,),
+    ).fetchall()
+
+    recent_start, _recent_end = _window(as_of, cfg.windows.proven_window_days)
+    out: dict[int, ListingSales] = {}
+    for r in agg_rows:
+        recent_sale = (
+            r["last_sale_date"] is not None and r["last_sale_date"] >= recent_start.isoformat()
+        )
+        lifetime_proven = r["lifetime_sales"] >= cfg.windows.proven_min_lifetime_sales
+        if not (recent_sale or lifetime_proven):
+            continue
+        out[r["listing_id"]] = ListingSales(
+            listing_id=r["listing_id"],
+            title=_title(conn, user_id, r["listing_id"]),
+            units=r["units"],
+            revenue_usd=round(r["revenue_usd"], 2),
+        )
+
+    # (c) views-velocity, zero-sales listings only -- any listing with a
+    # sale is already handled (or rejected) by (a)/(b) above.
+    sold_listing_ids = {r["listing_id"] for r in agg_rows}
+    velocity_proven, _unmeasurable = _views_velocity_candidates(
+        conn, user_id, cfg, as_of, sold_listing_ids
+    )
+    out.update(velocity_proven)
+
+    result = sorted(out.values(), key=lambda s: (-s.revenue_usd, s.listing_id))
+    return result if limit is None else result[:limit]
+
+
+def _views_velocity_candidates(
+    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, as_of: date, sold_listing_ids: set[int]
+) -> tuple[dict[int, "ListingSales"], int]:
+    """`proven_listings()` arm (c), factored out so `data_quality_notes()`
+    (L11, guardrail review 2026-08-25) can report the SAME unmeasurable
+    count `proven_listings()` silently excludes, without a second,
+    possibly-diverging implementation -- `_dead_listing_candidates`'s own
+    (candidates, unmeasurable_count) precedent. Returns (listing_id ->
+    zero-sales ListingSales for every listing that clears the views-
+    velocity bar, count excluded because fewer than two observations in
+    the window made growth UNMEASURABLE, not zero -- see `_views_delta`)."""
+    out: dict[int, ListingSales] = {}
+    unmeasurable = 0
+    vstart, vend = _window(as_of, cfg.windows.views_velocity_window_days)
+    listing_ids = [
+        r["listing_id"]
+        for r in conn.execute(
+            "SELECT DISTINCT listing_id FROM proj_listing_daily WHERE user_id=?", (user_id,)
+        ).fetchall()
+    ]
+    for listing_id in listing_ids:
+        if listing_id in sold_listing_ids:
+            continue
+        rows = conn.execute(
+            "SELECT views FROM proj_listing_daily WHERE user_id=? AND listing_id=? "
+            "AND day BETWEEN ? AND ? ORDER BY day",
+            (user_id, listing_id, vstart.isoformat(), vend.isoformat()),
+        ).fetchall()
+        delta = _views_delta(rows)
+        if delta is None:
+            unmeasurable += 1
+            continue
+        if delta >= cfg.windows.views_velocity_min_delta:
+            out[listing_id] = ListingSales(
+                listing_id=listing_id,
+                title=_title(conn, user_id, listing_id),
+                units=0,
+                revenue_usd=0.0,
+            )
+    return out, unmeasurable
+
+
+def proof_phrase(sales: ListingSales) -> str:
+    """Shared by gapfill.py/caption_draft.py's `reason` text: `units == 0`
+    is only possible via `proven_listings`'s views-velocity arm (c) -- a
+    real sales-proof listing always has `units >= 1` -- so this is an
+    honest way to tell the two proofs apart without a dedicated field on
+    ListingSales."""
+    if sales.units > 0:
+        return f"top seller ({sales.units} sold)"
+    return "rising views, no sales yet"
+
+
 def viewed_not_sold(conn: sqlite3.Connection, user_id: int) -> list[ViewedNotSold]:
     # Lifetime, not windowed: "has this listing EVER converted a view into a
     # sale" is the useful question -- proj_listings already carries the
@@ -448,6 +599,29 @@ def data_quality_notes(
             "window) -- excluded from the dead-listing check rather than assumed dead. Check "
             "that `shopsteward sync` is running; a listing that expired or sold out also stops "
             "appearing, since /listings/active is active-only."
+        )
+
+    # L11 (guardrail review, 2026-08-25): the SAME exclusion `proven_listings()`
+    # arm (c) makes silently -- a zero-sales listing with fewer than two view
+    # observations in `views_velocity_window_days` is UNMEASURABLE, not a
+    # confirmed non-riser, and never becomes eligible -- surfaced here too,
+    # so "why didn't gapfill_reprint/caption_draft propose this listing" is
+    # answerable without re-deriving the exclusion by hand.
+    sold_listing_ids = {
+        r["listing_id"]
+        for r in conn.execute(
+            "SELECT DISTINCT listing_id FROM proj_sale_items WHERE user_id=?", (user_id,)
+        ).fetchall()
+    }
+    _, velocity_unmeasurable = _views_velocity_candidates(
+        conn, user_id, cfg, as_of, sold_listing_ids
+    )
+    if velocity_unmeasurable:
+        notes.append(
+            f"{velocity_unmeasurable} zero-sales listing(s) have no confirmed view reading in "
+            f"the last {cfg.windows.views_velocity_window_days}d (no observation, or only one, "
+            "inside that window) -- excluded from proven_listings()'s views-velocity arm rather "
+            "than assumed non-rising, so they never become a gapfill_reprint/caption_draft target."
         )
 
     return notes

@@ -1,9 +1,16 @@
 from shopsteward.core.db import connect, migrate
 from shopsteward.core.projections import rebuild as rebuild_core
+from shopsteward.pipeline.ops import analytics
 from shopsteward.pipeline.ops import config as ops_config
 from shopsteward.pipeline.ops.brief import generate_brief, render_text
 from shopsteward.pipeline.ops.projections import rebuild_ops
-from tests.pipeline.ops.helpers import AS_OF, USER_ID, seed_two_year_shop
+from tests.pipeline.ops.helpers import (
+    AS_OF,
+    LISTING_DEAD,
+    LISTING_SELLER,
+    USER_ID,
+    seed_two_year_shop,
+)
 
 
 def _built_brief(tmp_path, as_of=AS_OF):
@@ -26,6 +33,29 @@ def test_generate_brief_assembles_every_section(tmp_path):
     assert len(report.trending) == 1
     assert report.product_type_breakdown
     assert report.size_breakdown
+
+
+def test_brief_top_sellers_stays_on_the_7d_window_while_proven_listings_widens(tmp_path):
+    """T12 (operator-approved 2026-08-25 /autoplan gate): brief.py:245 must
+    keep meaning exactly what it says -- a 7-day window -- even though
+    capability gating (analytics.proven_listings) widened underneath it.
+    seed_two_year_shop's LISTING_DEAD sold once, 400 days ago -- outside
+    every window the brief's top_sellers uses, but proven via the T12
+    lifetime arm (>= 1 lifetime sale)."""
+    conn = connect(tmp_path / "t.db")
+    migrate(conn)
+    seed_two_year_shop(conn)
+    ops_config.seed(conn, USER_ID)
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cfg = ops_config.get_ops_config(conn, USER_ID)
+
+    report = generate_brief(conn, USER_ID, cfg, as_of=AS_OF)
+    assert [s.listing_id for s in report.top_sellers] == [LISTING_SELLER]  # unchanged, windowed
+
+    proven_ids = {p.listing_id for p in analytics.proven_listings(conn, USER_ID, cfg, as_of=AS_OF)}
+    assert LISTING_DEAD in proven_ids  # widened set sees the 400-day-old sale; the brief does not
+    assert LISTING_SELLER in proven_ids
 
 
 def test_render_text_contains_the_shop_section_and_the_shop_section_is_unaffected_by_chassis(

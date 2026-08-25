@@ -565,7 +565,9 @@ def test_e2e_run_approve_executes_via_the_full_pipeline(conn):
         if e.payload["capability"] == "listing.autorenew_on"
     )
 
-    approved = approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
+    approved = approve_action(
+        conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True
+    )
 
     assert approved.executed == 1
     assert fake.listings[LISTING_ACTIVE_OFF]["should_auto_renew"] is True
@@ -617,7 +619,9 @@ def test_approve_action_on_a_stale_proposal_fails_instead_of_writing_when_a_newe
     rebuild_core(conn)
     rebuild_ops(conn)
 
-    approved = approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
+    approved = approve_action(
+        conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True
+    )
 
     assert approved.failed == 1
     assert approved.executed == 0

@@ -500,7 +500,7 @@ def test_params_round_trip_through_action_proposed_event(conn):
     assert event.payload["params"] == proposed.params
 
     approved = approve_action(
-        conn, USER_ID, event.payload["action_id"], [cap], cfg=cfg, today=TODAY
+        conn, USER_ID, event.payload["action_id"], [cap], cfg=cfg, today=TODAY, live_autonomy=True
     )
     assert approved.executed == 1
     price_calls = [c for c in fake.calls if c[0] == "update_listing_price"]
@@ -546,7 +546,9 @@ def test_e2e_valid_intent_lands_at_t2_approve_calls_update_listing_price_undo_re
     action_id = proposed_event.payload["action_id"]
     new_price = proposed_event.payload["params"]["price_usd"]
 
-    approved = approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
+    approved = approve_action(
+        conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True
+    )
     assert approved.executed == 1
     assert fake.listings[LISTING_DIGITAL]["price"] == new_price
     price_calls = [c for c in fake.calls if c[0] == "update_listing_price"]
@@ -560,7 +562,7 @@ def test_e2e_valid_intent_lands_at_t2_approve_calls_update_listing_price_undo_re
     assert executed_event.payload["after"] == {"price_usd": new_price}
     assert executed_event.payload["cost_usd"] == 0.0
 
-    undo_action(conn, USER_ID, action_id, [cap])
+    undo_action(conn, USER_ID, action_id, [cap], live_autonomy=True)
     assert fake.listings[LISTING_DIGITAL]["price"] == 20.0
     undone = [e for e in read_all(conn, "action.undone") if e.payload["action_id"] == action_id][0]
     assert undone.payload["restored_to"] == {"price_usd": 20.0}
@@ -597,7 +599,7 @@ def test_never_promoted_above_t2_even_with_enough_approvals_and_elapsed_days(con
 
     later = TODAY + timedelta(days=2)
     for action_id in action_ids:
-        approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=later)
+        approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=later, live_autonomy=True)
 
     promoted = [e for e in read_all(conn, "capability.") if e.type == "capability.promoted"]
     assert promoted == []  # ladder would promote a T1-ceiling stub here; T2 ceiling refuses it
@@ -622,8 +624,8 @@ def test_no_secret_in_any_payload_and_append_only(conn):
 
     run(conn, USER_ID, cfg, [cap], today=TODAY)
     action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
-    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
-    undo_action(conn, USER_ID, action_id, [cap])
+    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True)
+    undo_action(conn, USER_ID, action_id, [cap], live_autonomy=True)
 
     import json
 

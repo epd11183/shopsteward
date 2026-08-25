@@ -50,6 +50,7 @@ def _seed_seller(
     units=5,
     title="Sandhill Cranes at Dawn Print",
     state="active",
+    sale_day=None,
 ):
     from tests.pipeline.ops.helpers import seed_listing_observed_on
 
@@ -59,10 +60,29 @@ def _seed_seller(
     seed_sale_observed(
         conn,
         receipt_id=90000 + listing_id,
-        day=TODAY,
+        day=sale_day or TODAY,
         transactions=[(listing_id, 990000 + listing_id, units, 87.00)],
     )
     ops_config.seed(conn, USER_ID)  # execute() reads get_ops_config() -- must exist
+    rebuild_core(conn)
+    rebuild_ops(conn)
+
+
+def _seed_rising_zero_sales_listing(conn, listing_id=903, title="Rising Listing, Never Sold"):
+    """M5 (guardrail review, 2026-08-25): a listing proven ONLY by T12's
+    views-velocity arm (proj_listings.proven_listings) -- zero sales, ever.
+    delta=10 clears the default views_velocity_min_delta=5."""
+    from tests.pipeline.ops.helpers import seed_listing_observed_on
+
+    for offset, views in ((-29, 10), (0, 20)):
+        seed_listing_observed_on(
+            conn,
+            listing_id=listing_id,
+            title=title,
+            day=TODAY + timedelta(days=offset),
+            views=views,
+        )
+    ops_config.seed(conn, USER_ID)
     rebuild_core(conn)
     rebuild_ops(conn)
 
@@ -141,6 +161,35 @@ def test_top_seller_is_a_valid_materialize_target(conn):
     assert "Fresh off the press!" not in action.reason  # the caption is never the audit reason
     assert action.estimated_cost_usd == 0.0
     assert action.undo_available is False
+
+
+def test_a_sale_45_days_ago_the_old_7d_gate_excluded_is_now_a_valid_target(conn):
+    """T12 (operator-approved 2026-08-25 /autoplan gate): a listing sold 45
+    days ago -- outside the old revenue_window_days=7 gate, inside the new
+    proven_window_days=90 -- must be materializable."""
+    _seed_seller(conn, sale_day=TODAY - timedelta(days=45))
+    cap = SocialCaptionDraft()
+
+    action = cap.materialize(
+        conn, USER_ID, _cfg(), _intent(str(LISTING_SELLER), caption="Fresh off the press!")
+    )
+
+    assert action is not None
+    assert "top seller (5 sold)" in action.reason
+
+
+def test_views_velocity_zero_sales_listing_is_a_valid_target_with_honest_reason(conn):
+    """M5 (guardrail review, 2026-08-25): the newly-widened views-velocity
+    arm -- rising views, zero sales ever -- must still be a valid caption
+    target, with a reason that never calls it a "top seller"."""
+    _seed_rising_zero_sales_listing(conn)
+    cap = SocialCaptionDraft()
+
+    action = cap.materialize(conn, USER_ID, _cfg(), _intent("903", caption="Trending now!"))
+
+    assert action is not None
+    assert "rising views, no sales yet" in action.reason
+    assert "top seller" not in action.reason
 
 
 def test_non_seller_is_never_proposed(conn):
@@ -437,7 +486,9 @@ def test_planner_gate_drops_unknown_and_ungrounded_with_caption_draft_registered
     assert proposals == []
     reasons = {e.payload["reason"] for e in read_all(conn, "planner.intent_dropped")}
     assert "unknown_capability" in reasons
-    assert "ungrounded" in reasons
+    # E10: split "ungrounded" -- LISTING_NON_SELLER was never a top_sellers
+    # target, so this is a genuinely hallucinated target, not a stale one.
+    assert "hallucinated_target" in reasons
 
 
 # --- Brief: CAPTIONS TO POST section -----------------------------------------

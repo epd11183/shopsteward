@@ -3,7 +3,11 @@
   "name": "default",
   "windows": {
     "revenue_window_days": 7,
-    "trend_window_days": 7
+    "trend_window_days": 7,
+    "proven_window_days": 90,
+    "proven_min_lifetime_sales": 1,
+    "views_velocity_window_days": 30,
+    "views_velocity_min_delta": 5
   },
   "dead_listing": {
     "window_days": 180,
@@ -49,6 +53,15 @@
     "min_lifetime_sales": 1,
     "listing_fee_usd": 0.20
   },
+  "catalog_expansion": {
+    "enabled": true,
+    "source_folder": "data/catalog_candidates",
+    "recursive": true,
+    "max_new_per_week": 5,
+    "min_long_edge_px": 6000,
+    "dedup_max_distance": 6,
+    "listing_fee_usd": 0.20
+  },
   "caption": {
     "max_len": 2200
   },
@@ -57,6 +70,7 @@
     "max_title_len": 100,
     "max_description_len": 500,
     "max_alt_text_len": 500,
+    "holdout_days": 7,
     "boards": {
       "wall_art": "Nature & Landscape Wall Art"
     }

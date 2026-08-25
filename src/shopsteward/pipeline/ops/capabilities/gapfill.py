@@ -18,7 +18,9 @@ reversal is simply declining to publish at Gate 3.
 `_candidates()` is the ONE grounding function shared by propose()/
 materialize() (M8b slice-2 planner-safety contract, every capability here
 follows it): the reprint ceiling is honest -- only a listing that is (1) a
-PROVEN top seller (`analytics.top_sellers`, real sales in the window), AND
+PROVEN listing (`analytics.proven_listings` -- T12 2026-08-25: a sale within
+the trailing 90 days, OR at least one lifetime sale, OR a views-velocity
+signal on a zero-sales listing; see that function's docstring), AND
 (2) has an archived, reprintable source (`source_assets.resolve_source` ->
 `archived=True`), is ever proposed for ANY missing POD product_type. A
 best-seller with no archived source is simply not reprintable; no proposal,
@@ -64,7 +66,7 @@ def _candidates(
     """`f"{listing_id}:{product_type}"` -> the ProposedAction propose() would
     build for it -- see module docstring for the honest reprint ceiling
     (proven seller AND archived source AND missing format, no exceptions)."""
-    sellers = analytics.top_sellers(conn, user_id, cfg)
+    sellers = analytics.proven_listings(conn, user_id, cfg)
     if not sellers:
         return {}
 
@@ -109,16 +111,25 @@ def _candidates(
             action_id = compute_action_id(
                 "listing.gapfill_reprint", target_id, inputs_hash, pod_cfg_hash, today
             )
+            # M2 (guardrail review, 2026-08-25): the trailing clause must be
+            # as conditional as `analytics.proof_phrase()`'s own prefix --
+            # this reason lands verbatim on the Gate-3 card that authorizes
+            # a REAL PAID POD SKU. `seller.units == 0` is only possible via
+            # `proven_listings()`'s views-velocity arm (proof_phrase's own
+            # docstring): that listing has never sold, so it must never be
+            # called "the proven winner".
+            trailing = (
+                "reprint the proven winner."
+                if seller.units > 0
+                else "print a first physical copy -- rising views, still no sale."
+            )
             out[target_id] = ProposedAction(
                 action_id=action_id,
                 capability="listing.gapfill_reprint",
                 target_type="listing_reprint",
                 target_id=target_id,
                 tier=Tier.PROPOSE,  # overwritten by the runner with the effective tier
-                reason=(
-                    f"top seller ({seller.units} sold); no {product_type} yet -- "
-                    "reprint the proven winner."
-                ),
+                reason=f"{analytics.proof_phrase(seller)}; no {product_type} yet -- {trailing}",
                 inputs_hash=inputs_hash,
                 estimated_cost_usd=0.0,
                 undo_available=False,

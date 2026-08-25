@@ -131,8 +131,12 @@ def test_portfolio_cap_refuses_over_deactivation_and_the_listing_stays_active(co
     )
     assert len(action_ids) == 3
 
-    first = approve_action(conn, USER_ID, action_ids[0][1], [cap], cfg=cfg, today=TODAY)
-    second = approve_action(conn, USER_ID, action_ids[1][1], [cap], cfg=cfg, today=TODAY)
+    first = approve_action(
+        conn, USER_ID, action_ids[0][1], [cap], cfg=cfg, today=TODAY, live_autonomy=True
+    )
+    second = approve_action(
+        conn, USER_ID, action_ids[1][1], [cap], cfg=cfg, today=TODAY, live_autonomy=True
+    )
 
     assert first.executed == 1
     assert second.executed == 0
@@ -247,7 +251,9 @@ def test_e2e_approve_flips_state_and_undo_reactivates(conn):
     }
     action_id = proposed[str(LISTING_DEAD_DIGITAL)]
 
-    approved = approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
+    approved = approve_action(
+        conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True
+    )
 
     assert approved.executed == 1
     assert fake.listings[LISTING_DEAD_DIGITAL]["state"] == "inactive"
@@ -264,7 +270,7 @@ def test_e2e_approve_flips_state_and_undo_reactivates(conn):
     assert executed_events[0].payload["after"] == {"state": "inactive"}
     assert executed_events[0].payload["cost_usd"] == 0.0
 
-    undo_action(conn, USER_ID, action_id, [cap])
+    undo_action(conn, USER_ID, action_id, [cap], live_autonomy=True)
 
     assert fake.listings[LISTING_DEAD_DIGITAL]["state"] == "active"
     undone = [e for e in read_all(conn, "action.undone") if e.payload["action_id"] == action_id]
@@ -368,9 +374,9 @@ def test_promotion_t2_to_t1_can_fire_unlike_reprice_and_seo_edit(conn):
     run(conn, USER_ID, cfg, [cap], today=TODAY)
     action_ids = [e.payload["action_id"] for e in read_all(conn, "action.proposed")]
 
-    approve_action(conn, USER_ID, action_ids[0], [cap], cfg=cfg, today=TODAY)
+    approve_action(conn, USER_ID, action_ids[0], [cap], cfg=cfg, today=TODAY, live_autonomy=True)
     later = TODAY + timedelta(days=1)
-    approve_action(conn, USER_ID, action_ids[1], [cap], cfg=cfg, today=later)
+    approve_action(conn, USER_ID, action_ids[1], [cap], cfg=cfg, today=later, live_autonomy=True)
 
     promoted = [e for e in read_all(conn, "capability.") if e.type == "capability.promoted"]
     assert len(promoted) == 1
@@ -394,8 +400,8 @@ def test_no_secret_in_any_payload_and_append_only(conn):
 
     run(conn, USER_ID, cfg, [cap], today=TODAY)
     action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
-    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
-    undo_action(conn, USER_ID, action_id, [cap])
+    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True)
+    undo_action(conn, USER_ID, action_id, [cap], live_autonomy=True)
 
     import json
 

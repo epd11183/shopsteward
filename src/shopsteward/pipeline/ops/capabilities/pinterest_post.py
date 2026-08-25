@@ -53,6 +53,7 @@ from shopsteward.pipeline.ops.config import get_ops_config, ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
 from shopsteward.pipeline.ops.projections import _action_id_from_destination_url
 from shopsteward.pipeline.ops.registry import compute_action_id
+from shopsteward.pipeline.ops.timeutil import parse_ts
 
 _PIN_EVENT_TYPES = ("social.pin_drafted", "social.pin_posted")
 
@@ -85,34 +86,47 @@ def _image_url(conn: sqlite3.Connection, user_id: int, listing_id: int) -> str |
 def _last_pinned_at(conn: sqlite3.Connection, user_id: int, listing_id: int) -> str | None:
     """Most recent `social.pin_drafted`/`social.pin_posted` created_at for
     this listing, or None if it has never been pinned -- the cooldown +
-    least-recently-pinned-first grounding."""
+    least-recently-pinned-first grounding. Compared via `parse_ts()` (E2),
+    not raw string comparison -- events appended through the ordinary
+    `core.events.append()` path always share one format in practice, but a
+    real datetime compare costs nothing and can never silently mis-order."""
     latest: str | None = None
     for event_type in _PIN_EVENT_TYPES:
         for e in read_all(conn, event_type):
             if e.user_id != user_id or e.payload.get("listing_id") != listing_id:
                 continue
-            if e.created_at and (latest is None or e.created_at > latest):
+            if e.created_at and (latest is None or parse_ts(e.created_at) > parse_ts(latest)):
                 latest = e.created_at
     return latest
 
 
-def _candidates(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> dict[str, _Target]:
+def _candidates(
+    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, *, now: datetime | None = None
+) -> dict[str, _Target]:
     """target_id (`str(listing_id)`) -> pin-eligible facts -- the ONE
     grounding function shared by materialize()/execute() so a hallucinated,
     inactive, imageless, or recently-pinned target is always dropped, never
-    guessed."""
+    guessed. `now` is a comparison-friendly injection point (E2) -- tests
+    pin a fixed instant to exercise the cooldown boundary exactly; every
+    real caller omits it and gets wall-clock UTC. The cutoff comparison
+    itself is a real `datetime` compare via `parse_ts()`, never the old
+    string compare between `created_at` (DB 'Z'-suffix format) and a
+    freshly computed `.isoformat()` cutoff (' +00:00' suffix) -- those two
+    formats do not sort consistently against each other (review finding
+    E2)."""
     out: dict[str, _Target] = {}
     rows = conn.execute(
         "SELECT listing_id, title FROM proj_listings WHERE user_id=? AND state='active'",
         (user_id,),
     ).fetchall()
-    cutoff = (datetime.now(UTC) - timedelta(days=cfg.pinterest.cooldown_days)).isoformat()
+    now = now or datetime.now(UTC)
+    cutoff = now - timedelta(days=cfg.pinterest.cooldown_days)
     for r in rows:
         image_url = _image_url(conn, user_id, r["listing_id"])
         if image_url is None:
             continue
         last_pinned = _last_pinned_at(conn, user_id, r["listing_id"])
-        if last_pinned is not None and last_pinned >= cutoff:
+        if last_pinned is not None and parse_ts(last_pinned) >= cutoff:
             continue
         out[str(r["listing_id"])] = _Target(
             listing_id=r["listing_id"], title=r["title"], image_url=image_url

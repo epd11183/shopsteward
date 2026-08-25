@@ -41,6 +41,31 @@ owned by the operator's Business.
 | E13 | **Respond to a public review** | **RESTRICTED (dashboard-only)** | **read-only** API (`getReviewsByShop/ByListing`) | `feedback_r` to read | Responding allowed as a seller act, but **no API to post** it |
 | E14 | **Refunds / disputes / cases** | **PROHIBITED (no mechanism)** | none in v3 | — | Manual Shop-Manager/Payment-account process (Seller Policy §3b) |
 | E15 | **Renew a specific expired listing with sales history** | **PERMITTED** | `updateListing` PATCH (`state`→`active`) on an `expired` listing | `listings_w` (already held) | Renewal is a first-class Etsy seller act; `updateListing` names "manually renewing" as a use of the `state` field. Etsy charges the standard $0.20 listing fee, non-refundable. Distinct from E8 — see §2 |
+| E16 | **New digital-download listing from our own original photograph** (catalog expansion) | **PERMITTED** | `createDraftListing` → images → digital file → `updateListing` copy; **publish only at Gate 3** | `listings_w` (already held) | Listing our own original work is the core permitted seller act. Mechanically identical to E5 (ends in an unpublished draft; Gate 3 is the approval). Three accuracy conditions below — added 2026-08-25 for `listing.catalog_expand` |
+
+#### E16 conditions (added 2026-08-25)
+
+`policy_verified = True` for `listing.catalog_expand` holds only while all
+three conditions below hold. Each is an accuracy obligation under Seller
+Policy §1.c.4 — the same clause E3 (SEO edit) cites — not a new restriction.
+
+1. **The photograph is ours and is never AI-generated or AI-edited.** The
+   architecture guarantee ("AI never touches the photograph") is the control:
+   the only image transform in the path is a deterministic max-quality sRGB
+   JPEG re-encode. No generative upscale, fill, or edit, ever — including to
+   clear the resolution bar in condition 2.
+2. **The advertised print sizes must be deliverable by the source file.**
+   `whatyougot` copy advertising 16x20 at 300 DPI requires a 6000 px long
+   edge; listing a smaller file against that copy is an inaccurate listing.
+   The capability's `min_long_edge_px` bar enforces this going forward. Note
+   this implicates listings already published under the older 3000 px landing
+   floor — a pre-existing accuracy question to audit separately, not one this
+   capability introduces.
+3. **AI-assisted copy carries the existing disclosure line**, as every other
+   copy-generating capability already does. The copy stage is unchanged.
+
+Distinct from E8: this creates *new* listings from new work; it never relists
+or churns an existing listing for search recency.
 
 ### Meta (Instagram + Facebook)
 

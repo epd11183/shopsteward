@@ -41,6 +41,21 @@ __all__ = [
 class _OpsWindows(BaseModel):
     revenue_window_days: int = Field(gt=0)
     trend_window_days: int = Field(gt=0)
+    # T12 (operator-approved 2026-08-25 /autoplan gate: "Phase-2 trigger --
+    # widened to trailing-90-day or lifetime sale plus a views-velocity
+    # alternative"). Capability-GATING eligibility only
+    # (analytics.proven_listings) -- NEVER used by top_sellers(), which stays
+    # on revenue_window_days for the brief's "what's selling" section.
+    proven_window_days: int = Field(gt=0, default=90)
+    proven_min_lifetime_sales: int = Field(gt=0, default=1)
+    # views-velocity alternative arm (zero-sales listings only): a listing
+    # is also proven if its views grew by at least views_velocity_min_delta
+    # over views_velocity_window_days. 30d, not revenue_window_days's 7d --
+    # this shop's best listing has 87 LIFETIME views, so a 7d window is
+    # almost always unmeasurable (< 2 observations); min_delta=5 is a small
+    # bar sized to that same low-traffic reality.
+    views_velocity_window_days: int = Field(gt=0, default=30)
+    views_velocity_min_delta: int = Field(gt=0, default=5)
 
 
 class _OpsDeadListing(BaseModel):
@@ -125,6 +140,25 @@ class _OpsRenew(BaseModel):
     listing_fee_usd: float = Field(gt=0)
 
 
+class _OpsCatalogExpansion(BaseModel):
+    # `listing.catalog_expand` (T11, 2026-08-25 design doc) -- paced digital
+    # listings built from an operator-curated archive folder (source_folder);
+    # putting a file there IS the "this is sellable" judgment (design §6.1).
+    # min_long_edge_px defaults higher than the landing floor
+    # (tuning_profile.json's 3000) -- see the design doc §6.2: whatyougot
+    # copy advertises 16x20 at 300 DPI, which needs 6000px, and listing a
+    # smaller file against that copy is an inaccurate listing (E16 condition
+    # 2). listing_fee_usd uses gt=0 for the same reason _OpsRenew does -- a
+    # zero would let month_spend() silently undercount real Etsy spend.
+    enabled: bool = True
+    source_folder: str
+    recursive: bool = True
+    max_new_per_week: int = Field(gt=0)
+    min_long_edge_px: int = Field(gt=0)
+    dedup_max_distance: int = Field(ge=0)
+    listing_fee_usd: float = Field(gt=0)
+
+
 class _OpsCaption(BaseModel):
     # `social.caption_draft` (M8b slice 6, draft §3.3 #26) -- Instagram's
     # real caption character limit (config-over-code, not a tuning knob).
@@ -146,6 +180,14 @@ class _OpsPinterest(BaseModel):
     max_description_len: int = Field(gt=0)
     max_alt_text_len: int = Field(gt=0)
     boards: dict[str, str] = Field(default_factory=dict)
+    # E3 -- the pin-experiment holdout: governor.govern() refuses to
+    # approve `social.pinterest_post` for a listing target if `listing.
+    # seo_edit`/`listing.renew` executed for that SAME target within this
+    # many days (and, symmetrically, refuses seo_edit/renew for a target
+    # pinned within the window) -- confounding the P1 pin-experiment readout
+    # otherwise (governor.py's own docstring/`_holdout_blocked` for the
+    # documented same-day priority carve-out).
+    holdout_days: int = Field(gt=0, default=7)
 
 
 class _OpsAutonomy(BaseModel):
@@ -187,6 +229,7 @@ class OpsConfig(BaseModel):
     reprice: _OpsReprice
     seo_edit: _OpsSeoEdit
     renew: _OpsRenew
+    catalog_expansion: _OpsCatalogExpansion
     caption: _OpsCaption
     pinterest: _OpsPinterest
 
@@ -240,9 +283,18 @@ class RefusalReason(StrEnum):
     EXPIRED = "expired"
     POLICY_UNVERIFIED = "policy_unverified"
     PRECONDITION = "precondition"
+    HOLDOUT = "holdout"
     BUDGET = "budget"
     DAILY_CAP = "daily_cap"
     PER_CAPABILITY_CAP = "per_capability_cap"
+    # H1 (guardrail review, 2026-08-25): a capability-specific weekly-pace
+    # limit (currently only `listing.catalog_expand`'s
+    # `cfg.catalog_expansion.max_new_per_week`) MUST be a governor refusal,
+    # never an execute()-time ValueError -- see governor.py's own docstring.
+    # A refusal leaves the action pending/approvable later; a raised
+    # ValueError is caught by runner._execute_and_record as a TERMINAL
+    # action.failed, permanently burning that action_id.
+    PACE = "pace"
     PORTFOLIO_CAP = "portfolio_cap"
 
 

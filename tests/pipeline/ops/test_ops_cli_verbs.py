@@ -103,21 +103,65 @@ def _seeded_db(tmp_path, monkeypatch, *, autonomy_overrides: dict | None = None)
     return db, action_id
 
 
-def _patch_fake_adapter(monkeypatch, fake: FakeEtsyWriteAdapter) -> None:
+def _patch_fake_adapter(
+    monkeypatch, fake: FakeEtsyWriteAdapter, *, expect_live: bool = False
+) -> None:
     def _builder(*, live: bool) -> FakeEtsyWriteAdapter:
-        assert live is False, "the default/test path must never request a live adapter"
+        assert live is expect_live, f"expected live={expect_live}, got live={live}"
         return fake
 
     monkeypatch.setattr(push_mod, "build_etsy_write_adapter", _builder)
+
+
+def _open_live_gate(monkeypatch) -> None:
+    """Test-only opt-in standing in for a real Etsy token+scope check (E11
+    module docstring in runner.py) -- lets these CLI-wiring tests exercise
+    the `--live-autonomy` execute path against a controlled fake instead of
+    real credentials, the same "explicit test-mode opt-in" precedent every
+    capability test file already follows against `approve_action()`
+    directly."""
+    import shopsteward.pipeline.live_gate as live_gate_mod
+
+    monkeypatch.setattr(live_gate_mod, "live_autonomy_open", lambda: True)
+
+
+def test_approve_without_live_autonomy_refuses_and_leaves_the_proposal_pending(
+    tmp_path, monkeypatch
+):
+    """E11 regression: without --live-autonomy, `ops approve` must refuse
+    BEFORE calling execute() against the fresh, empty fake `_register_
+    autorenew(False)` builds -- not execute, fail, and terminally resolve
+    the proposal (the 2026-08-24 incident)."""
+    db, action_id = _seeded_db(tmp_path, monkeypatch)
+
+    def _builder(*, live: bool) -> FakeEtsyWriteAdapter:
+        assert live is False
+        return FakeEtsyWriteAdapter()  # fresh, empty -- no LISTING_ID seeded
+
+    monkeypatch.setattr(push_mod, "build_etsy_write_adapter", _builder)
+
+    result = runner.invoke(app, ["ops", "approve", action_id])
+
+    assert result.exit_code == 1
+    assert "live autonomy gate not set" in result.output
+    assert "pending" in result.output
+
+    conn = connect(db)
+    assert read_all(conn, "action.executed") == []
+    assert read_all(conn, "action.failed") == []
+    assert read_all(conn, "action.approved") == []
+    proposed = [e for e in read_all(conn, "action.proposed") if e.payload["action_id"] == action_id]
+    assert len(proposed) == 1  # still there, unresolved -- approvable later
 
 
 def test_approve_executes_and_the_fake_reflects_the_write(tmp_path, monkeypatch):
     db, action_id = _seeded_db(tmp_path, monkeypatch)
     fake = FakeEtsyWriteAdapter()
     fake.seed_listing(LISTING_ID, should_auto_renew=True, state="active")
-    _patch_fake_adapter(monkeypatch, fake)
+    _patch_fake_adapter(monkeypatch, fake, expect_live=True)
+    _open_live_gate(monkeypatch)
 
-    result = runner.invoke(app, ["ops", "approve", action_id])
+    result = runner.invoke(app, ["ops", "approve", action_id, "--live-autonomy"])
 
     assert result.exit_code == 0, result.output
     assert "executed" in result.output
@@ -151,13 +195,19 @@ def test_undo_restores_the_fake_after_an_approve(tmp_path, monkeypatch):
     db, action_id = _seeded_db(tmp_path, monkeypatch)
     fake = FakeEtsyWriteAdapter()
     fake.seed_listing(LISTING_ID, should_auto_renew=True, state="active")
-    _patch_fake_adapter(monkeypatch, fake)
+    # `ops approve` needs --live-autonomy (E11); `ops undo` below now needs
+    # it too (finding 2 -- `undo_action()`'s own LIVE_GATED_CAPABILITIES
+    # gate, closing the SAME failure door E11 originally only closed for
+    # `ops approve`), so this builder must accept either `live` value and
+    # always hand back the SAME pre-seeded fake either way.
+    monkeypatch.setattr(push_mod, "build_etsy_write_adapter", lambda *, live: fake)
+    _open_live_gate(monkeypatch)
 
-    approved = runner.invoke(app, ["ops", "approve", action_id])
+    approved = runner.invoke(app, ["ops", "approve", action_id, "--live-autonomy"])
     assert approved.exit_code == 0, approved.output
     assert fake.listings[LISTING_ID]["should_auto_renew"] is False
 
-    result = runner.invoke(app, ["ops", "undo", action_id])
+    result = runner.invoke(app, ["ops", "undo", action_id, "--live-autonomy"])
 
     assert result.exit_code == 0, result.output
     assert "restored" in result.output
@@ -167,6 +217,29 @@ def test_undo_restores_the_fake_after_an_approve(tmp_path, monkeypatch):
     undone = [e for e in read_all(conn, "action.undone") if e.payload["action_id"] == action_id]
     assert len(undone) == 1
     assert undone[0].payload["restored_to"] == {"should_auto_renew": True}
+
+
+def test_undo_without_live_autonomy_refuses_and_leaves_the_action_executed(tmp_path, monkeypatch):
+    """Finding 2: `ops undo` is gated exactly like `ops approve` -- without
+    --live-autonomy it must refuse BEFORE calling cap.undo() against a
+    fresh, empty fake, never touching the already-executed action."""
+    db, action_id = _seeded_db(tmp_path, monkeypatch)
+    fake = FakeEtsyWriteAdapter()
+    fake.seed_listing(LISTING_ID, should_auto_renew=True, state="active")
+    monkeypatch.setattr(push_mod, "build_etsy_write_adapter", lambda *, live: fake)
+    _open_live_gate(monkeypatch)
+
+    approved = runner.invoke(app, ["ops", "approve", action_id, "--live-autonomy"])
+    assert approved.exit_code == 0, approved.output
+
+    result = runner.invoke(app, ["ops", "undo", action_id])
+
+    assert result.exit_code == 1
+    assert "live autonomy gate not set" in result.output
+    assert fake.listings[LISTING_ID]["should_auto_renew"] is False  # untouched
+
+    conn = connect(db)
+    assert read_all(conn, "action.undone") == []
 
 
 def test_approve_unknown_action_id_exits_nonzero_without_a_traceback(tmp_path, monkeypatch):

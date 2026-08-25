@@ -239,9 +239,9 @@ def test_undo_event_restored_to_is_honest_not_a_false_expired_claim(conn, monkey
         for e in read_all(conn, "action.proposed")
         if e.payload["target_id"] == str(LISTING_EXPIRED_WITH_SALE)
     )
-    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
+    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True)
 
-    undo_action(conn, USER_ID, action_id, [cap])
+    undo_action(conn, USER_ID, action_id, [cap], live_autonomy=True)
 
     undone = [e for e in read_all(conn, "action.undone") if e.payload["action_id"] == action_id]
     assert len(undone) == 1
@@ -333,10 +333,14 @@ def test_renew_fee_reaches_month_spend_and_trips_budget_on_the_second(conn, monk
     action_id_1 = proposed[str(LISTING_EXPIRED_WITH_SALE)]
     action_id_2 = proposed[str(LISTING_EXPIRED_WITH_SALE_2)]
 
-    first = approve_action(conn, USER_ID, action_id_1, [cap], cfg=cfg, today=TODAY)
+    first = approve_action(
+        conn, USER_ID, action_id_1, [cap], cfg=cfg, today=TODAY, live_autonomy=True
+    )
     assert first.executed == 1
 
-    second = approve_action(conn, USER_ID, action_id_2, [cap], cfg=cfg, today=TODAY)
+    second = approve_action(
+        conn, USER_ID, action_id_2, [cap], cfg=cfg, today=TODAY, live_autonomy=True
+    )
     assert second.refused == 1
     refused = [e for e in read_all(conn, "action.refused") if e.payload["action_id"] == action_id_2]
     assert len(refused) == 1

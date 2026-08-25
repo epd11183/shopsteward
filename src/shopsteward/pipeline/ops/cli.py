@@ -174,12 +174,14 @@ def run_cmd(
     from shopsteward.pipeline.live_gate import (
         live_autonomy_error,
         live_autonomy_open,
+        live_copy_open,
         live_planner_open,
     )
     from shopsteward.pipeline.ops import config as ops_config
     from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
     from shopsteward.pipeline.ops.capabilities.autorenew_on import ListingAutorenewOn
     from shopsteward.pipeline.ops.capabilities.caption_draft import SocialCaptionDraft
+    from shopsteward.pipeline.ops.capabilities.catalog_expand import ListingCatalogExpand
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
     from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
     from shopsteward.pipeline.ops.capabilities.pinterest_post import SocialPinterestPost
@@ -207,6 +209,10 @@ def run_cmd(
     register(ListingDeactivate(adapter))
     register(ListingRenew(adapter))
     register(OpsTuneThreshold())  # no adapter -- registers regardless of --live-autonomy
+    # T11 -- same adapter as the other Etsy-write capabilities above;
+    # live_copy resolves independently (SHOPSTEWARD_LIVE_COPY, its own gate)
+    # and is the sole precondition_ok control (module docstring).
+    register(ListingCatalogExpand(adapter, live_copy=live_copy_open()))
     # Always the offline print-file host -- this capability's execute() never
     # reaches Gelato/Etsy, so it is never gated on --live-autonomy.
     register(ListingGapfillReprint(build_print_file_host(live=False)))
@@ -267,8 +273,19 @@ def run_cmd(
             list(REGISTRY.values()),
             dry_run=dry_run,
             proposals=proposals,
+            live_autonomy=live_autonomy,
         )
         typer.echo(f"ops run: {report.model_dump()}")
+        if report.live_gate_blocked:
+            # Finding 2: without --live-autonomy, a live-gated action that
+            # would otherwise auto-execute (AUTO/NOTIFY tier) is refused
+            # BEFORE touching the fake adapter, left "proposed" -- never
+            # action.failed. Retry with --live-autonomy once ready.
+            typer.secho(
+                "live autonomy gate not set -- one or more live-gated actions were "
+                "left pending instead of executing (retry with --live-autonomy once ready).",
+                fg="yellow",
+            )
     finally:
         conn.close()
 
@@ -372,9 +389,11 @@ def _register_autorenew(live_autonomy: bool) -> None:
     gated on `live_autonomy`."""
     from shopsteward.pipeline.listings.pod.factory import build_print_file_host
     from shopsteward.pipeline.listings.push import build_etsy_write_adapter
+    from shopsteward.pipeline.live_gate import live_copy_open
     from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
     from shopsteward.pipeline.ops.capabilities.autorenew_on import ListingAutorenewOn
     from shopsteward.pipeline.ops.capabilities.caption_draft import SocialCaptionDraft
+    from shopsteward.pipeline.ops.capabilities.catalog_expand import ListingCatalogExpand
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
     from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
     from shopsteward.pipeline.ops.capabilities.pinterest_post import SocialPinterestPost
@@ -394,6 +413,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
     register(ListingDeactivate(adapter))
     register(ListingRenew(adapter))
     register(OpsTuneThreshold())
+    register(ListingCatalogExpand(adapter, live_copy=live_copy_open()))
     register(ListingGapfillReprint(build_print_file_host(live=False)))
     register(SocialCaptionDraft())
     register(SocialPinterestPost())
@@ -439,13 +459,29 @@ def approve_cmd(
         cfg = ops_config.get_ops_config(conn, DEFAULT_USER_ID)
         try:
             report = approve_action(
-                conn, DEFAULT_USER_ID, action_id, list(REGISTRY.values()), cfg=cfg
+                conn,
+                DEFAULT_USER_ID,
+                action_id,
+                list(REGISTRY.values()),
+                cfg=cfg,
+                live_autonomy=live_autonomy,
             )
         except KeyError as exc:
             typer.secho(f"approve failed: {exc}", fg="red")
             raise typer.Exit(code=1) from exc
 
-        if report.executed:
+        if report.live_gate_blocked:
+            # E11: refuse loudly, leave the proposal exactly as it was
+            # (still "proposed", still approvable once --live-autonomy is
+            # set) -- never execute against a fresh, empty fake adapter.
+            typer.secho(
+                "live autonomy gate not set -- refusing to execute against the fake "
+                f"adapter; proposal left pending: {action_id} "
+                "(retry with --live-autonomy once ready)",
+                fg="red",
+            )
+            raise typer.Exit(code=1)
+        elif report.executed:
             typer.echo(f"approved and executed: {action_id}")
         elif report.failed:
             typer.echo(f"approved but execution failed: {action_id}")
@@ -544,7 +580,7 @@ def undo_cmd(
     from shopsteward.pipeline.ops import config as ops_config
     from shopsteward.pipeline.ops.projections import rebuild_ops
     from shopsteward.pipeline.ops.registry import REGISTRY
-    from shopsteward.pipeline.ops.runner import undo_action
+    from shopsteward.pipeline.ops.runner import LiveGateBlockedError, undo_action
     from shopsteward.settings import DEFAULT_USER_ID, db_path
 
     if live_autonomy and not live_autonomy_open():
@@ -562,7 +598,24 @@ def undo_cmd(
         rebuild_core(conn)
         rebuild_ops(conn)
         try:
-            undo_action(conn, DEFAULT_USER_ID, action_id, list(REGISTRY.values()))
+            undo_action(
+                conn,
+                DEFAULT_USER_ID,
+                action_id,
+                list(REGISTRY.values()),
+                live_autonomy=live_autonomy,
+            )
+        except LiveGateBlockedError:
+            # Finding 2: same failure door as `ops approve` -- refuse BEFORE
+            # calling cap.undo() against the fresh, empty fake, leaving the
+            # executed action untouched (retry with --live-autonomy).
+            typer.secho(
+                "live autonomy gate not set -- refusing to undo against the fake "
+                f"adapter; action left executed (unresolved): {action_id} "
+                "(retry with --live-autonomy once ready)",
+                fg="red",
+            )
+            raise typer.Exit(code=1) from None
         except (KeyError, ValueError) as exc:
             # KeyError: unknown action_id/capability. ValueError: a
             # no-undo capability (runner.undo_action's guard) -- both are

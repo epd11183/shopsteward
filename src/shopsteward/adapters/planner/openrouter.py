@@ -48,7 +48,7 @@ def _plan_system_prompt(limits: PlannerLimits) -> str:
 
     Known gap (`_build_facts_json`, pipeline/ops/planner.py): the facts JSON
     surfaces a listing's current `title` (dead_listings/viewed_not_sold/
-    trending/top_sellers all carry it) but never its current `price_usd` or
+    trending/proven_listings all carry it) but never its current `price_usd` or
     `tags` -- the model can propose a genuinely different title because it
     can see the old one, but it is guessing blind on price/tags. The
     re-validation below (min/max/diff) still happens server-side either way

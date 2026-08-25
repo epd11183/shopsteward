@@ -5,8 +5,39 @@ refusal is itself an event (draft §76), so "why didn't it act" is always
 answerable from the log without guesswork.
 
 Refusal precedence (first hit wins, draft §5 ordering as pinned by the PR1
-contract): HALTED, EXPIRED, POLICY_UNVERIFIED, PRECONDITION, BUDGET,
-DAILY_CAP, PER_CAPABILITY_CAP, PORTFOLIO_CAP."""
+contract): HALTED, EXPIRED, POLICY_UNVERIFIED, PRECONDITION, HOLDOUT,
+BUDGET, DAILY_CAP, PER_CAPABILITY_CAP, PACE, PORTFOLIO_CAP. PACE (H1,
+2026-08-25) is `listing.catalog_expand`-specific today -- see that check's
+own comment below for why it lives here rather than in the capability.
+
+E3 (holdout): `social.pinterest_post` and `listing.seo_edit`/`listing.
+renew` are mutually exclusive on the SAME listing target within
+`cfg.pinterest.holdout_days` -- pinning a listing that was also just
+SEO-edited/renewed (or vice versa) confounds the P1 pin-experiment views
+readout (2026-08-24 design doc §3), since a view-count change around
+either event becomes impossible to attribute to one or the other. The two
+checks read EXECUTED history (`action.executed` for seo_edit/renew,
+`social.pin_drafted`/`social.pin_posted` for the pin), never proposals, so
+registration order can never silently decide the outcome on its own.
+
+Rewritten 2026-08-25 (guardrail review finding 1): the holdout window is
+now FULLY SYMMETRIC at govern() time, including the SAME calendar day --
+a pin executed today blocks a seo_edit/renew governed today, and a
+seo_edit/renew executed today blocks a pin governed today, no exception in
+either direction. There used to be a same-day carve-out here (seo_edit/
+renew always won a same-day collision); it was removed because it did not
+actually protect the readout in the ordering that matters in practice:
+`social.pinterest_post` auto-executes in the morning `ops run`, while
+`listing.seo_edit` is `Tier.PROPOSE` and gets approved by the operator
+LATER THE SAME DAY, in a separate process where `run()`'s own capability
+ordering is irrelevant -- the carve-out let both land on the same listing
+the same day regardless. The documented priority (`listing.seo_edit`/
+`listing.renew` outrank `social.pinterest_post` when BOTH would be
+proposed in the same `run()` call) is instead resolved upstream, at
+PROPOSE time, in `runner.run()`: a pin proposal for a target that also has
+a same-run seo_edit/renew proposal is dropped before either ever reaches
+`govern()`, so the priority is deterministic regardless of capability
+registration order and never depends on this same-day exception."""
 
 import sqlite3
 from datetime import date
@@ -16,6 +47,7 @@ from pydantic import BaseModel
 from shopsteward.core.events import Event, append, read_all
 from shopsteward.pipeline.ops.models import OpsConfig, ProposedAction, RefusalReason
 from shopsteward.pipeline.ops.registry import Capability
+from shopsteward.pipeline.ops.timeutil import parse_ts
 
 
 class Decision(BaseModel):
@@ -67,6 +99,105 @@ def _capability_of_action_id(conn: sqlite3.Connection, user_id: int) -> dict[str
     return mapping
 
 
+def _proposed_target_of_action_id(conn: sqlite3.Connection, user_id: int) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for e in read_all(conn, "action.proposed"):
+        if e.user_id != user_id:
+            continue
+        mapping[e.payload["action_id"]] = str(e.payload["target_id"])
+    return mapping
+
+
+_SEO_RENEW_CAPABILITIES = ("listing.seo_edit", "listing.renew")
+_PIN_EVENT_TYPES = ("social.pin_drafted", "social.pin_posted")
+
+# H1 (guardrail review, 2026-08-25, THIRD instance of this failure class):
+# `listing.catalog_expand`'s own weekly pace (`cfg.catalog_expansion.
+# max_new_per_week`) must be enforced HERE, not inside the capability's
+# `_candidates()` -- that function is ALSO execute()'s re-validation
+# predicate (registry.py's Capability-protocol/M8b slice-2 contract: one
+# grounding function shared by propose()/materialize()/execute()), so a
+# pace-only exclusion baked into it is indistinguishable from genuine
+# staleness (file deleted, already landed, rejected) and raises a
+# ValueError that runner._execute_and_record turns into a TERMINAL
+# action.failed -- permanently blocking any future real approval of that
+# action_id (runner.py's own LIVE_GATED_CAPABILITIES docstring names this
+# exact incident class, "burned the operator on 2026-08-24"). The governor
+# is the only layer that can decline without terminalizing (a refusal
+# leaves the action exactly as it was, still "proposed"), so pacing lives
+# here even though design §5 originally said "not a new governor concept"
+# -- that call was reviewed and reversed.
+_CATALOG_EXPAND_CAPABILITY = "listing.catalog_expand"
+
+
+# T11 (listing.catalog_expand, 2026-08-25 design doc §5): the portfolio cap
+# below exists to stop mass CHURN of the existing catalog (repeated
+# SEO-edit/reprice/deactivate cycles on listings that already exist); a
+# capability that only ever ADDS a new listing is not that risk, and it is
+# the only capability whose success grows the cap's own denominator
+# (`_active_listing_count`). Exempting it also sidesteps a real T9-revert
+# trap: at ~34 active listings, a restored `weekly_catalog_pct_cap` (e.g.
+# 0.05) would silently throttle this to one execution/week with no error.
+# The alternative -- tuning the cap upward for everyone -- would re-open
+# churn risk on the existing catalog to solve a problem that isn't churn.
+_PORTFOLIO_CAP_EXEMPT = frozenset({"listing.catalog_expand"})
+
+
+# ponytail: rebuilds two full action_id -> ... maps (each a full event-log
+# scan) on EVERY call, and `_refusal_reason` calls this per governed action
+# -- O(events) work repeated per action per run(). Fine at 27 listings;
+# upgrade to a projection-backed lookup or a single shared fold (passed in
+# by the caller) if the event log ever grows enough to matter.
+def _seo_renew_executed_dates(conn: sqlite3.Connection, user_id: int, target_id: str) -> list[date]:
+    """E3 -- every date `listing.seo_edit`/`listing.renew` executed against
+    this SAME `target_id` (a listing_id, as a string)."""
+    capability_of = _capability_of_action_id(conn, user_id)
+    target_of = _proposed_target_of_action_id(conn, user_id)
+    out: list[date] = []
+    for e in read_all(conn, "action.executed"):
+        if e.user_id != user_id or not e.created_at:
+            continue
+        action_id = e.payload.get("action_id")
+        if capability_of.get(action_id) not in _SEO_RENEW_CAPABILITIES:
+            continue
+        if target_of.get(action_id) != target_id:
+            continue
+        out.append(parse_ts(e.created_at).date())
+    return out
+
+
+def _pin_event_dates(conn: sqlite3.Connection, user_id: int, target_id: str) -> list[date]:
+    """E3 -- every date a `social.pin_drafted`/`social.pin_posted` event
+    fired for this SAME `target_id` (a listing_id, as a string)."""
+    try:
+        listing_id = int(target_id)
+    except ValueError:
+        return []
+    out: list[date] = []
+    for event_type in _PIN_EVENT_TYPES:
+        for e in read_all(conn, event_type):
+            if e.user_id != user_id or not e.created_at:
+                continue
+            if e.payload.get("listing_id") != listing_id:
+                continue
+            out.append(parse_ts(e.created_at).date())
+    return out
+
+
+def _holdout_blocked(dates: list[date], today: date, holdout_days: int) -> bool:
+    """True iff any `dates` entry falls within `holdout_days` of `today`,
+    INCLUDING today itself (fully symmetric -- see module docstring's
+    2026-08-25 rewrite; never a future date, since an event can't hold out
+    something that hasn't happened yet from this reader's POV)."""
+    for d in dates:
+        days_ago = (today - d).days
+        if days_ago < 0:
+            continue
+        if days_ago <= holdout_days:
+            return True
+    return False
+
+
 def _executed_since(
     conn: sqlite3.Connection, user_id: int, capability_of: dict[str, str], since_prefix: str
 ) -> dict[str, int]:
@@ -92,7 +223,7 @@ def _executed_this_iso_week(
     for e in read_all(conn, "action.executed"):
         if e.user_id != user_id or not e.created_at:
             continue
-        day = date.fromisoformat(e.created_at[:10])
+        day = parse_ts(e.created_at).date()
         y, w, _ = day.isocalendar()
         if (y, w) != (year, week):
             continue
@@ -133,6 +264,19 @@ def _refusal_reason(
     if not getattr(cap, "precondition_ok", True):
         return RefusalReason.PRECONDITION
 
+    if action.capability == "social.pinterest_post" and _holdout_blocked(
+        _seo_renew_executed_dates(conn, user_id, action.target_id),
+        today,
+        cfg.pinterest.holdout_days,
+    ):
+        return RefusalReason.HOLDOUT
+    if action.capability in _SEO_RENEW_CAPABILITIES and _holdout_blocked(
+        _pin_event_dates(conn, user_id, action.target_id),
+        today,
+        cfg.pinterest.holdout_days,
+    ):
+        return RefusalReason.HOLDOUT
+
     month_prefix = today.isoformat()[:7]
     if month_spend(conn, user_id, month_prefix) + action.estimated_cost_usd > (
         cfg.autonomy.monthly_spend_cap_usd
@@ -146,8 +290,13 @@ def _refusal_reason(
     if today_counts.get(cap.key, 0) >= cfg.autonomy.per_capability_daily_cap:
         return RefusalReason.PER_CAPABILITY_CAP
 
+    if cap.key == _CATALOG_EXPAND_CAPABILITY:
+        week_counts = _executed_this_iso_week(conn, user_id, capability_of, today)
+        if week_counts.get(cap.key, 0) >= cfg.catalog_expansion.max_new_per_week:
+            return RefusalReason.PACE
+
     active = _active_listing_count(conn, user_id)
-    if active > 0:
+    if active > 0 and cap.key not in _PORTFOLIO_CAP_EXEMPT:
         week_counts = _executed_this_iso_week(conn, user_id, capability_of, today)
         projected = week_counts.get(cap.key, 0) + 1
         if projected / active > cfg.autonomy.weekly_catalog_pct_cap:

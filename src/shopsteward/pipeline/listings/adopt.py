@@ -34,7 +34,11 @@ from shopsteward.pipeline.listings.photo_match import hamming_distance, phash_by
 from shopsteward.pipeline.listings.projections import rebuild_listings
 from shopsteward.pipeline.listings.source_assets import resolve_source
 
-_JPG_SUFFIXES = (".jpg", ".jpeg")
+# .tif/.tiff added for T11 (listing.catalog_expand, 2026-08-25 design §3
+# step 2) -- landing already allows TIFF (tuning_profile.json's
+# landing.allowed_formats), so an archive candidate folder must be able to
+# surface TIFF originals too, not just JPEG.
+_JPG_SUFFIXES = (".jpg", ".jpeg", ".tif", ".tiff")
 
 
 @dataclass
@@ -144,7 +148,7 @@ def _already_adopted(conn: sqlite3.Connection, user_id: int, listing_id: int) ->
     return resolve_source(conn, user_id, listing_id) is not None
 
 
-def _ingest_matched_file(conn: sqlite3.Connection, user_id: int, path: Path) -> str | None:
+def ingest_one_file(conn: sqlite3.Connection, user_id: int, path: Path) -> str | None:
     """Landing registration scoped to exactly this ONE matched file.
     landing.scan_landing() scans its whole containing folder -- calling it
     here would silently enroll every bystander photo in an archive folder
@@ -156,7 +160,12 @@ def _ingest_matched_file(conn: sqlite3.Connection, user_id: int, path: Path) -> 
     path instead of a directory listing. Returns the file's sha256 id, or
     None if the file failed validation (e.g. below min_long_edge_px) --
     mirrors scan_landing's own "reason" in result signal, which the caller
-    must treat as a hard stop rather than proceeding to archive/adopt."""
+    must treat as a hard stop rather than proceeding to archive/adopt.
+
+    Public (not `_`-prefixed): also the landing-registration step of T11's
+    `listing.catalog_expand` chain (`ops/capabilities/catalog_expand.py`'s
+    `expand_one`), which is why this needed a real name, not just an
+    adopt-internal one."""
     from shopsteward.editing.projections import rebuild_editing
     from shopsteward.pipeline.landing import (
         _SUFFIX_FORMATS,
@@ -232,7 +241,7 @@ def adopt_one(
 ) -> bool:
     """Backfills the linkage for one confirmed match: registers just this
     one file as a landing file (not its whole containing folder --
-    _ingest_matched_file), archive_master() the untouched original, then
+    ingest_one_file), archive_master() the untouched original, then
     append listing.source_adopted. Idempotent -- a no-op if this listing_id
     already resolves (real draft or a prior adopt). Also a no-op -- no
     archive, no listing.source_adopted -- if the matched file fails landing
@@ -244,7 +253,7 @@ def adopt_one(
 
     path = Path(local_path)
     tuning.seed(conn, user_id, TUNING_PROFILE_PATH)
-    file_id = _ingest_matched_file(conn, user_id, path)
+    file_id = ingest_one_file(conn, user_id, path)
     if file_id is None:
         return False
     photo_id = f"file-{file_id[:12]}"
