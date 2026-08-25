@@ -79,7 +79,7 @@ from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.core.sync import read_live_observed
 from shopsteward.pipeline.ops.config import ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
-from shopsteward.pipeline.ops.registry import compute_action_id
+from shopsteward.pipeline.ops.registry import StaleTargetError, compute_action_id
 
 
 def _latest_observed(conn: sqlite3.Connection, user_id: int, listing_id: int) -> EtsyListing | None:
@@ -191,7 +191,9 @@ class ListingRenew:
             # Re-validate at execute time: something changed since propose()
             # (already renewed by someone else, sold out in the meantime,
             # etc.) -- refuse rather than spend the fee on a stale decision.
-            raise ValueError(f"listing {listing_id}: no longer eligible -- refusing to renew")
+            # StaleTargetError (H2b, guardrail review 2026-08-25): genuine
+            # per-target staleness -> the runner terminalizes this one.
+            raise StaleTargetError(f"listing {listing_id}: no longer eligible -- refusing to renew")
 
         # Honest, not a true "before" snapshot: propose() only ever proposes
         # state=="expired", but undo() can only ever set "inactive" (Etsy has

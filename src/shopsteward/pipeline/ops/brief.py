@@ -120,19 +120,33 @@ def _refused_recent(conn: sqlite3.Connection, user_id: int, as_of: date) -> list
 def _caption_drafts(conn: sqlite3.Connection, user_id: int, as_of: date) -> list[BriefCaption]:
     """Recent `social.caption_drafted` events (M8b slice 6) -- the operator's
     copy-paste queue. Same 7-day lookback as DONE/REFUSED (no config knob
-    yet, same ponytail as _DONE_REFUSED_WINDOW_DAYS above)."""
+    yet, same ponytail as _DONE_REFUSED_WINDOW_DAYS above). T5+E5
+    (2026-08-25): excludes any draft whose OWN `action_id` has a
+    `social.caption_posted` event -- `_pin_drafts()`'s own exclusion
+    precedent below, made possible now that captions have a mark-posted
+    signal too (`capabilities/caption_draft.py`'s `mark_posted()`)."""
+    posted_action_ids = {
+        e.payload.get("action_id")
+        for e in read_all(conn, "social.caption_posted")
+        if e.user_id == user_id
+    }
     out = []
     for e in read_all(conn, "social.caption_drafted"):
         if e.user_id != user_id or not _within_window(
             e.created_at, as_of, _DONE_REFUSED_WINDOW_DAYS
         ):
             continue
+        action_id = e.payload.get("action_id")
+        if action_id is not None and action_id in posted_action_ids:
+            continue  # marked posted -- drop from the copy-paste queue
         out.append(
             BriefCaption(
                 listing_id=e.payload["listing_id"],
+                channel=e.payload.get("channel", "instagram"),
                 title=e.payload["title"],
                 caption=e.payload["caption"],
                 drafted_at=e.payload["drafted_at"],
+                action_id=action_id,
             )
         )
     return out
@@ -329,7 +343,8 @@ def render_text(brief: Brief) -> str:
         lines.append("")
         lines.append(f"CAPTIONS TO POST (copy to IG/FB) ({len(brief.caption_drafts)})")
         for c in brief.caption_drafts:
-            lines.append(f'  {c.title} -- "{c.caption}"')
+            mark_posted = f" -- mark posted: ops mark-posted {c.action_id}" if c.action_id else ""
+            lines.append(f'  [{c.channel}] {c.title} -- "{c.caption}"{mark_posted}')
 
     if brief.pin_drafts:
         lines.append("")

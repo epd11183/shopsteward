@@ -6,9 +6,12 @@ answerable from the log without guesswork.
 
 Refusal precedence (first hit wins, draft §5 ordering as pinned by the PR1
 contract): HALTED, EXPIRED, POLICY_UNVERIFIED, PRECONDITION, HOLDOUT,
-BUDGET, DAILY_CAP, PER_CAPABILITY_CAP, PACE, PORTFOLIO_CAP. PACE (H1,
-2026-08-25) is `listing.catalog_expand`-specific today -- see that check's
-own comment below for why it lives here rather than in the capability.
+BUDGET, DAILY_CAP, PER_CAPABILITY_CAP, PACE, INELIGIBLE, PORTFOLIO_CAP.
+PACE (H1, 2026-08-25) is `listing.catalog_expand`-specific today -- see
+that check's own comment below for why it lives here rather than in the
+capability. INELIGIBLE (H2a, 2026-08-25, the SAME reasoning applied to
+`social.caption_draft`) covers a per-target cooldown/eligibility-mode
+condition -- see that check's own comment below.
 
 E3 (holdout): `social.pinterest_post` and `listing.seo_edit`/`listing.
 renew` are mutually exclusive on the SAME listing target within
@@ -128,6 +131,19 @@ _PIN_EVENT_TYPES = ("social.pin_drafted", "social.pin_posted")
 # here even though design §5 originally said "not a new governor concept"
 # -- that call was reviewed and reversed.
 _CATALOG_EXPAND_CAPABILITY = "listing.catalog_expand"
+
+# H2a (guardrail review, 2026-08-25, the SAME failure class as H1 above,
+# applied to `social.caption_draft`): cooldown and per-channel eligibility
+# mode (explore/proven) are RATE/POLICY decisions, not per-target staleness
+# -- caption_draft.py's own `execute()` re-validates ONLY genuine staleness
+# (does the listing/channel still exist -- `caption_draft._stale_check()`),
+# never cooldown/eligibility, so this is the ONE place that can decline a
+# cooled-down or newly-ineligible (listing, channel) pair without
+# terminalizing it. Imported locally inside `_refusal_reason()` below (not
+# at module scope) to avoid a governor.py <-> capabilities/caption_draft.py
+# import cycle -- capabilities modules already import governor indirectly
+# via runner in some call paths.
+_CAPTION_DRAFT_CAPABILITY = "social.caption_draft"
 
 
 # T11 (listing.catalog_expand, 2026-08-25 design doc §5): the portfolio cap
@@ -294,6 +310,34 @@ def _refusal_reason(
         week_counts = _executed_this_iso_week(conn, user_id, capability_of, today)
         if week_counts.get(cap.key, 0) >= cfg.catalog_expansion.max_new_per_week:
             return RefusalReason.PACE
+
+    if cap.key == _CAPTION_DRAFT_CAPABILITY:
+        from shopsteward.pipeline.ops.capabilities.caption_draft import (
+            _candidates as _caption_candidates,
+        )
+        from shopsteward.pipeline.ops.capabilities.caption_draft import (
+            _parse_target_id as _caption_parse_target_id,
+        )
+        from shopsteward.pipeline.ops.capabilities.caption_draft import (
+            _stale_check as _caption_stale_check,
+        )
+
+        parsed = _caption_parse_target_id(action.target_id)
+        # Only refuse (never terminalize) a target that is STILL genuinely
+        # grounded (`_stale_check()` -- listing exists/active, channel still
+        # configured) but excluded from the full `_candidates()` set for a
+        # rate/policy reason (cooldown, eligibility-mode). A malformed
+        # target_id or a genuinely gone one (`_stale_check()` is None) is
+        # deliberately left ALONE here -- that is `execute()`'s own job
+        # (raises `StaleTargetError`, which the runner DOES terminalize;
+        # H2a's whole point is separating the two, not moving every
+        # rejection reason to the governor).
+        if parsed is not None:
+            listing_id, channel = parsed
+            if _caption_stale_check(
+                conn, user_id, cfg, listing_id, channel
+            ) is not None and action.target_id not in _caption_candidates(conn, user_id, cfg):
+                return RefusalReason.INELIGIBLE
 
     active = _active_listing_count(conn, user_id)
     if active > 0 and cap.key not in _PORTFOLIO_CAP_EXEMPT:

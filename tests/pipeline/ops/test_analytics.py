@@ -410,6 +410,80 @@ def test_data_quality_notes_reports_unmeasurable_views_velocity_count(cfg):
     assert "1 zero-sales listing(s)" in matches[0]
 
 
+def test_data_quality_notes_reports_caption_cooldown_count(cfg):
+    """M4 (guardrail review, 2026-08-25): a (listing, channel) pair
+    currently inside `social.caption_draft`'s own cooldown window (14d
+    default) has nothing on screen explaining why it isn't a candidate --
+    the brief's CAPTIONS TO POST section only looks back 7 days
+    (`brief._DONE_REFUSED_WINDOW_DAYS`). Same "why didn't this propose"
+    precedent as the views-velocity note above (L11)."""
+    import json
+
+    conn = connect(":memory:")
+    migrate(conn)
+    seed_listing_observed_on(conn, listing_id=801, title="Cooling Down", day=AS_OF, views=10)
+    rebuild_core(conn)
+    rebuild_ops(conn)
+
+    payload = {
+        "listing_id": 801,
+        "channel": "instagram",
+        "caption": "already drafted",
+        "title": "Cooling Down",
+        "drafted_at": f"{AS_OF.isoformat()}T00:00:00Z",
+    }
+    conn.execute(
+        "INSERT INTO events (user_id, type, payload, created_at) VALUES (?, ?, ?, ?)",
+        (
+            USER_ID,
+            "social.caption_drafted",
+            json.dumps(payload),
+            f"{AS_OF.isoformat()}T00:00:00.000000Z",
+        ),
+    )
+    conn.commit()
+
+    notes = analytics.data_quality_notes(conn, USER_ID, cfg, as_of=AS_OF)
+    matches = [n for n in notes if "caption_draft's own cooldown window" in n]
+    assert len(matches) == 1
+    assert "1 (listing, channel) pair(s)" in matches[0]
+
+
+def test_data_quality_notes_excludes_a_caption_drafted_outside_the_cooldown(cfg):
+    """The count is CURRENTLY cooling down, not "ever drafted" -- a draft
+    older than the channel's own cooldown_days must not be reported."""
+    import json
+
+    conn = connect(":memory:")
+    migrate(conn)
+    seed_listing_observed_on(conn, listing_id=802, title="Long Since Cooled", day=AS_OF, views=10)
+    rebuild_core(conn)
+    rebuild_ops(conn)
+
+    cooldown_days = cfg.caption.channels["instagram"].cooldown_days
+    old_day = AS_OF - timedelta(days=cooldown_days + 1)
+    payload = {
+        "listing_id": 802,
+        "channel": "instagram",
+        "caption": "long since drafted",
+        "title": "Long Since Cooled",
+        "drafted_at": f"{old_day.isoformat()}T00:00:00Z",
+    }
+    conn.execute(
+        "INSERT INTO events (user_id, type, payload, created_at) VALUES (?, ?, ?, ?)",
+        (
+            USER_ID,
+            "social.caption_drafted",
+            json.dumps(payload),
+            f"{old_day.isoformat()}T00:00:00.000000Z",
+        ),
+    )
+    conn.commit()
+
+    notes = analytics.data_quality_notes(conn, USER_ID, cfg, as_of=AS_OF)
+    assert not any("caption_draft's own cooldown window" in n for n in notes)
+
+
 def test_proven_listings_limit_keeps_highest_revenue_rows_default_unbounded(cfg):
     """M4 (guardrail review, 2026-08-25): `limit=None` (the default) is
     unbounded -- the capability `_candidates()` grounding call sites need

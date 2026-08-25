@@ -127,7 +127,7 @@ from shopsteward.core.sync import read_live_observed
 from shopsteward.pipeline.ops import analytics
 from shopsteward.pipeline.ops.config import ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
-from shopsteward.pipeline.ops.registry import compute_action_id
+from shopsteward.pipeline.ops.registry import StaleTargetError, compute_action_id
 
 
 def _latest_observed(conn: sqlite3.Connection, user_id: int, listing_id: int) -> EtsyListing | None:
@@ -315,7 +315,9 @@ class ListingAutorenewOn:
             # same listing after this proposal was made, which flips the
             # ordinal gate against it) -- refuse rather than write a real
             # Etsy update that contradicts the system's current judgment.
-            raise ValueError(
+            # StaleTargetError (H2b, guardrail review 2026-08-25): genuine
+            # per-target staleness -> the runner terminalizes this one.
+            raise StaleTargetError(
                 f"listing {listing_id}: no longer eligible -- refusing to turn auto-renew back on"
             )
 

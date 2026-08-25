@@ -58,7 +58,7 @@ from shopsteward.core.sync import read_live_observed
 from shopsteward.pipeline.ops import analytics
 from shopsteward.pipeline.ops.config import ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
-from shopsteward.pipeline.ops.registry import compute_action_id
+from shopsteward.pipeline.ops.registry import StaleTargetError, compute_action_id
 
 
 def _latest_observed(conn: sqlite3.Connection, user_id: int, listing_id: int) -> EtsyListing | None:
@@ -153,7 +153,11 @@ class ListingDeactivate:
             # Re-validate at execute time: the listing must still be
             # observed-active, or something changed it since propose() --
             # refuse rather than deactivate something already changed.
-            raise ValueError(f"listing {listing_id}: no longer active -- refusing to deactivate")
+            # StaleTargetError (H2b, guardrail review 2026-08-25): genuine
+            # per-target staleness -> the runner terminalizes this one.
+            raise StaleTargetError(
+                f"listing {listing_id}: no longer active -- refusing to deactivate"
+            )
 
         before = {"state": "active"}  # propose() only ever proposes state=="active"
         self._adapter.update_listing_state(listing_id, "inactive")

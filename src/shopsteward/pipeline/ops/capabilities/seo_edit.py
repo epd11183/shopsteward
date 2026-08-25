@@ -79,7 +79,7 @@ from shopsteward.core.events import read_all
 from shopsteward.core.sync import read_live_observed
 from shopsteward.pipeline.ops.config import get_ops_config, ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
-from shopsteward.pipeline.ops.registry import compute_action_id
+from shopsteward.pipeline.ops.registry import StaleTargetError, compute_action_id
 
 # Etsy's real field limits. _MAX_TITLE_LEN has no tag-content counterpart
 # (adapters/copy/tags.py owns MAX_TAGS/MAX_TAG_LEN, shared with
@@ -353,10 +353,18 @@ class ListingSeoEdit:
         cfg = get_ops_config(conn, user_id)
         target = _eligible(conn, user_id, cfg).get(action.target_id)
         if target is None:
-            raise ValueError(f"listing {listing_id}: no longer active/eligible -- refusing edit")
+            # StaleTargetError (H2b, guardrail review 2026-08-25): genuine
+            # per-target staleness -> the runner terminalizes this one.
+            raise StaleTargetError(
+                f"listing {listing_id}: no longer active/eligible -- refusing edit"
+            )
 
         changed = _validate_params(action.params, target)
         if changed is None:
+            # Deliberately plain ValueError, not StaleTargetError -- a bad
+            # PARAMS problem (same class as reprice.py's/caption_draft.py's
+            # own invalid-params checks), not the target being stale, so the
+            # runner's safe default (non-terminal refusal) applies.
             raise ValueError(
                 f"action {action.action_id}: params {action.params!r} are no longer valid or "
                 "a no-op -- refusing edit"

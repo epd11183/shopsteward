@@ -8,6 +8,7 @@ boundary-shape module -- has no other reason to import)."""
 
 from datetime import date
 from enum import IntEnum, StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -159,10 +160,45 @@ class _OpsCatalogExpansion(BaseModel):
     listing_fee_usd: float = Field(gt=0)
 
 
+class _OpsSocialChannel(BaseModel):
+    """One `social.caption_draft` posting channel (T5+E5, 2026-08-25
+    owned-channel premise-gate: /autoplan Decision Audit Trail #9 --
+    "per-channel eligibility policy config + caption mark-posted + channel
+    in target identity", explicitly REJECTING "copy-paste explore policy
+    into caption_draft"). `eligibility` is `"explore"` (coverage-first,
+    cooldown-gated, `social.pinterest_post`'s own policy -- correct for a
+    free, individually-deletable, long-lived search-index entry, design
+    doc §2.1) or `"proven"` (proof-first, gated on
+    `analytics.proven_listings()` -- correct for a one-shot feed post that
+    spends the shop's audience attention once and dies in a day,
+    `social.caption_draft`'s ORIGINAL design). See
+    `capabilities/caption_draft.py`'s module docstring for which policy
+    IG/FB get by default and the argument for it -- the point of this
+    field existing is that the choice is declared in config, with its own
+    rationale, per channel, not silently hardcoded into one capability."""
+
+    eligibility: Literal["explore", "proven"] = "proven"
+    cooldown_days: int = Field(gt=0)
+
+
 class _OpsCaption(BaseModel):
     # `social.caption_draft` (M8b slice 6, draft §3.3 #26) -- Instagram's
     # real caption character limit (config-over-code, not a tuning knob).
     max_len: int = Field(gt=0)
+    # channel_key ("instagram", "facebook", ...) -> its own eligibility
+    # policy + cooldown (T5+E5 above). REQUIRED (H1, guardrail review
+    # 2026-08-25) -- same precedent as the `autonomy` block: a config seeded
+    # before this field existed must NOT silently validate into a config
+    # with zero channels (which makes `social.caption_draft` a silent no-op
+    # on the LIVE shop -- `_candidates()` iterates an empty map, every
+    # planner intent gets dropped as `hallucinated_target`, and nothing
+    # says why). A required field instead routes a pre-T5 stored config
+    # through `config.apply()`'s EXISTING schema-drift auto-repair path
+    # (config.py's own docstring: a stored config that no longer validates
+    # is treated as changed and replaced from config/defaults/ops.json) --
+    # the same mechanism that already exists for exactly this situation,
+    # rather than a second, bespoke "empty channels" escape hatch.
+    channels: dict[str, _OpsSocialChannel]
 
 
 class _OpsPinterest(BaseModel):
@@ -295,6 +331,16 @@ class RefusalReason(StrEnum):
     # ValueError is caught by runner._execute_and_record as a TERMINAL
     # action.failed, permanently burning that action_id.
     PACE = "pace"
+    # H2a (guardrail review, 2026-08-25, the SAME failure class as PACE
+    # above, applied to `social.caption_draft`): a per-target RATE/POLICY
+    # condition -- cooldown still active, or the channel's eligibility mode
+    # (explore/proven) no longer clears for this listing -- is a governor
+    # refusal, never an execute()-time raise. Distinct from PACE (an
+    # aggregate weekly COUNT cap) and from PRECONDITION (a static,
+    # capability-level flag set once at construction, e.g.
+    # `listing.catalog_expand`'s `live_copy`) -- this is a per-action,
+    # per-target eligibility check re-derived from current config/state.
+    INELIGIBLE = "ineligible"
     PORTFOLIO_CAP = "portfolio_cap"
 
 
@@ -444,12 +490,18 @@ class BriefLadderRow(BaseModel):
 
 class BriefCaption(BaseModel):
     """One recent `social.caption_drafted` -- the operator copy-pastes
-    `caption` to IG/FB and posts manually (M8b slice 6). No publish, ever."""
+    `caption` to the named `channel` and posts manually (M8b slice 6; T5+E5
+    2026-08-25 added `channel`/`action_id`, mirroring BriefPin's own
+    mark-posted queue below). No publish, ever."""
 
     listing_id: int
+    channel: str
     title: str
     caption: str
     drafted_at: str  # ISO datetime, from the event payload
+    # The resolved action_id for `ops mark-posted` -- None only for a
+    # pre-T5 legacy event that never carried one (BriefPin's own precedent).
+    action_id: str | None = None
 
 
 class BriefPin(BaseModel):

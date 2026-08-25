@@ -529,17 +529,26 @@ def reject_cmd(
 @ops_app.command("mark-posted")
 def mark_posted_cmd(
     action_id: Annotated[
-        str, typer.Argument(help="action_id from `ops brief`'s PINS TO POST/DONE")
+        str,
+        typer.Argument(help="action_id from `ops brief`'s PINS TO POST/CAPTIONS TO POST/DONE"),
     ],
 ) -> None:
-    """Record that a drafted Pinterest pin (`social.pin_drafted`, Variant A)
-    was posted by hand: appends `social.pin_posted`, which drops it out of
-    `ops brief`'s PINS TO POST copy-paste queue. Pure record-keeping -- no
-    governor, no adapter, no Pinterest call of any kind. Safe to run twice
-    (a repeat call for an already-posted action_id is a no-op)."""
+    """Record that a drafted Pinterest pin (`social.pin_drafted`) OR a
+    drafted caption (`social.caption_drafted`, T5+E5 2026-08-25) was posted
+    by hand: appends `social.pin_posted`/`social.caption_posted`, which
+    drops it out of `ops brief`'s PINS TO POST/CAPTIONS TO POST copy-paste
+    queue. Pure record-keeping -- no governor, no adapter, no Pinterest/
+    Meta call of any kind. Safe to run twice (a repeat call for an
+    already-posted action_id is a no-op). Tries the pin channel first, then
+    the caption channel -- an action_id that resolves to neither surfaces
+    the PIN resolver's error message (unchanged CLI behavior for an
+    action_id that predates T5 or matches nothing at all)."""
     from shopsteward.core.db import connect, migrate
-    from shopsteward.pipeline.ops.capabilities.pinterest_post import mark_posted
+    from shopsteward.pipeline.ops.capabilities import caption_draft, pinterest_post
     from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    mark_pin_posted = pinterest_post.mark_posted
+    mark_caption_posted = caption_draft.mark_posted
 
     db = db_path()
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -547,10 +556,13 @@ def mark_posted_cmd(
     try:
         migrate(conn)
         try:
-            appended = mark_posted(conn, DEFAULT_USER_ID, action_id)
-        except ValueError as exc:
-            typer.secho(f"mark-posted failed: {exc}", fg="red")
-            raise typer.Exit(code=1) from exc
+            appended = mark_pin_posted(conn, DEFAULT_USER_ID, action_id)
+        except ValueError as pin_exc:
+            try:
+                appended = mark_caption_posted(conn, DEFAULT_USER_ID, action_id)
+            except ValueError:
+                typer.secho(f"mark-posted failed: {pin_exc}", fg="red")
+                raise typer.Exit(code=1) from pin_exc
         if appended:
             typer.echo(f"marked posted: {action_id}")
         else:

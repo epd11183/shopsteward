@@ -19,6 +19,7 @@ import re
 import sqlite3
 from datetime import UTC, date, datetime, timedelta
 
+from shopsteward.core.events import read_all
 from shopsteward.pipeline.ops.models import (
     DeadListing,
     ListingSales,
@@ -31,6 +32,7 @@ from shopsteward.pipeline.ops.models import (
     TrendingListing,
     ViewedNotSold,
 )
+from shopsteward.pipeline.ops.timeutil import parse_ts
 
 _SIZE_RE = re.compile(r"(\d+)\s*[x×]\s*(\d+)", re.IGNORECASE)
 
@@ -624,7 +626,72 @@ def data_quality_notes(
             "than assumed non-rising, so they never become a gapfill_reprint/caption_draft target."
         )
 
+    # M4 (guardrail review, 2026-08-25): the caption cooldown (14d default)
+    # outlives the brief's own 7-day CAPTIONS TO POST lookback window -- a
+    # (listing, channel) pair cooling down on days 8-14 has nothing on
+    # screen explaining why it isn't proposable yet.
+    cooling_down = _caption_cooling_down_count(conn, user_id, cfg, as_of)
+    if cooling_down:
+        notes.append(
+            f"{cooling_down} (listing, channel) pair(s) are currently inside "
+            "social.caption_draft's own cooldown window -- drafted or posted too recently "
+            "to be re-proposed yet, not a hallucinated/ineligible target."
+        )
+
     return notes
+
+
+def _caption_cooling_down_count(
+    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, as_of: date
+) -> int:
+    """M4 (guardrail review, 2026-08-25): count of (listing, channel) pairs
+    CURRENTLY inside `social.caption_draft`'s own cooldown window -- the
+    same "why didn't this propose" gap `analytics.py`'s own L11
+    views-velocity note already closes for the OTHER unmeasurable-exclusion
+    case above. `social.caption_draft`'s cooldown is 14 days by default but
+    the brief's CAPTIONS TO POST section only looks back 7
+    (`brief._DONE_REFUSED_WINDOW_DAYS`) -- days 8-14 a cooled-down pair is
+    invisible on screen with nothing explaining it.
+
+    Mirrors `caption_draft.py`'s own cooldown definition (drafted-OR-posted,
+    per (listing_id, channel), `>=` at the exact boundary) WITHOUT importing
+    that module -- `caption_draft.py` already imports this module at module
+    scope, so the reverse import would be a cycle; this is a deliberate,
+    small duplication of that one comparison, not a second policy."""
+    if not cfg.caption.channels:
+        return 0
+    now = datetime(as_of.year, as_of.month, as_of.day, tzinfo=UTC)
+    active_listing_ids = {
+        r["listing_id"]
+        for r in conn.execute(
+            "SELECT listing_id FROM proj_listings WHERE user_id=? AND state='active'", (user_id,)
+        ).fetchall()
+    }
+
+    last_at: dict[tuple[int, str], str] = {}
+    for event_type in ("social.caption_drafted", "social.caption_posted"):
+        for e in read_all(conn, event_type):
+            if e.user_id != user_id or not e.created_at:
+                continue
+            listing_id = e.payload.get("listing_id")
+            channel = e.payload.get("channel")
+            if listing_id is None or channel is None:
+                continue
+            key = (listing_id, channel)
+            if key not in last_at or e.created_at > last_at[key]:
+                last_at[key] = e.created_at
+
+    count = 0
+    for (listing_id, channel), last in last_at.items():
+        if listing_id not in active_listing_ids:
+            continue
+        channel_cfg = cfg.caption.channels.get(channel)
+        if channel_cfg is None:
+            continue
+        cutoff = now - timedelta(days=channel_cfg.cooldown_days)
+        if parse_ts(last) >= cutoff:
+            count += 1
+    return count
 
 
 def pin_experiment_readout(

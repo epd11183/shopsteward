@@ -49,6 +49,7 @@ from datetime import UTC, datetime, timedelta
 from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.core.events import Event, append, read_all
 from shopsteward.core.sync import read_live_observed
+from shopsteward.pipeline.ops import social as _social
 from shopsteward.pipeline.ops.config import get_ops_config, ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
 from shopsteward.pipeline.ops.projections import _action_id_from_destination_url
@@ -200,14 +201,16 @@ def _build_action(
     )
 
 
-def mark_posted(conn: sqlite3.Connection, user_id: int, action_id: str) -> bool:
-    """`ops mark-posted` (cli.py): append `social.pin_posted` for the
-    `social.pin_drafted` event whose destination_url embeds this action_id's
-    own 12-char utm_content prefix (`_destination_url()`'s convention,
-    projections.py's `_action_id_from_destination_url` join-key precedent).
-    Returns True if a new event was appended, False if this action_id was
-    already marked posted (safe no-op). Raises ValueError if no drafted pin
-    matches `action_id` at all -- never a partial/crashing write."""
+def _resolve_pin_drafted(conn: sqlite3.Connection, user_id: int, action_id: str) -> Event:
+    """`social.social.mark_posted()`'s pluggable resolver for this channel
+    (T5+E5, 2026-08-25: mark_posted() generalized to also serve
+    `social.caption_draft` -- see that module's own resolver/docstring for
+    the shared mechanism). Finds the `social.pin_drafted` event whose
+    destination_url embeds this action_id's own 12-char utm_content prefix
+    (`_destination_url()`'s convention, projections.py's
+    `_action_id_from_destination_url` join-key precedent) -- pin-specific,
+    because Pinterest's drafted event carries no action_id field directly
+    (module docstring)."""
     if len(action_id) != 64:
         # A bare 12-char utm_content prefix would otherwise match here too
         # (action_id[:12] == action_id for a 12-char input) and get stored
@@ -226,27 +229,22 @@ def mark_posted(conn: sqlite3.Connection, user_id: int, action_id: str) -> bool:
     )
     if drafted is None:
         raise ValueError(f"no drafted pin found for action_id {action_id!r}")
+    return drafted
 
-    already_posted = any(
-        e.user_id == user_id and e.payload.get("action_id") == action_id
-        for e in read_all(conn, "social.pin_posted")
-    )
-    if already_posted:
-        return False
 
-    append(
+def mark_posted(conn: sqlite3.Connection, user_id: int, action_id: str) -> bool:
+    """`ops mark-posted` (cli.py): append `social.pin_posted` for the
+    drafted pin `_resolve_pin_drafted()` finds. Returns True if a new event
+    was appended, False if this action_id was already marked posted (safe
+    no-op). Raises ValueError if no drafted pin matches `action_id` at all
+    -- never a partial/crashing write."""
+    return _social.mark_posted(
         conn,
-        Event(
-            user_id=user_id,
-            type="social.pin_posted",
-            payload={
-                "listing_id": drafted.payload["listing_id"],
-                "action_id": action_id,
-                "posted_at": datetime.now(UTC).isoformat(),
-            },
-        ),
+        user_id,
+        action_id,
+        posted_event_type="social.pin_posted",
+        resolve_drafted=_resolve_pin_drafted,
     )
-    return True
 
 
 class SocialPinterestPost:
@@ -289,6 +287,17 @@ class SocialPinterestPost:
         cfg = get_ops_config(conn, user_id)
         target = _candidates(conn, user_id, cfg).get(action.target_id)
         if target is None:
+            # H2b (guardrail review, 2026-08-25): deliberately plain
+            # ValueError, NOT StaleTargetError -- `_candidates()` still
+            # bundles genuine staleness (inactive/imageless) with a
+            # rate/policy condition (cooldown), same shape caption_draft.py
+            # had before its own H2a split (not repeated here -- out of this
+            # review's scope, this capability's own eligibility is coverage-
+            # first with no proof-lapse arm). Leaving this as ValueError
+            # means the runner's new safe default (action.refused, never
+            # action.failed -- see registry.StaleTargetError) already
+            # protects a cooldown-driven re-validation miss here too,
+            # without a bespoke governor check being written for it yet.
             raise ValueError(f"listing {listing_id}: no longer pin-eligible -- refusing draft")
 
         valid = _valid_params(action.params, cfg)

@@ -63,7 +63,11 @@
     "listing_fee_usd": 0.20
   },
   "caption": {
-    "max_len": 2200
+    "max_len": 2200,
+    "channels": {
+      "instagram": { "eligibility": "proven", "cooldown_days": 14 },
+      "facebook": { "eligibility": "proven", "cooldown_days": 14 }
+    }
   },
   "pinterest": {
     "cooldown_days": 30,

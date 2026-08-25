@@ -47,7 +47,7 @@ from shopsteward.pipeline.listings.pod.build import build_pod_reprint
 from shopsteward.pipeline.listings.source_assets import resolve_source
 from shopsteward.pipeline.ops import analytics
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
-from shopsteward.pipeline.ops.registry import compute_action_id
+from shopsteward.pipeline.ops.registry import StaleTargetError, compute_action_id
 
 
 def _draft_exists(conn: sqlite3.Connection, user_id: int, draft_id: str) -> bool:
@@ -187,7 +187,9 @@ class ListingGapfillReprint:
             # Became ineligible or already exists between propose() and
             # approval -- must fail loudly (action.failed), never silently
             # claim a draft that was never actually built.
-            raise ValueError(
+            # StaleTargetError (H2b, guardrail review 2026-08-25): genuine
+            # per-target staleness -> the runner terminalizes this one.
+            raise StaleTargetError(
                 f"gapfill reprint photo_id={photo_id!r} product_type={product_type!r}: "
                 f"build_pod_reprint refused ({result.reason})"
             )

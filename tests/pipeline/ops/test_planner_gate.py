@@ -323,11 +323,15 @@ def test_proven_listings_facts_block_and_grounded_ids_use_the_widened_proven_set
     rebuild_ops(conn)
     register(SocialCaptionDraft())
     cfg = _cfg(enabled=True)
+    # T5+E5 (2026-08-25): materialize() now accepts a composite
+    # "{listing_id}:{channel}" target_id, never a bare listing_id -- see
+    # caption_draft.py's own target-identity docstring.
+    target_id = f"{LISTING_WIDENED}:instagram"
     adapter = FakePlannerAdapter(
         plan=[
             ProposalIntent(
                 capability_key="social.caption_draft",
-                target_id=str(LISTING_WIDENED),
+                target_id=target_id,
                 params={"caption": "Fresh off the press!"},
                 reason="widened proven seller",
             )
@@ -341,7 +345,8 @@ def test_proven_listings_facts_block_and_grounded_ids_use_the_widened_proven_set
     (facts_json,) = adapter.plan_calls
     facts = json.loads(facts_json)
     assert LISTING_WIDENED in {row["listing_id"] for row in facts["proven_listings"]}
-    assert [p.target_id for p in proposals] == [str(LISTING_WIDENED)]
+    assert target_id in {row["target_id"] for row in facts["caption_eligible_targets"]}
+    assert [p.target_id for p in proposals] == [target_id]
     assert _dropped(conn) == []
 
 

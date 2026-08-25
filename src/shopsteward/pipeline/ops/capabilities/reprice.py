@@ -55,7 +55,7 @@ from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.core.events import read_all
 from shopsteward.pipeline.ops.config import get_ops_config, ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
-from shopsteward.pipeline.ops.registry import compute_action_id
+from shopsteward.pipeline.ops.registry import StaleTargetError, compute_action_id
 
 
 @dataclass(frozen=True)
@@ -265,18 +265,29 @@ class ListingReprice:
             "SELECT title, state, price_usd FROM proj_listings WHERE user_id=? AND listing_id=?",
             (user_id, listing_id),
         ).fetchone()
+        # StaleTargetError (H2b, guardrail review 2026-08-25): each of these
+        # four is genuine per-target staleness -> the runner terminalizes.
         if row is None:
-            raise ValueError(f"listing {listing_id}: never observed -- refusing to reprice")
+            raise StaleTargetError(f"listing {listing_id}: never observed -- refusing to reprice")
         if row["state"] != "active":
-            raise ValueError(f"listing {listing_id}: no longer active -- refusing to reprice")
+            raise StaleTargetError(f"listing {listing_id}: no longer active -- refusing to reprice")
         if listing_id in _pod_linked_listing_ids(conn, user_id):
-            raise ValueError(f"listing {listing_id}: provider-linked (POD) -- refusing to reprice")
+            raise StaleTargetError(
+                f"listing {listing_id}: provider-linked (POD) -- refusing to reprice"
+            )
         if not _is_conservatively_digital(row["title"], cfg.product_type_keywords):
             # Guard, not a formality: a listing that went POD/unknown/
             # ambiguous between propose() and approval must never reach
             # update_listing_price -- even against a hand-forged action.
-            raise ValueError(f"listing {listing_id}: not a digital listing -- refusing to reprice")
+            raise StaleTargetError(
+                f"listing {listing_id}: not a digital listing -- refusing to reprice"
+            )
 
+        # H2b: deliberately plain ValueError, not StaleTargetError, for the
+        # two params checks below -- an invalid/missing price is a bad
+        # PARAMS problem (same class as caption_draft's own invalid-caption
+        # check), not the target itself being stale, so the runner's safe
+        # default (non-terminal refusal) applies.
         new_price = action.params.get("price_usd")
         if new_price is None:
             raise ValueError(f"action {action.action_id}: missing params.price_usd")

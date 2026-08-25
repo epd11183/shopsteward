@@ -51,6 +51,34 @@ class Capability(Protocol):
         ...
 
 
+class StaleTargetError(ValueError):
+    """H2b (guardrail review, 2026-08-25 -- the 4th instance of one failure
+    class: fake-adapter approve, run/undo, catalog_expand pace, social.
+    caption_draft's own channel/cooldown drift). `execute()`'s own
+    re-validation is safety-critical AND easy to get subtly wrong: a rate/
+    policy condition (cooldown, eligibility mode, weekly pace...) baked into
+    the SAME grounding predicate `execute()` re-checks is indistinguishable
+    from genuine per-target staleness (the listing/file/target is actually
+    gone) and, raised as a plain exception, gets caught by
+    `runner._execute_and_record` and terminalized as `action.failed` --
+    PERMANENTLY burning that action_id, even though the underlying
+    condition (a cooldown, a pace cap) is temporary and should leave the
+    proposal approvable again once it passes. Each prior instance was fixed
+    ad hoc, one capability at a time; this is the structural stop.
+
+    The runner's default for ANY exception raised by `cap.execute()` is now
+    the SAFE one: non-terminal (recorded as `action.refused`, same state a
+    normal `governor.govern()` refusal leaves an action in -- still
+    "proposed"/re-approvable, never permanently burned). A capability must
+    explicitly OPT IN to terminalizing by raising `StaleTargetError`
+    (a `ValueError` subclass, so existing `pytest.raises(ValueError)`
+    assertions still pass) -- reserved for a genuine per-target check that
+    can never un-happen on its own (the listing was deactivated, the file
+    was already ingested, the draft was already built): raise it ONLY for
+    that, never for a rate/policy condition that governor.govern() should
+    have refused before execute() was ever reached."""
+
+
 REGISTRY: dict[str, Capability] = {}
 
 

@@ -4,6 +4,7 @@ against zero real capabilities -- callers pass whatever `capabilities` they
 want exercised (the CLI passes `registry.REGISTRY.values()`, which is empty
 in PR1; tests pass a StubCapability list)."""
 
+import logging
 import sqlite3
 from datetime import UTC, date, datetime
 
@@ -13,8 +14,10 @@ from shopsteward.core.events import Event, append, read_all
 from shopsteward.pipeline.ops.governor import _SEO_RENEW_CAPABILITIES, govern
 from shopsteward.pipeline.ops.models import OpsConfig, ProposedAction, Tier
 from shopsteward.pipeline.ops.projections import capability_states
-from shopsteward.pipeline.ops.registry import Capability
+from shopsteward.pipeline.ops.registry import Capability, StaleTargetError
 from shopsteward.pipeline.ops.tiers import effective_tier, promote_t1_t0, promote_t2_t1
+
+_logger = logging.getLogger(__name__)
 
 _AUTO_EXECUTE_TIERS = (Tier.AUTO, Tier.NOTIFY)
 
@@ -437,9 +440,19 @@ def _execute_and_record(
     action: ProposedAction,
     report: RunReport,
 ) -> None:
+    """H2b (guardrail review, 2026-08-25): `StaleTargetError` (registry.py's
+    own docstring -- the explicit, capability-chosen opt-in) is the ONLY
+    exception that terminalizes into `action.failed`. Any OTHER exception a
+    capability's `execute()` raises is treated as a REFUSAL (`action.
+    refused`, the same non-terminal state a `governor.govern()` refusal
+    leaves an action in) -- the safe default, since an ordinary
+    re-validation raise that turns out to encode a rate/policy condition
+    (the failure class this guard exists for) must never permanently burn
+    the action_id. A capability that genuinely needs to terminalize a stale
+    target must say so explicitly by raising `StaleTargetError`."""
     try:
         result = cap.execute(conn, user_id, action)
-    except Exception as exc:  # capability code is untrusted from the chassis's POV
+    except StaleTargetError as exc:
         append(
             conn,
             Event(
@@ -453,6 +466,26 @@ def _execute_and_record(
             ),
         )
         report.failed += 1
+        return
+    except Exception as exc:  # capability code is untrusted from the chassis's POV
+        append(
+            conn,
+            Event(
+                user_id=user_id,
+                type="action.refused",
+                payload={"action_id": action.action_id, "reason": "execute_revalidation_error"},
+            ),
+        )
+        report.refused += 1
+        _logger.warning(
+            "action %s (%s): execute() raised %s during re-validation, treated as a "
+            "non-terminal refusal (not action.failed) -- raise StaleTargetError instead "
+            "if this really is genuine per-target staleness: %s",
+            action.action_id,
+            cap.key,
+            type(exc).__name__,
+            exc,
+        )
         return
     append(
         conn,

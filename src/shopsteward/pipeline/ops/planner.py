@@ -41,6 +41,7 @@ from shopsteward.adapters.planner.interface import (
 from shopsteward.core.events import Event, append
 from shopsteward.pipeline.llm_ledger import monthly_spend
 from shopsteward.pipeline.ops import analytics
+from shopsteward.pipeline.ops.capabilities.caption_draft import _candidates as _caption_candidates
 from shopsteward.pipeline.ops.capabilities.pinterest_post import _candidates as _pin_candidates
 from shopsteward.pipeline.ops.capabilities.pinterest_post import _last_pinned_at
 from shopsteward.pipeline.ops.capabilities.seo_edit import _latest_observed
@@ -178,6 +179,40 @@ def _pin_eligible_listings(conn: sqlite3.Connection, user_id: int, cfg: OpsConfi
     return rows
 
 
+# L7 (guardrail review, 2026-08-25): bounded the same way `sellers` above is
+# (`analytics.proven_listings()`'s own `limit: int = 10` default, reused
+# rather than a new magic number) -- unlike that sibling block, this one
+# scales with catalog size TIMES channel count (a facts-JSON row per
+# (listing, channel) pair, not per listing), and every row shown here bills
+# planner LLM tokens (module docstring's own soft-cap framing).
+_CAPTION_TARGETS_MAX_ROWS = 10
+
+
+def _caption_eligible_targets(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> list[dict]:
+    """target_id/listing_id/title for every `social.caption_draft`-eligible
+    (listing, channel) pair (`caption_draft.py`'s own `_candidates()`, per
+    T5+E5's per-channel eligibility policy) -- composite target discovery,
+    the same "real SQL, no invented ids" courtesy `_pin_eligible_listings`
+    above gives Pinterest. **target_id is `"{listing_id}:{channel}"`**
+    (caption_draft.py's own target-identity docstring) -- the LLM must copy
+    this string back verbatim, never invent one, since a bare listing_id no
+    longer names a valid caption_draft target at all. materialize()'s own
+    `_candidates()` still re-grounds and drops anything ineligible; this is
+    target discovery (courtesy to the model), not the safety boundary.
+
+    L7: bounded to `_CAPTION_TARGETS_MAX_ROWS`, sorted by target_id for a
+    deterministic cut (this block carries no revenue/proof signal to sort
+    by -- a views-velocity-only row has `units=0`/`revenue_usd=0.0` same as
+    every other candidate, unlike `sellers` above)."""
+    targets = _caption_candidates(conn, user_id, cfg)
+    rows = [
+        {"target_id": target_id, "listing_id": s.listing_id, "title": s.title}
+        for target_id, s in targets.items()
+    ]
+    rows.sort(key=lambda r: r["target_id"])
+    return rows[:_CAPTION_TARGETS_MAX_ROWS]
+
+
 def _build_facts_json(
     conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, capabilities: list[Capability]
 ) -> str:
@@ -238,6 +273,13 @@ def _build_facts_json(
         # this block is named `proven_listings`, never `top_sellers` -- see
         # the comment on `sellers` above.
         "proven_listings": [s.model_dump(mode="json") for s in sellers],
+        # T5+E5 (2026-08-25): the REAL target ids social.caption_draft's
+        # materialize() accepts -- composite "{listing_id}:{channel}"
+        # strings, since caption_draft now runs per-channel eligibility
+        # (see caption_draft.py's own module docstring). "proven_listings"
+        # above stays informational (bare listing ids, bounded to 10) --
+        # this block is what the LLM must copy target_id from.
+        "caption_eligible_targets": _caption_eligible_targets(conn, user_id, cfg),
         # social.pinterest_post Variant A is ALSO planner-only (propose()
         # always []) -- without this block the LLM has no target ids for it
         # (2026-08-24 design doc §2). Deliberately NOT gated on
@@ -258,7 +300,11 @@ def _build_facts_json(
 # there already names the block it draws candidates from).
 _EXTRA_TARGET_BLOCKS: dict[str, tuple[str, ...]] = {
     "listing.seo_edit": ("expired_with_sales", "zero_tag_listings", "viewed_not_sold"),
-    "social.caption_draft": ("proven_listings",),  # M3: renamed from "top_sellers"
+    # T5+E5: "caption_eligible_targets" (composite target_ids), not
+    # "proven_listings" (bare listing ids, informational only, M3: renamed
+    # from "top_sellers") -- a bare listing_id was never a materialize()-
+    # accepted target_id even before T5.
+    "social.caption_draft": ("caption_eligible_targets",),
     "social.pinterest_post": ("pin_eligible_listings",),
 }
 
@@ -295,8 +341,18 @@ def _known_target_ids(
         ids |= {str(d["listing_id"]) for d in _zero_tag_listings(conn, user_id, cfg)}
     if "viewed_not_sold" in blocks:
         ids |= {str(v.listing_id) for v in analytics.viewed_not_sold(conn, user_id)}
-    if "proven_listings" in blocks:
-        ids |= {str(s.listing_id) for s in analytics.proven_listings(conn, user_id, cfg)}
+    if "caption_eligible_targets" in blocks:
+        # ponytail: this is the FULL, unbounded `_caption_candidates()` set
+        # (never truncated -- see its own docstring: this is a hallucinated-
+        # vs-not_a_candidate classification, not LLM-facing), computed a
+        # SECOND time per `plan_proposals()` call -- `_build_facts_json()`
+        # already computed it once (bounded to `_CAPTION_TARGETS_MAX_ROWS`)
+        # for `caption_eligible_targets` above. O(candidates) twice per run;
+        # fine at this shop's scale (a couple dozen listings x 2 channels).
+        # Upgrade to a single shared computation passed down from
+        # `plan_proposals()` if the candidate set ever grows enough for the
+        # duplicate pass to show up in wall-clock time.
+        ids |= set(_caption_candidates(conn, user_id, cfg).keys())
     if "pin_eligible_listings" in blocks:
         ids |= {str(row["listing_id"]) for row in _pin_eligible_listings(conn, user_id, cfg)}
     return ids

@@ -122,7 +122,7 @@ from shopsteward.pipeline.listings.drafts import build_drafts
 from shopsteward.pipeline.listings.photo_match import hamming_distance, phash_bytes
 from shopsteward.pipeline.ops.config import ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
-from shopsteward.pipeline.ops.registry import compute_action_id
+from shopsteward.pipeline.ops.registry import StaleTargetError, compute_action_id
 
 _CAPABILITY = "listing.catalog_expand"
 # The only two formats `landing._SUFFIX_FORMATS` ever maps a scanned file to
@@ -156,7 +156,9 @@ def expand_one(
     tuning.seed(conn, user_id, TUNING_PROFILE_PATH)
     file_id = adopt.ingest_one_file(conn, user_id, path)
     if file_id is None:
-        raise ValueError(f"{path}: failed landing validation -- cannot expand")
+        # StaleTargetError (H2b, guardrail review 2026-08-25): genuine
+        # per-target staleness -> the runner terminalizes this one.
+        raise StaleTargetError(f"{path}: failed landing validation -- cannot expand")
 
     photo_id = f"file-{file_id[:12]}"
     asset_store_config.seed(conn, user_id)
@@ -403,8 +405,10 @@ class ListingCatalogExpand:
             # H1: deliberately NEVER a pace reason -- `_candidates()` has no
             # pace gating (see module docstring); an over-pace approval is
             # refused earlier, in `governor.govern()`, before execute() is
-            # ever called.
-            raise ValueError(
+            # ever called. StaleTargetError (H2b, guardrail review
+            # 2026-08-25): genuine per-target staleness -> the runner
+            # terminalizes this one.
+            raise StaleTargetError(
                 f"archive photo {action.target_id!r}: no longer eligible -- refusing to expand"
             )
 
