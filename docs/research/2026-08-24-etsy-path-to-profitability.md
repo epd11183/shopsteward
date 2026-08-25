@@ -1,3 +1,4 @@
+<!-- /autoplan restore point: ~/.gstack/projects/epd11183-shopsteward/main-autoplan-restore-20260825-092051.md -->
 # PhotosByEricD (shop 52644245) — Path to Profitability
 
 **Author:** Claude, acting as shop manager under the M8a/M8b autonomy chassis, per operator direction 2026-08-24 ("this is your store, decide what you want to do... create your business plan"). Operator-funded floor: $20/month through the autonomy budget; beyond that, the shop must self-fund.
@@ -57,3 +58,40 @@ Sources: [Gelato — How To Get More Traffic On Etsy](https://www.gelato.com/blo
 - **Nothing blocking today.** Everything in Phase 1 that needs your sign-off (Pinterest adapter build, ad spend, Phase 3) is flagged above rather than started.
 - If you want the Pinterest copy-paste drafts, say so and I'll generate the first batch this session.
 - Otherwise: I'll keep running the governed autonomy loop, keep expanding archive coverage as photos allow, and revisit this plan once real sales data exists to replace the "0 sales" baseline above.
+
+<!-- AUTONOMOUS DECISION LOG -->
+## Decision Audit Trail
+
+/autoplan review 2026-08-25 (branch main, ccf660b). Full CEO plan: `~/.gstack/projects/epd11183-shopsteward/ceo-plans/2026-08-25-autonomous-etsy-shop.md`. Voices: Codex CLI + independent Claude subagent, both phases.
+
+| # | Phase | Decision | Classification | Principle | Rationale | Rejected |
+|---|-------|----------|----------------|-----------|-----------|----------|
+| 1 | CEO | Mode = SELECTIVE EXPANSION | Mechanical | autoplan override | forced by /autoplan | — |
+| 2 | CEO | Premise gate → C: Pinterest + owned-channel IG/FB push | OPERATOR (D1) | — | 75% of historical sales from owned network; plan omitted it | A (Pinterest-only), B (owned-only) |
+| 3 | CEO | Accept scope items 2-12 (baseline fix, dedup, cap-revert tracking, kill criteria, holdout, unit economics, positioning, seo cooldown, staleness alarm, register reconciliation, dashboard data) | Mechanical | P1/P2 | in blast radius, <1d each, both voices support | — |
+| 4 | CEO | Landscape check = plan's own 08-24 research + voices; no re-search | Mechanical | P3 | one day old; both voices flagged the stat as weak anyway | fresh WebSearch |
+| 5 | CEO | Skip inner spec-review loop on CEO plan doc | Mechanical | P3 | two independent voices already reviewed the same content | 3-iteration subagent loop |
+| 6 | Eng | Dedup at runner level + action.expired sweep + action.superseded | Mechanical | P5 | root cause is proposal lifecycle, not _candidates() | stabilizing action_id (load-bearing for idempotency) |
+| 7 | Eng | Holdout enforced in govern() with documented priority | Mechanical | P5 | per-capability checks make registration order silent business logic | _candidates()-level checks alone |
+| 8 | Eng | Staleness escalation = read-time brief computation, no events | Cross-model tension | P5 | replay determinism; events are facts, reminders are derived | Codex's bounded reminder events |
+| 9 | Eng | Owned-channel = per-channel eligibility policy config + caption mark-posted + channel in target identity | Mechanical | P4/P5 | avoids doc contradiction and target_id collision | copy-paste explore policy into caption_draft |
+| 10 | Eng | P2 primary outcome = Pinterest outbound clicks; Etsy view deltas secondary | Mechanical | P1 | correlational deltas confounded even with holdout | views-only readout |
+| UC1 | Gate | Etsy Ads diagnostic → DEFERRED, revisit after 30d of pin data | OPERATOR | — | operator call at final gate 2026-08-25 | approve now / reject outright |
+| UC2 | Gate | Catalog expansion APPROVED: new capability proposing paced digital listings from archive (Gate-3 approval per listing, existing $20 funds fees) | OPERATOR | — | both voices: catalog is the missed 10x; archive is the unfair asset | keep sale-gated |
+| UC3 | Gate | Phase-2 trigger WIDENED: trailing-90d OR lifetime sale per listing + views-velocity alternative trigger; proposals stay PROPOSE-tier | OPERATOR | — | 7-day window statistically indefensible at this sales rate | 7-day gate, lifetime-only |
+| TD1 | Gate | P2 live Pinterest read adapter AFTER first ~30d pin readout; chassis P1 fixes first | OPERATOR | — | read infra premature before manual pins produce data | build P2 now |
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | issues_open (via /autoplan) | 16 proposals, 12 accepted, 2 deferred |
+| Codex Review | `/codex review` | Independent 2nd opinion | 2 | issues_found (via /autoplan voices) | CEO: 24 concerns; Eng: ~20 concerns |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | issues_open (via /autoplan) | 12 issues, 0 critical gaps |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | SKIPPED | no UI scope |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | SKIPPED | no developer-facing scope |
+
+- **CROSS-MODEL:** Exceptional overlap — both models independently challenged the traffic-bottleneck premise, the Pinterest 33% stat, the 7-day Phase-2 trigger, missing kill criteria, and the confounded P1 readout. One tension (staleness events vs read-time) resolved for read-time.
+- **VERDICT:** CEO + ENG CLEARED — all findings folded into 24 tasks; all 4 operator decisions resolved at the final gate 2026-08-25 (UC1 defer-ads, UC2 approve-catalog-expansion, UC3 widen-trigger, TD1 P2-after-readout). Ready to implement.
+
+NO UNRESOLVED DECISIONS

@@ -2,6 +2,18 @@
 
 Modular workflow tool for a photography business.
 
+## gstack
+
+- **Web browsing:** always use the `/browse` skill from gstack for ALL web
+  browsing. NEVER use `mcp__claude-in-chrome__*` tools.
+- When a request matches one of the skills below, invoke it via the Skill
+  tool. Install: `git clone --single-branch --depth 1
+  https://github.com/garrytan/gstack.git ~/.claude/skills/gstack && cd
+  ~/.claude/skills/gstack && ./setup`
+
+Available gstack skills:
+`/office-hours` · `/plan-ceo-review` · `/plan-eng-review` · `/plan-design-review` · `/design-consultation` · `/design-shotgun` · `/design-html` · `/review` · `/ship` · `/land-and-deploy` · `/canary` · `/benchmark` · `/browse` · `/connect-chrome` · `/qa` · `/qa-only` · `/design-review` · `/setup-browser-cookies` · `/setup-deploy` · `/setup-gbrain` · `/retro` · `/investigate` · `/document-release` · `/document-generate` · `/codex` · `/cso` · `/autoplan` · `/plan-devex-review` · `/devex-review` · `/careful` · `/freeze` · `/guard` · `/unfreeze` · `/gstack-upgrade` · `/learn`
+
 - **Editing module** (standalone): ingest a folder of mixed RAW + JPEG files,
   score, apply preset families via the EPD Edit Bridge Lightroom plugin,
   export. Two modes: **hero** (single-image, feeds the Etsy pipeline) and
