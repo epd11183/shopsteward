@@ -47,7 +47,8 @@
   },
   "seo_edit": {
     "min_lifetime_views": 5,
-    "min_tags_before_flagged": 0
+    "min_tags_before_flagged": 0,
+    "cooldown_days": 60
   },
   "renew": {
     "min_lifetime_sales": 1,
@@ -78,6 +79,9 @@
     "boards": {
       "wall_art": "Nature & Landscape Wall Art"
     }
+  },
+  "social": {
+    "staleness_days": 14
   },
   "autonomy": {
     "enabled": true,

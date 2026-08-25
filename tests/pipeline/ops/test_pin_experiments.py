@@ -365,6 +365,115 @@ def test_readout_insufficient_prior_history_omits_baseline_not_zero(conn):
     assert r.delta_views_per_day is None
 
 
+# --- E4 (2026-08-25): --posted-at backdates the readout's own anchor --------
+
+
+def test_readout_windows_from_an_explicit_past_posted_at_not_drafted_at(conn):
+    """`ops mark-posted --posted-at` (E4) must shift which before/after
+    window `pin_experiment_readout()` measures -- data seeded ONLY around
+    the posted anchor (never around drafted_at) proves the anchor really
+    moved, not just that both happen to agree."""
+    from shopsteward.pipeline.ops.capabilities.pinterest_post import mark_posted
+
+    listing_id = 831
+    drafted_at = datetime.combine(TODAY - timedelta(days=20), datetime.min.time(), tzinfo=UTC)
+    posted_date = TODAY - timedelta(days=10)
+
+    # Seeded ONLY around posted_date -- if the readout wrongly anchored on
+    # drafted_at (20d ago) instead, there'd be no history there at all and
+    # both baseline/observed would come back None.
+    _seed_daily(conn, listing_id, posted_date - timedelta(days=7), views=100)
+    _seed_daily(conn, listing_id, posted_date - timedelta(days=1), views=114)  # 2.0/day
+    _seed_daily(conn, listing_id, posted_date + timedelta(days=1), views=114)
+    _seed_daily(conn, listing_id, posted_date + timedelta(days=7), views=163)  # 7.0/day
+
+    action_id = "1" * 64
+    _seed_pin_action(conn, listing_id=listing_id, action_id=action_id, drafted_at=drafted_at)
+    ops_config.seed(conn, USER_ID)
+    rebuild_core(conn)
+    rebuild_ops(conn)
+
+    appended = mark_posted(conn, USER_ID, action_id, posted_at=posted_date.isoformat())
+    assert appended is True
+    rebuild_ops(conn)  # re-fold proj_pin_experiments now that pin_posted exists
+
+    cfg = _cfg()
+    results = analytics.pin_experiment_readout(conn, USER_ID, cfg, as_of=TODAY)
+    assert len(results) == 1
+    r = results[0]
+    assert r.drafted_at == (TODAY - timedelta(days=20)).isoformat()  # unchanged display field
+    assert r.days_since_posted == 10  # anchored on posted_date, not drafted_at
+    assert r.baseline_views_per_day == pytest.approx(2.0)
+    assert r.observed_views_per_day == pytest.approx(7.0)
+    assert r.delta_views_per_day == pytest.approx(5.0)
+
+
+def test_readout_unposted_pin_still_windows_from_drafted_at(conn):
+    """Default (no `ops mark-posted` call at all) behaves exactly as before
+    E4 -- unchanged regression guard."""
+    listing_id = 832
+    drafted_at = datetime.combine(TODAY - timedelta(days=10), datetime.min.time(), tzinfo=UTC)
+    drafted_date = drafted_at.date()
+    _seed_daily(conn, listing_id, drafted_date - timedelta(days=7), views=10)
+    _seed_daily(conn, listing_id, drafted_date - timedelta(days=1), views=17)  # 1.0/day
+    _seed_daily(conn, listing_id, drafted_date + timedelta(days=1), views=17)
+    _seed_daily(conn, listing_id, drafted_date + timedelta(days=7), views=52)  # 5.0/day
+    _seed_pin_action(conn, listing_id=listing_id, action_id="act-unposted", drafted_at=drafted_at)
+
+    ops_config.seed(conn, USER_ID)
+    rebuild_core(conn)
+    rebuild_ops(conn)
+
+    cfg = _cfg()
+    results = analytics.pin_experiment_readout(conn, USER_ID, cfg, as_of=TODAY)
+    assert len(results) == 1
+    r = results[0]
+    assert r.baseline_views_per_day == pytest.approx(1.0)
+    assert r.observed_views_per_day == pytest.approx(5.0)
+
+
+def test_mark_posted_rejects_a_future_posted_at_without_writing(conn):
+    from shopsteward.pipeline.ops.capabilities.pinterest_post import mark_posted
+
+    listing_id = 833
+    action_id = "2" * 64
+    drafted_at = datetime.combine(TODAY - timedelta(days=5), datetime.min.time(), tzinfo=UTC)
+    _seed_pin_action(conn, listing_id=listing_id, action_id=action_id, drafted_at=drafted_at)
+
+    future = (TODAY + timedelta(days=1)).isoformat()
+    with pytest.raises(ValueError, match="future"):
+        mark_posted(conn, USER_ID, action_id, posted_at=future)
+    assert read_all(conn, "social.pin_posted") == []
+
+
+def test_mark_posted_rejects_a_posted_at_before_drafted_at_without_writing(conn):
+    from shopsteward.pipeline.ops.capabilities.pinterest_post import mark_posted
+
+    listing_id = 834
+    action_id = "3" * 64
+    drafted_at = datetime.combine(TODAY - timedelta(days=5), datetime.min.time(), tzinfo=UTC)
+    _seed_pin_action(conn, listing_id=listing_id, action_id=action_id, drafted_at=drafted_at)
+
+    too_early = (TODAY - timedelta(days=6)).isoformat()
+    with pytest.raises(ValueError, match="drafted_at"):
+        mark_posted(conn, USER_ID, action_id, posted_at=too_early)
+    assert read_all(conn, "social.pin_posted") == []
+
+
+def test_mark_posted_accepts_posted_at_exactly_at_drafted_at_boundary(conn):
+    from shopsteward.pipeline.ops.capabilities.pinterest_post import mark_posted
+
+    listing_id = 835
+    action_id = "4" * 64
+    drafted_at = datetime.combine(TODAY - timedelta(days=5), datetime.min.time(), tzinfo=UTC)
+    _seed_pin_action(conn, listing_id=listing_id, action_id=action_id, drafted_at=drafted_at)
+
+    appended = mark_posted(conn, USER_ID, action_id, posted_at=drafted_at.isoformat())
+    assert appended is True
+    posted = [e for e in read_all(conn, "social.pin_posted") if e.payload["action_id"] == action_id]
+    assert posted[0].payload["posted_at"] == drafted_at.isoformat()
+
+
 # --- Brief: PIN EXPERIMENTS section -------------------------------------------
 
 

@@ -532,6 +532,17 @@ def mark_posted_cmd(
         str,
         typer.Argument(help="action_id from `ops brief`'s PINS TO POST/CAPTIONS TO POST/DONE"),
     ],
+    posted_at: Annotated[
+        str | None,
+        typer.Option(
+            "--posted-at",
+            help=(
+                "When this was ACTUALLY posted (ISO date/datetime), if different from now -- "
+                "e.g. batching Friday's marks for a Monday post. Must fall between the draft's "
+                "own drafted_at and now."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Record that a drafted Pinterest pin (`social.pin_drafted`) OR a
     drafted caption (`social.caption_drafted`, T5+E5 2026-08-25) was posted
@@ -542,7 +553,11 @@ def mark_posted_cmd(
     already-posted action_id is a no-op). Tries the pin channel first, then
     the caption channel -- an action_id that resolves to neither surfaces
     the PIN resolver's error message (unchanged CLI behavior for an
-    action_id that predates T5 or matches nothing at all)."""
+    action_id that predates T5 or matches nothing at all).
+
+    `--posted-at` (E4, 2026-08-25): defaults to wall-clock now, exactly as
+    before. An out-of-range value (future, or before the draft's own
+    drafted_at) is rejected with a nonzero exit and appends nothing."""
     from shopsteward.core.db import connect, migrate
     from shopsteward.pipeline.ops.capabilities import caption_draft, pinterest_post
     from shopsteward.settings import DEFAULT_USER_ID, db_path
@@ -556,10 +571,12 @@ def mark_posted_cmd(
     try:
         migrate(conn)
         try:
-            appended = mark_pin_posted(conn, DEFAULT_USER_ID, action_id)
+            appended = mark_pin_posted(conn, DEFAULT_USER_ID, action_id, posted_at=posted_at)
         except ValueError as pin_exc:
             try:
-                appended = mark_caption_posted(conn, DEFAULT_USER_ID, action_id)
+                appended = mark_caption_posted(
+                    conn, DEFAULT_USER_ID, action_id, posted_at=posted_at
+                )
             except ValueError:
                 typer.secho(f"mark-posted failed: {pin_exc}", fg="red")
                 raise typer.Exit(code=1) from pin_exc

@@ -96,8 +96,9 @@ def _last_pinned_at(conn: sqlite3.Connection, user_id: int, listing_id: int) -> 
         for e in read_all(conn, event_type):
             if e.user_id != user_id or e.payload.get("listing_id") != listing_id:
                 continue
-            if e.created_at and (latest is None or parse_ts(e.created_at) > parse_ts(latest)):
-                latest = e.created_at
+            at = _social.effective_at(e)
+            if at and (latest is None or parse_ts(at) > parse_ts(latest)):
+                latest = at
     return latest
 
 
@@ -232,18 +233,22 @@ def _resolve_pin_drafted(conn: sqlite3.Connection, user_id: int, action_id: str)
     return drafted
 
 
-def mark_posted(conn: sqlite3.Connection, user_id: int, action_id: str) -> bool:
+def mark_posted(
+    conn: sqlite3.Connection, user_id: int, action_id: str, *, posted_at: str | None = None
+) -> bool:
     """`ops mark-posted` (cli.py): append `social.pin_posted` for the
     drafted pin `_resolve_pin_drafted()` finds. Returns True if a new event
     was appended, False if this action_id was already marked posted (safe
-    no-op). Raises ValueError if no drafted pin matches `action_id` at all
-    -- never a partial/crashing write."""
+    no-op). Raises ValueError if no drafted pin matches `action_id` at all,
+    or if `posted_at` (E4, 2026-08-25) is outside [drafted_at, now] -- never
+    a partial/crashing write either way."""
     return _social.mark_posted(
         conn,
         user_id,
         action_id,
         posted_event_type="social.pin_posted",
         resolve_drafted=_resolve_pin_drafted,
+        posted_at=posted_at,
     )
 
 

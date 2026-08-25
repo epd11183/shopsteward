@@ -56,6 +56,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from shopsteward.core.events import read_all
 from shopsteward.core.sync import read_live_observed
+from shopsteward.pipeline.ops import social as _social
 from shopsteward.pipeline.ops.config import OPS_CONFIG_EVENT_TYPES
 from shopsteward.pipeline.ops.models import CapabilityState, Tier
 
@@ -91,7 +92,7 @@ CREATE TABLE proj_actions (
 DROP TABLE IF EXISTS proj_pin_experiments;
 CREATE TABLE proj_pin_experiments (
     user_id INTEGER NOT NULL, listing_id INTEGER NOT NULL, action_id TEXT NOT NULL,
-    drafted_at TEXT NOT NULL,
+    drafted_at TEXT NOT NULL, posted_at TEXT,
     PRIMARY KEY (user_id, action_id)
 );
 DROP TABLE IF EXISTS proj_capability_state;
@@ -189,7 +190,14 @@ def _pin_experiment_rows(conn: sqlite3.Connection) -> list[dict]:
     utm_content prefix embedded in its own destination_url (see module
     docstring), matched against that listing's actual executed
     social.pinterest_post action_ids. Rows whose prefix matches no known
-    action_id (malformed/legacy event) are skipped rather than guessed."""
+    action_id (malformed/legacy event) are skipped rather than guessed.
+
+    `posted_at` (E4, 2026-08-25) is the matching `social.pin_posted` event's
+    own `effective_at()` -- its payload `posted_at` (which the operator may
+    have backdated via `ops mark-posted --posted-at`) if present, else that
+    event's `created_at`. None if the pin has never been marked posted --
+    `analytics.pin_experiment_readout()` then keeps windowing off
+    `drafted_at`, unchanged from before this."""
     action_ids_by_target: dict[tuple[int, int], list[str]] = {}
     for row in action_rows(conn):
         if row["capability"] != "social.pinterest_post" or row["state"] != "executed":
@@ -199,6 +207,13 @@ def _pin_experiment_rows(conn: sqlite3.Connection) -> list[dict]:
         except ValueError:
             continue
         action_ids_by_target.setdefault((row["user_id"], listing_id), []).append(row["action_id"])
+
+    posted_at_by_action_id: dict[tuple[int, str], str | None] = {}
+    for e in read_all(conn, "social.pin_posted"):
+        aid = e.payload.get("action_id")
+        if aid is None:
+            continue
+        posted_at_by_action_id[(e.user_id, aid)] = _social.effective_at(e)
 
     out: list[dict] = []
     for e in read_all(conn, "social.pin_drafted"):
@@ -227,6 +242,7 @@ def _pin_experiment_rows(conn: sqlite3.Connection) -> list[dict]:
                 "listing_id": listing_id,
                 "action_id": match,
                 "drafted_at": drafted_at,
+                "posted_at": posted_at_by_action_id.get((e.user_id, match)),
             }
         )
     return out
@@ -378,8 +394,14 @@ def rebuild_ops(conn: sqlite3.Connection) -> None:
 
     for row in _pin_experiment_rows(conn):
         conn.execute(
-            "INSERT OR REPLACE INTO proj_pin_experiments VALUES (?,?,?,?)",
-            (row["user_id"], row["listing_id"], row["action_id"], row["drafted_at"]),
+            "INSERT OR REPLACE INTO proj_pin_experiments VALUES (?,?,?,?,?)",
+            (
+                row["user_id"],
+                row["listing_id"],
+                row["action_id"],
+                row["drafted_at"],
+                row["posted_at"],
+            ),
         )
 
     for (uid, cap_key), st in _fold_capability_states(conn).items():

@@ -270,3 +270,36 @@ def test_cli_mark_posted_unknown_action_id_exits_nonzero_without_a_traceback(tmp
     assert result.exit_code == 1
     assert result.exception is None or isinstance(result.exception, SystemExit)
     assert "no drafted pin found" in result.output
+
+
+# --- CLI --posted-at (E4, 2026-08-25) --------------------------------------
+
+
+def test_cli_mark_posted_with_an_explicit_posted_at_stores_it(tmp_path, monkeypatch):
+    db, action_id = _seeded_db(tmp_path, monkeypatch)
+    conn = connect(db)
+    drafted_at = next(
+        e.payload["drafted_at"]
+        for e in read_all(conn, "social.pin_drafted")
+        if e.payload["listing_id"] == LISTING_ID
+    )
+    conn.close()
+
+    result = runner.invoke(app, ["ops", "mark-posted", action_id, "--posted-at", drafted_at])
+
+    assert result.exit_code == 0, result.output
+    conn = connect(db)
+    posted = [e for e in read_all(conn, "social.pin_posted") if e.payload["action_id"] == action_id]
+    assert len(posted) == 1
+    assert posted[0].payload["posted_at"] == drafted_at
+
+
+def test_cli_mark_posted_rejects_a_future_posted_at_and_appends_nothing(tmp_path, monkeypatch):
+    db, action_id = _seeded_db(tmp_path, monkeypatch)
+    future = (TODAY + timedelta(days=30)).isoformat()
+
+    result = runner.invoke(app, ["ops", "mark-posted", action_id, "--posted-at", future])
+
+    assert result.exit_code == 1
+    conn = connect(db)
+    assert read_all(conn, "social.pin_posted") == []

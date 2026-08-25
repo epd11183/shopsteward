@@ -1005,6 +1005,38 @@ def test_mark_posted_unknown_action_id_raises_clearly(conn):
     assert read_all(conn, "social.caption_posted") == []  # no partial state
 
 
+# --- E4 (2026-08-25): --posted-at works for the caption channel too --------
+
+
+def test_mark_posted_with_an_explicit_posted_at_stores_it(conn):
+    from shopsteward.pipeline.ops.capabilities.caption_draft import mark_posted
+
+    action_id = _draft_a_real_caption(conn)
+    drafted_at = next(
+        e.payload["drafted_at"]
+        for e in read_all(conn, "social.caption_drafted")
+        if e.payload["action_id"] == action_id
+    )
+
+    assert mark_posted(conn, USER_ID, action_id, posted_at=drafted_at) is True
+
+    posted = [
+        e for e in read_all(conn, "social.caption_posted") if e.payload["action_id"] == action_id
+    ]
+    assert posted[0].payload["posted_at"] == drafted_at
+
+
+def test_mark_posted_rejects_a_future_posted_at_without_writing(conn):
+    from shopsteward.pipeline.ops.capabilities.caption_draft import mark_posted
+
+    action_id = _draft_a_real_caption(conn)
+    future = (TODAY + timedelta(days=30)).isoformat()
+
+    with pytest.raises(ValueError, match="future"):
+        mark_posted(conn, USER_ID, action_id, posted_at=future)
+    assert read_all(conn, "social.caption_posted") == []
+
+
 # --- brief: CAPTIONS TO POST reflects channel + mark-posted queue -----------
 
 

@@ -31,8 +31,10 @@ __all__ = [
     "ProposedAction",
     "RefusalReason",
     "RevenueWindow",
+    "SeoEditViewDelta",
     "ShootMoreSuggestion",
     "SizeStat",
+    "StaleDraft",
     "Tier",
     "TrendingListing",
     "ViewedNotSold",
@@ -125,6 +127,17 @@ class _OpsSeoEdit(BaseModel):
     # ask ("zero tags") and IS the sensible default; configurable only in
     # case the operator later wants a slightly less strict bar.
     min_tags_before_flagged: int = Field(ge=0, default=0)
+    # T6 (2026-08-25 guardrail review): per-listing cooldown -- governed as a
+    # RefusalReason.INELIGIBLE (governor.py), NOT re-checked inside
+    # `_eligible()`/execute(), same H1/H2a precedent every other rate/policy
+    # condition in this chassis follows. Default 60 days: `min_lifetime_views`
+    # was just lowered 25 -> 5, which makes this capability fire on much
+    # thinner signal than before -- 60 days is roughly the same order as the
+    # `renew`/`catalog_expand` weekly-pace knobs scaled up (~8 weeks), long
+    # enough that a repeat edit only fires after Etsy's own search index has
+    # had real time to reflect the previous one, short enough that a
+    # genuinely still-underperforming listing isn't locked out for a season.
+    cooldown_days: int = Field(gt=0, default=60)
 
 
 class _OpsRenew(BaseModel):
@@ -226,6 +239,19 @@ class _OpsPinterest(BaseModel):
     holdout_days: int = Field(gt=0, default=7)
 
 
+class _OpsSocial(BaseModel):
+    """E9 (2026-08-25): cross-channel draft-staleness surfacing
+    (`analytics.stale_drafts()`) -- a brief/analytics READ, never a written
+    event (module docstring precedent: read-time computation against an
+    injected `as_of`, replay-determinism-safe). `staleness_days` matches the
+    longer of the two shipped caption channel cooldowns (14d default,
+    `_OpsSocialChannel.cooldown_days`) -- a draft that has outlived even its
+    own cooldown without a `*_posted` event is unambiguously "aging
+    unposted", not just "still inside its normal review window"."""
+
+    staleness_days: int = Field(gt=0, default=14)
+
+
 class _OpsAutonomy(BaseModel):
     # Chassis master switch + caps (M8a spec §3, draft §5). enabled and
     # monthly_spend_cap_usd MUST default false/0.00 -- nothing auto-executes,
@@ -268,6 +294,7 @@ class OpsConfig(BaseModel):
     catalog_expansion: _OpsCatalogExpansion
     caption: _OpsCaption
     pinterest: _OpsPinterest
+    social: _OpsSocial = Field(default_factory=_OpsSocial)
 
 
 # --- autonomy chassis (PR1) --------------------------------------------------
@@ -437,6 +464,38 @@ class PinExperimentResult(BaseModel):
     baseline_views_per_day: float | None
     observed_views_per_day: float | None
     delta_views_per_day: float | None  # None unless both sides are measurable
+
+
+class SeoEditViewDelta(BaseModel):
+    """T6 (2026-08-25): one executed `listing.seo_edit`'s before/after
+    views-per-day reading, same correlational-only convention and None-not-0
+    absence rule as PinExperimentResult above -- reuses `proj_listing_daily`
+    (the "before" the SEO edit needs is already there, module docstring: no
+    separate view-count capture at edit time, just a join on the edit's own
+    `action.executed` timestamp)."""
+
+    listing_id: int
+    action_id: str
+    title: str
+    edited_at: str  # ISO date
+    days_since_edit: int
+    baseline_views_per_day: float | None
+    observed_views_per_day: float | None
+    delta_views_per_day: float | None  # None unless both sides are measurable
+
+
+class StaleDraft(BaseModel):
+    """E9 (2026-08-25): one drafted pin/caption older than
+    `cfg.social.staleness_days` with no corresponding `*_posted` event yet --
+    a read-time-only computation (`analytics.stale_drafts()`), never a
+    written event. `channel` is `"pin"` for a Pinterest draft, or the
+    caption's own configured channel name (e.g. `"instagram"`)."""
+
+    channel: str
+    listing_id: int
+    action_id: str | None
+    drafted_at: str  # ISO datetime
+    days_stale: int
 
 
 # --- operator surface (PR3, M8a spec §8 PR3 / draft §6) ---------------------

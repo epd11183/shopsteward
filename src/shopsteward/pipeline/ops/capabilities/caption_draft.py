@@ -199,8 +199,9 @@ def _last_drafted_or_posted_at(
                 continue
             if e.payload.get("listing_id") != listing_id or e.payload.get("channel") != channel:
                 continue
-            if e.created_at and (latest is None or parse_ts(e.created_at) > parse_ts(latest)):
-                latest = e.created_at
+            at = _social.effective_at(e)
+            if at and (latest is None or parse_ts(at) > parse_ts(latest)):
+                latest = at
     return latest
 
 
@@ -364,19 +365,23 @@ def _resolve_caption_drafted(conn: sqlite3.Connection, user_id: int, action_id: 
     return drafted
 
 
-def mark_posted(conn: sqlite3.Connection, user_id: int, action_id: str) -> bool:
+def mark_posted(
+    conn: sqlite3.Connection, user_id: int, action_id: str, *, posted_at: str | None = None
+) -> bool:
     """`ops mark-posted` (cli.py, tried after `pinterest_post.mark_posted`
     fails): append `social.caption_posted` for the `social.caption_drafted`
     event whose OWN `action_id` matches. Returns True if a new event was
     appended, False if this action_id was already marked posted (safe
     no-op). Raises ValueError if no drafted caption matches `action_id` at
-    all -- never a partial/crashing write."""
+    all, or if `posted_at` (E4, 2026-08-25) is outside [drafted_at, now] --
+    never a partial/crashing write either way."""
     return _social.mark_posted(
         conn,
         user_id,
         action_id,
         posted_event_type="social.caption_posted",
         resolve_drafted=_resolve_caption_drafted,
+        posted_at=posted_at,
     )
 
 

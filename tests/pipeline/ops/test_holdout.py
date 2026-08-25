@@ -273,6 +273,13 @@ def test_holdout_is_symmetric_regardless_of_which_capability_is_governed_first(c
         _seed_pin_event(conn, "social.pin_drafted", day_before)
 
     cfg = _cfg(holdout_days=7)
+    # T6 (2026-08-25): `listing.seo_edit` now also has its OWN per-listing
+    # cooldown (default 60d), a genuinely different governor check than the
+    # E3 pin/seo holdout this test exercises. In the "seo_first" branch the
+    # seeded prior execution is itself a `listing.seo_edit` on the SAME
+    # target -- pin it well under 1 day so it can never collide with THIS
+    # test's holdout-symmetry assertion (day_before is exactly 1 day ago).
+    cfg.seo_edit.cooldown_days = 1
     seo_cap = StubCapability(key="listing.seo_edit")
     pin_cap = StubCapability(key="social.pinterest_post")
 

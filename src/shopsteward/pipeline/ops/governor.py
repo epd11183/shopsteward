@@ -145,6 +145,21 @@ _CATALOG_EXPAND_CAPABILITY = "listing.catalog_expand"
 # via runner in some call paths.
 _CAPTION_DRAFT_CAPABILITY = "social.caption_draft"
 
+# T6 (guardrail review, 2026-08-25, the SAME failure class as H1/H2a above):
+# `listing.seo_edit`'s own per-listing cooldown (`cfg.seo_edit.cooldown_days`)
+# must be a governor refusal, never re-checked inside `seo_edit._eligible()`
+# -- that function is ALSO execute()'s re-validation predicate, and a
+# cooldown-only exclusion baked into it would be indistinguishable from
+# genuine staleness there, raising a StaleTargetError/ValueError instead of
+# a re-approvable refusal. Composes with, and is independent of, the E3
+# pin/seo_edit HOLDOUT check above: HOLDOUT stops a pin and a seo_edit from
+# BOTH landing on the SAME listing within holdout_days (confounds the pin
+# readout); this cooldown instead stops `listing.seo_edit` from repeatedly
+# churning the SAME listing's title/tags/description before Etsy's search
+# index has had time to reflect the last edit. Different questions, same
+# precedence slot (both INELIGIBLE) -- first hit still wins.
+_SEO_EDIT_CAPABILITY = "listing.seo_edit"
+
 
 # T11 (listing.catalog_expand, 2026-08-25 design doc §5): the portfolio cap
 # below exists to stop mass CHURN of the existing catalog (repeated
@@ -180,6 +195,29 @@ def _seo_renew_executed_dates(conn: sqlite3.Connection, user_id: int, target_id:
             continue
         out.append(parse_ts(e.created_at).date())
     return out
+
+
+def _capability_last_executed_at(
+    conn: sqlite3.Connection, user_id: int, target_id: str, capability: str
+) -> date | None:
+    """T6 -- the most recent `action.executed` date for THIS `capability`
+    against THIS SAME `target_id`, or None if it has never executed. Same
+    two-map-then-scan shape as `_seo_renew_executed_dates()` above, narrowed
+    to one capability (`_seo_renew_executed_dates()` deliberately folds
+    seo_edit+renew together for the E3 holdout, a different question)."""
+    capability_of = _capability_of_action_id(conn, user_id)
+    target_of = _proposed_target_of_action_id(conn, user_id)
+    latest: date | None = None
+    for e in read_all(conn, "action.executed"):
+        if e.user_id != user_id or not e.created_at:
+            continue
+        action_id = e.payload.get("action_id")
+        if capability_of.get(action_id) != capability or target_of.get(action_id) != target_id:
+            continue
+        day = parse_ts(e.created_at).date()
+        if latest is None or day > latest:
+            latest = day
+    return latest
 
 
 def _pin_event_dates(conn: sqlite3.Connection, user_id: int, target_id: str) -> list[date]:
@@ -338,6 +376,11 @@ def _refusal_reason(
                 conn, user_id, cfg, listing_id, channel
             ) is not None and action.target_id not in _caption_candidates(conn, user_id, cfg):
                 return RefusalReason.INELIGIBLE
+
+    if cap.key == _SEO_EDIT_CAPABILITY:
+        last = _capability_last_executed_at(conn, user_id, action.target_id, _SEO_EDIT_CAPABILITY)
+        if last is not None and (today - last).days < cfg.seo_edit.cooldown_days:
+            return RefusalReason.INELIGIBLE
 
     active = _active_listing_count(conn, user_id)
     if active > 0 and cap.key not in _PORTFOLIO_CAP_EXEMPT:

@@ -44,8 +44,8 @@ def _seed_pin_experiment_rows(conn, n: int) -> list[tuple[str, date]]:
         drafted_at = AS_OF - timedelta(days=n - 1 - i)
         action_id = f"act-{i:04d}"
         conn.execute(
-            "INSERT INTO proj_pin_experiments VALUES (?,?,?,?)",
-            (USER_ID, LISTING_ID, action_id, drafted_at.isoformat()),
+            "INSERT INTO proj_pin_experiments VALUES (?,?,?,?,?)",
+            (USER_ID, LISTING_ID, action_id, drafted_at.isoformat(), None),
         )
         rows.append((action_id, drafted_at))
     conn.commit()

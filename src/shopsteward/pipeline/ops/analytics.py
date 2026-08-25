@@ -27,11 +27,14 @@ from shopsteward.pipeline.ops.models import (
     PinExperimentResult,
     ProductTypeStat,
     RevenueWindow,
+    SeoEditViewDelta,
     ShootMoreSuggestion,
     SizeStat,
+    StaleDraft,
     TrendingListing,
     ViewedNotSold,
 )
+from shopsteward.pipeline.ops.projections import action_rows
 from shopsteward.pipeline.ops.timeutil import parse_ts
 
 _SIZE_RE = re.compile(r"(\d+)\s*[x×]\s*(\d+)", re.IGNORECASE)
@@ -638,6 +641,23 @@ def data_quality_notes(
             "to be re-proposed yet, not a hallucinated/ineligible target."
         )
 
+    # E9 (2026-08-25): drafts the operator never posted -- the complementary
+    # view to the cooldown COUNT above (a stale draft is still holding its
+    # own cooldown while sitting off-screen past brief.py's 7-day DONE/
+    # REFUSED lookback window).
+    stale = stale_drafts(conn, user_id, cfg, as_of)
+    if stale:
+        by_channel: dict[str, list[StaleDraft]] = {}
+        for d in stale:
+            by_channel.setdefault(d.channel, []).append(d)
+        for channel in sorted(by_channel):
+            drafts = by_channel[channel]
+            oldest = ", ".join(d.drafted_at[:10] for d in drafts[:3])
+            notes.append(
+                f"{len(drafts)} {channel} draft(s) older than {cfg.social.staleness_days}d with "
+                f"no posted event yet -- oldest: {oldest}."
+            )
+
     return notes
 
 
@@ -694,6 +714,117 @@ def _caption_cooling_down_count(
     return count
 
 
+def stale_drafts(
+    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, as_of: date | None = None
+) -> list[StaleDraft]:
+    """E9 (2026-08-25): every drafted pin/caption older than
+    `cfg.social.staleness_days` with no corresponding `*_posted` event yet --
+    a pure READ against an injected `as_of`, never a written event (this
+    must never become a capability -- see module docstring's replay-
+    determinism rule). Pins are read from `proj_pin_experiments` (already
+    carries the resolved action_id + `posted_at`, E4 above); captions are
+    folded directly from the event log, same shape `_caption_cooling_down_
+    count()` above uses. Sorted oldest-drafted-first, deterministic for a
+    fixed `as_of`."""
+    as_of = _today(as_of)
+    cutoff = datetime(as_of.year, as_of.month, as_of.day, tzinfo=UTC) - timedelta(
+        days=cfg.social.staleness_days
+    )
+
+    out: list[StaleDraft] = []
+
+    for r in conn.execute(
+        "SELECT listing_id, action_id, drafted_at, posted_at FROM proj_pin_experiments "
+        "WHERE user_id=?",
+        (user_id,),
+    ).fetchall():
+        if r["posted_at"] is not None:
+            continue
+        drafted_at = r["drafted_at"]
+        if parse_ts(drafted_at) > cutoff:
+            continue
+        out.append(
+            StaleDraft(
+                channel="pin",
+                listing_id=r["listing_id"],
+                action_id=r["action_id"],
+                drafted_at=drafted_at,
+                days_stale=(as_of - parse_ts(drafted_at).date()).days,
+            )
+        )
+
+    posted_caption_action_ids = {
+        e.payload.get("action_id")
+        for e in read_all(conn, "social.caption_posted")
+        if e.user_id == user_id
+    }
+    for e in read_all(conn, "social.caption_drafted"):
+        if e.user_id != user_id:
+            continue
+        action_id = e.payload.get("action_id")
+        if action_id is not None and action_id in posted_caption_action_ids:
+            continue
+        drafted_at = e.payload.get("drafted_at") or e.created_at
+        if drafted_at is None or parse_ts(drafted_at) > cutoff:
+            continue
+        out.append(
+            StaleDraft(
+                channel=e.payload.get("channel", "instagram"),
+                listing_id=e.payload["listing_id"],
+                action_id=action_id,
+                drafted_at=drafted_at,
+                days_stale=(as_of - parse_ts(drafted_at).date()).days,
+            )
+        )
+
+    out.sort(key=lambda d: d.drafted_at)
+    return out
+
+
+def _before_after_views_per_day(
+    conn: sqlite3.Connection,
+    user_id: int,
+    listing_id: int,
+    anchor: date,
+    window_days: int,
+    as_of: date,
+) -> tuple[float | None, float | None]:
+    """Shared by `pin_experiment_readout()` and `seo_edit_view_delta()`:
+    views/day in the `window_days` immediately before `anchor` (baseline)
+    vs. the same-length window immediately after (observed), over
+    `proj_listing_daily`. None (never 0) whenever unmeasurable -- see
+    `pin_experiment_readout()`'s own docstring for the two absence cases,
+    identical here."""
+    before_end = anchor - timedelta(days=1)
+    before_start = before_end - timedelta(days=window_days - 1)
+    after_start = anchor + timedelta(days=1)
+    after_end = after_start + timedelta(days=window_days - 1)
+
+    baseline: float | None = None
+    (min_day_str,) = conn.execute(
+        "SELECT MIN(day) FROM proj_listing_daily WHERE user_id=? AND listing_id=?",
+        (user_id, listing_id),
+    ).fetchone()
+    if min_day_str is not None and date.fromisoformat(min_day_str) <= before_start:
+        before_rows = conn.execute(
+            "SELECT day, views FROM proj_listing_daily WHERE user_id=? AND listing_id=? "
+            "AND day BETWEEN ? AND ? ORDER BY day",
+            (user_id, listing_id, before_start.isoformat(), before_end.isoformat()),
+        ).fetchall()
+        baseline = _views_rate_per_day(before_rows, window_days)
+
+    observed: float | None = None
+    if as_of >= after_end:
+        after_rows = conn.execute(
+            "SELECT day, views FROM proj_listing_daily WHERE user_id=? AND listing_id=? "
+            "AND day BETWEEN ? AND ? ORDER BY day",
+            (user_id, listing_id, after_start.isoformat(), after_end.isoformat()),
+        ).fetchall()
+        observed = _views_rate_per_day(after_rows, window_days)
+
+    return baseline, observed
+
+
 def pin_experiment_readout(
     conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, as_of: date | None = None
 ) -> list[PinExperimentResult]:
@@ -701,17 +832,24 @@ def pin_experiment_readout(
     joined against this listing's own proj_listing_daily views history --
     pure SQL, no LLM, no attribution claim. For each drafted pin, compares
     the listing's views/day in the `cfg.windows.revenue_window_days` days
-    immediately before `drafted_at` (baseline) against the same-length
+    immediately before the anchor date (baseline) against the same-length
     window immediately after (observed). Reuses revenue_window_days rather
     than adding a new window knob (configuration-over-code precedent).
+
+    The anchor date (E4, 2026-08-25) is `posted_at` (`ops mark-posted
+    --posted-at`, possibly backdated by the operator to when the pin was
+    ACTUALLY posted) when the pin has been marked posted, else `drafted_at`
+    -- unchanged from before this for a still-unposted pin. `drafted_at` on
+    the returned model always reports when the draft was created, regardless
+    of which date the window is measured from.
 
     **Correlational only** -- a delta could be driven by anything, not
     provably the pin. Both baseline_views_per_day and observed_views_per_day
     are None (never 0) whenever they can't be measured yet:
-    - observed is None if fewer than window_days days have elapsed since
-      drafted_at (too early -- absence of data, not a zero reading).
+    - observed is None if fewer than window_days days have elapsed since the
+      anchor date (too early -- absence of data, not a zero reading).
     - baseline is None if the listing's observed history doesn't reach back
-      window_days days before drafted_at (too new to have a real baseline),
+      window_days days before the anchor (too new to have a real baseline),
       or if there are fewer than two observations in that window
       (`_views_delta`'s own rule).
     Rendering the "too early"/"no baseline" cases honestly is the caller's
@@ -725,7 +863,7 @@ def pin_experiment_readout(
     rows = list(
         reversed(
             conn.execute(
-                "SELECT listing_id, action_id, drafted_at FROM proj_pin_experiments "
+                "SELECT listing_id, action_id, drafted_at, posted_at FROM proj_pin_experiments "
                 "WHERE user_id=? ORDER BY drafted_at DESC, action_id DESC LIMIT ?",
                 (user_id, _PIN_EXPERIMENTS_MAX_ROWS),
             ).fetchall()
@@ -736,34 +874,11 @@ def pin_experiment_readout(
     for r in rows:
         listing_id = r["listing_id"]
         drafted_date = date.fromisoformat(r["drafted_at"][:10])
+        anchor_date = date.fromisoformat(r["posted_at"][:10]) if r["posted_at"] else drafted_date
 
-        before_end = drafted_date - timedelta(days=1)
-        before_start = before_end - timedelta(days=window_days - 1)
-        after_start = drafted_date + timedelta(days=1)
-        after_end = after_start + timedelta(days=window_days - 1)
-
-        baseline: float | None = None
-        (min_day_str,) = conn.execute(
-            "SELECT MIN(day) FROM proj_listing_daily WHERE user_id=? AND listing_id=?",
-            (user_id, listing_id),
-        ).fetchone()
-        if min_day_str is not None and date.fromisoformat(min_day_str) <= before_start:
-            before_rows = conn.execute(
-                "SELECT day, views FROM proj_listing_daily WHERE user_id=? AND listing_id=? "
-                "AND day BETWEEN ? AND ? ORDER BY day",
-                (user_id, listing_id, before_start.isoformat(), before_end.isoformat()),
-            ).fetchall()
-            baseline = _views_rate_per_day(before_rows, window_days)
-
-        observed: float | None = None
-        if as_of >= after_end:
-            after_rows = conn.execute(
-                "SELECT day, views FROM proj_listing_daily WHERE user_id=? AND listing_id=? "
-                "AND day BETWEEN ? AND ? ORDER BY day",
-                (user_id, listing_id, after_start.isoformat(), after_end.isoformat()),
-            ).fetchall()
-            observed = _views_rate_per_day(after_rows, window_days)
-
+        baseline, observed = _before_after_views_per_day(
+            conn, user_id, listing_id, anchor_date, window_days, as_of
+        )
         delta_per_day = None if baseline is None or observed is None else observed - baseline
 
         out.append(
@@ -772,10 +887,58 @@ def pin_experiment_readout(
                 action_id=r["action_id"],
                 title=_title(conn, user_id, listing_id),
                 drafted_at=drafted_date.isoformat(),
-                days_since_posted=(as_of - drafted_date).days,
+                days_since_posted=(as_of - anchor_date).days,
                 baseline_views_per_day=baseline,
                 observed_views_per_day=observed,
                 delta_views_per_day=delta_per_day,
             )
         )
     return out
+
+
+def seo_edit_view_delta(
+    conn: sqlite3.Connection,
+    user_id: int,
+    action_id: str,
+    cfg: OpsConfig,
+    as_of: date | None = None,
+) -> SeoEditViewDelta | None:
+    """T6 (2026-08-25): before/after views-per-day for one executed
+    `listing.seo_edit` action, joined against `proj_listing_daily` on the
+    edit's own `action.executed` date -- no separate view-count capture is
+    needed at edit time (module docstring: `proj_listing_daily` already
+    gives the "before" for free). Returns None if `action_id` doesn't
+    resolve to an EXECUTED `listing.seo_edit` action (never guesses)."""
+    as_of = _today(as_of)
+    row = None
+    for r in action_rows(conn):
+        if (
+            r["user_id"] == user_id
+            and r["action_id"] == action_id
+            and r["capability"] == "listing.seo_edit"
+            and r["state"] == "executed"
+        ):
+            row = r
+            break
+    if row is None or row["resolved_at"] is None:
+        return None
+
+    listing_id = int(row["target_id"])
+    edited_date = date.fromisoformat(row["resolved_at"][:10])
+    window_days = cfg.windows.revenue_window_days
+
+    baseline, observed = _before_after_views_per_day(
+        conn, user_id, listing_id, edited_date, window_days, as_of
+    )
+    delta_per_day = None if baseline is None or observed is None else observed - baseline
+
+    return SeoEditViewDelta(
+        listing_id=listing_id,
+        action_id=action_id,
+        title=_title(conn, user_id, listing_id),
+        edited_at=edited_date.isoformat(),
+        days_since_edit=(as_of - edited_date).days,
+        baseline_views_per_day=baseline,
+        observed_views_per_day=observed,
+        delta_views_per_day=delta_per_day,
+    )

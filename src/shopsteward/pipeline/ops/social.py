@@ -33,6 +33,20 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from shopsteward.core.events import Event, append, read_all
+from shopsteward.pipeline.ops.timeutil import parse_ts
+
+
+def effective_at(e: Event) -> str | None:
+    """E4 (2026-08-25, `--posted-at`): an event's own `posted_at` payload
+    field if present (an operator may backdate this to when they actually
+    posted, not when they ran `ops mark-posted`), else its append-time
+    `created_at`. A `*_drafted` event never carries `posted_at`, so this
+    always falls through to `created_at` for one -- safe to call on either
+    a drafted or a posted event uniformly, everywhere recency of "when was
+    this listing last pinned/captioned" is computed (cooldowns, the
+    pin-experiment outcome readout)."""
+    posted_at = e.payload.get("posted_at")
+    return posted_at if isinstance(posted_at, str) else e.created_at
 
 
 def mark_posted(
@@ -42,13 +56,36 @@ def mark_posted(
     *,
     posted_event_type: str,
     resolve_drafted: Callable[[sqlite3.Connection, int, str], Event],
+    posted_at: str | None = None,
 ) -> bool:
     """Returns True if a new `posted_event_type` event was appended, False
     if `action_id` was already marked posted (safe no-op). `resolve_drafted`
     is responsible for raising `ValueError` (with its own message) when
     `action_id` doesn't resolve to a real drafted event of its channel --
-    this function never silently no-ops on an unknown id."""
+    this function never silently no-ops on an unknown id.
+
+    `posted_at` (E4, 2026-08-25): an optional operator-supplied backdate for
+    when the draft was ACTUALLY posted, distinct from "now" (when this CLI
+    call runs). Validated to fall between the draft's own `drafted_at` and
+    now, INCLUSIVE of both ends -- raises `ValueError` (never appends) on a
+    future date or one before the draft even existed. `None` (the default)
+    preserves today's exact behavior: stamp wall-clock now."""
     drafted = resolve_drafted(conn, user_id, action_id)
+
+    now = datetime.now(UTC)
+    if posted_at is None:
+        posted_at_value = now.isoformat()
+    else:
+        posted_dt = parse_ts(posted_at)
+        if posted_dt > now:
+            raise ValueError(f"--posted-at {posted_at!r} is in the future")
+        drafted_at_raw = drafted.payload.get("drafted_at") or drafted.created_at
+        if drafted_at_raw is not None and posted_dt < parse_ts(drafted_at_raw):
+            raise ValueError(
+                f"--posted-at {posted_at!r} is before this draft's own drafted_at "
+                f"{drafted_at_raw!r}"
+            )
+        posted_at_value = posted_dt.isoformat()
 
     already_posted = any(
         e.user_id == user_id and e.payload.get("action_id") == action_id
@@ -65,7 +102,7 @@ def mark_posted(
             payload={
                 "listing_id": drafted.payload["listing_id"],
                 "action_id": action_id,
-                "posted_at": datetime.now(UTC).isoformat(),
+                "posted_at": posted_at_value,
             },
         ),
     )
