@@ -3,6 +3,7 @@
 from typing import Protocol
 
 from shopsteward.adapters.etsy.models import (
+    EtsyActiveListingsPage,
     EtsyDraftSpec,
     EtsyFileRef,
     EtsyImageRef,
@@ -65,6 +66,36 @@ class EtsyAdapter(Protocol):
         with no inventory record (e.g. one never edited via Etsy's
         inventory tools), same "absence is not an error" shape as
         get_listing_images."""
+        ...
+
+    def find_active_listings(
+        self,
+        keywords: str,
+        *,
+        taxonomy_id: int | None = None,
+        min_price: float | None = None,
+        max_price: float | None = None,
+        limit: int = 25,
+        sort_on: str = "score",
+    ) -> EtsyActiveListingsPage:
+        """findAllListingsActive (GET /v3/application/listings/active) -- a
+        global market search across ALL of Etsy, not just this shop, and the
+        only method on this Protocol authenticated with x-api-key alone (no
+        OAuth access token, no scope at all -- confirmed against the real
+        Etsy OAS). This is the free, first-party demand/competition signal
+        this shop has never used: no keyword-volume API exists on Etsy at
+        all (every paid tool -- eRank/Marmalade/EverBee/Alura -- sells a
+        proprietary scrape, not a public API), but `count` (total matching
+        listings, a competition proxy) plus the ranked `results` (Etsy's own
+        relevance ranker, see below) get most of what those tools sell.
+
+        `sort_on="score"` is Etsy's own relevance ranker and is ALWAYS
+        DESCENDING regardless of `sort_order` (a real, confirmed Etsy API
+        quirk) -- `keyword_probe.py` relies on that ordering to treat the
+        first `limit` rows as "what Etsy's ranker currently rewards" for
+        this phrase. `keywords` must appear in every returned listing's
+        searchable text (Etsy's own AND-match semantics for this param).
+        """
         ...
 
 

@@ -13,9 +13,15 @@ untouched by that addition, which the behavioural test below still proves.
 `registry.py` is exempt too (M8b slice 2, design §2): it imports
 `adapters.planner.interface.ProposalIntent` for the `Capability.materialize()`
 type hint only -- a pure-Pydantic boundary shape with zero httpx/transport
-of its own, not a network call. The import-linter contract (pyproject.toml)
-is the actual one-way-import enforcement; this test's job is narrower --
-proving no ops module reaches for a transport it doesn't need.
+of its own, not a network call. `keyword_probe.py` is exempt for the same
+reason (2026-08-25 Etsy keyword/competition probe): it imports the
+`EtsyAdapter` Protocol and `EtsyActiveListingResult` Pydantic model purely
+for type hints -- it never imports `LiveEtsyAdapter`/httpx itself, and the
+transport call actually happens through whatever adapter its caller (CLI)
+passes in, exactly like every other `EtsyAdapter`-typed function in this
+codebase. The import-linter contract (pyproject.toml) is the actual
+one-way-import enforcement; this test's job is narrower -- proving no ops
+module reaches for a transport it doesn't need.
 
 Behavioural: after seeding a synthetic shop and generating the full brief,
 the event log contains only the event types this slice is allowed to
@@ -37,7 +43,7 @@ from tests.pipeline.ops.helpers import AS_OF, USER_ID, seed_two_year_shop
 
 _OPS_DIR = Path(brief_module.__file__).parent
 _FORBIDDEN_MODULES = ("httpx", "requests", "shopsteward.adapters")
-_NARRATION_FILES = {"planner.py", "cli.py", "registry.py"}
+_NARRATION_FILES = {"planner.py", "cli.py", "registry.py", "keyword_probe.py"}
 
 
 def _imported_modules(py_file: Path) -> set[str]:

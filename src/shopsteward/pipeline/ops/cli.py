@@ -44,9 +44,13 @@ appends `social.caption_drafted`; no Meta/IG/FB call of any kind), so it is
 never gated on `--live-autonomy` either."""
 
 import os
-from typing import Annotated
+from pathlib import Path
+from typing import TYPE_CHECKING, Annotated
 
 import typer
+
+if TYPE_CHECKING:
+    from shopsteward.adapters.etsy.live import LiveEtsyAdapter
 
 ops_app = typer.Typer(no_args_is_help=True, help="Shop operations brief (M8a).")
 config_app = typer.Typer(no_args_is_help=True, help="ops.json config.")
@@ -129,6 +133,134 @@ def brief(
             typer.echo(narration)
     finally:
         conn.close()
+
+
+@ops_app.command("probe-keyword")
+def probe_keyword_cmd(
+    phrase: Annotated[
+        list[str], typer.Argument(help="One or more phrases to probe (space-separated)")
+    ],
+    taxonomy_id: Annotated[
+        int | None, typer.Option(help="Etsy taxonomy_id filter, same for every phrase")
+    ] = None,
+    min_price: Annotated[float | None, typer.Option(help="Minimum price filter (USD)")] = None,
+    max_price: Annotated[float | None, typer.Option(help="Maximum price filter (USD)")] = None,
+    fixtures: Annotated[
+        Path | None, typer.Option(help="Fixture dir (default source until live approved)")
+    ] = None,
+    live_etsy_read: Annotated[
+        bool,
+        typer.Option("--live-etsy-read", help="Query the real Etsy findAllListingsActive API"),
+    ] = False,
+) -> None:
+    """Probe Etsy's free findAllListingsActive competition/relevance signal
+    for one or more keyword phrases: competition count, the tag set Etsy's
+    own ranker rewards, price range, and a favorites-per-day demand proxy --
+    computed over the top-ranked results with our own listings excluded.
+    Read-only market research, no autonomy chassis involved: never spends,
+    never writes to Etsy. Appends one `etsy.keyword.probed` event per
+    phrase (derived aggregates only -- see keyword_probe.py's module
+    docstring for exactly what is never persisted). Fixture-backed by
+    default, same --fixtures/--live-etsy-read gating as
+    `shop archive adopt-local`."""
+    from shopsteward.adapters.etsy.fake import FixtureEtsyAdapter
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.core.projections import rebuild as rebuild_core
+    from shopsteward.pipeline.live_gate import live_etsy_read_error, live_etsy_read_open
+    from shopsteward.pipeline.ops import config as ops_config
+    from shopsteward.pipeline.ops.keyword_probe import probe_keyword
+    from shopsteward.pipeline.ops.projections import rebuild_ops
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    if fixtures is not None and live_etsy_read:
+        typer.secho("Pass --fixtures or --live-etsy-read, not both.", fg="red")
+        raise typer.Exit(1)
+    if fixtures is None and not live_etsy_read:
+        typer.secho(
+            "Live Etsy read is gated on operator approval (PRD §8.4); "
+            "pass --fixtures or --live-etsy-read.",
+            fg="red",
+        )
+        raise typer.Exit(1)
+    if live_etsy_read and not live_etsy_read_open():
+        typer.secho(live_etsy_read_error(), fg="red")
+        raise typer.Exit(1)
+
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        ops_config.seed(conn, DEFAULT_USER_ID)
+        rebuild_core(conn)
+        rebuild_ops(conn)
+        cfg = ops_config.get_ops_config(conn, DEFAULT_USER_ID)
+
+        phrases = phrase[: cfg.keyword_probe.max_phrases_per_run]
+        if len(phrases) < len(phrase):
+            typer.secho(
+                f"only probing the first {cfg.keyword_probe.max_phrases_per_run} of "
+                f"{len(phrase)} phrases (keyword_probe.max_phrases_per_run)",
+                fg="yellow",
+            )
+
+        adapter = (
+            _build_live_etsy_read_adapter() if live_etsy_read else FixtureEtsyAdapter(fixtures)
+        )
+
+        for p in phrases:
+            result = probe_keyword(
+                conn,
+                DEFAULT_USER_ID,
+                adapter,
+                cfg,
+                p,
+                taxonomy_id=taxonomy_id,
+                min_price=min_price,
+                max_price=max_price,
+            )
+            agg = result.aggregates
+            typer.echo(f"\n== {p!r} ==")
+            typer.echo(f"  competition (matching listings): {result.competition_count}")
+            typer.echo(f"  sample (top-{result.top_n}, own listings excluded): {agg.sample_size}")
+            if agg.sample_size == 0:
+                typer.echo("  no non-own results -- price/favorites unmeasurable")
+                continue
+            top_tags = sorted(agg.tag_frequency.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
+            typer.echo(f"  top tags: {', '.join(f'{t} ({n})' for t, n in top_tags)}")
+            typer.echo(
+                f"  price USD: median {agg.median_price_usd} "
+                f"(min {agg.min_price_usd}, max {agg.max_price_usd})"
+            )
+            typer.echo(
+                f"  favorites/day: median {agg.median_favorites_per_day} "
+                f"(min {agg.min_favorites_per_day}, max {agg.max_favorites_per_day})"
+            )
+    finally:
+        conn.close()
+
+
+def _build_live_etsy_read_adapter() -> "LiveEtsyAdapter":
+    """Duplicated (not imported) from pipeline.listings.cli's identical
+    helper -- same reasoning that module's own docstring gives for
+    duplicating push.py's build_etsy_write_adapter: avoiding a needless
+    cross-module import for four lines, not a circular-import necessity
+    here specifically, but keeping the same shape/behavior everywhere this
+    pattern appears."""
+    import os
+
+    from shopsteward.adapters.etsy.auth import EtsyTokenStore
+    from shopsteward.adapters.etsy.live import LiveEtsyAdapter
+
+    api_key = os.environ.get("ETSY_API_KEY")
+    if not api_key:
+        raise RuntimeError("ETSY_API_KEY is not set; live Etsy reads need it.")
+    store = EtsyTokenStore()
+    tokens = store.load()
+    if tokens is None or tokens.shop_id is None:
+        raise RuntimeError("No Etsy tokens/shop on disk; run `shopsteward etsy auth` first.")
+    access_token = store.get_access_token(api_key)
+    return LiveEtsyAdapter(api_key=api_key, shop_id=tokens.shop_id, access_token=access_token)
 
 
 @config_app.command("apply")

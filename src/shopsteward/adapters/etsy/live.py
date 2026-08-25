@@ -12,6 +12,7 @@ import pydantic
 from shopsteward.adapters.etsy.auth import EtsyTokenAuth, EtsyTokenStore, api_key_header
 from shopsteward.adapters.etsy.interface import EtsyWriteError
 from shopsteward.adapters.etsy.models import (
+    EtsyActiveListingsPage,
     EtsyDraftSpec,
     EtsyFileRef,
     EtsyImageRef,
@@ -200,6 +201,36 @@ class LiveEtsyAdapter:
                 return EtsyListingInventory()
             raise
         return EtsyListingInventory.model_validate(body)
+
+    def find_active_listings(
+        self,
+        keywords: str,
+        *,
+        taxonomy_id: int | None = None,
+        min_price: float | None = None,
+        max_price: float | None = None,
+        limit: int = 25,
+        sort_on: str = "score",
+    ) -> EtsyActiveListingsPage:
+        # findAllListingsActive -- global (no {shop_id} in the path), a
+        # single request (no pagination needed here -- keyword_probe.py only
+        # ever wants the top `limit` ranked rows, never the whole match set).
+        # Routes through _get, so it inherits the 429-retry. This client
+        # always sends both x-api-key and a bearer token (Etsy accepts the
+        # extra, unneeded bearer token harmlessly) even though the real
+        # endpoint only requires x-api-key.
+        params: dict[str, int | str | float] = {
+            "keywords": keywords,
+            "limit": limit,
+            "sort_on": sort_on,
+        }
+        if taxonomy_id is not None:
+            params["taxonomy_id"] = taxonomy_id
+        if min_price is not None:
+            params["min_price"] = min_price
+        if max_price is not None:
+            params["max_price"] = max_price
+        return EtsyActiveListingsPage.model_validate(self._get("/listings/active", **params))
 
 
 class LiveEtsyWriteAdapter:

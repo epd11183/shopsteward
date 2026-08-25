@@ -42,6 +42,38 @@ class EtsyListing(BaseModel):
         return self.price.as_float
 
 
+class EtsyActiveListingResult(BaseModel):
+    """One row of findAllListingsActive's response (GET
+    /v3/application/listings/active) -- the only Etsy endpoint on this
+    Protocol keyed by x-api-key ALONE (no OAuth access token, no scope at
+    all -- it is a global, non-shop-scoped market search across all of
+    Etsy). Used by pipeline/ops/keyword_probe.py for tag/price/favorites-
+    per-day market-research aggregation -- see that module's docstring for
+    exactly what is and is not persisted from rows of this shape (never the
+    raw rows themselves)."""
+
+    listing_id: int
+    title: str
+    tags: list[str] = Field(default_factory=list)
+    price: Money
+    num_favorers: int = 0
+    creation_timestamp: int  # epoch seconds, per Etsy's real response shape
+    listing_type: str = "physical"
+    taxonomy_id: int | None = None
+    url: str | None = None
+    state: str = "active"
+
+
+class EtsyActiveListingsPage(BaseModel):
+    """findAllListingsActive's top-level response shape: `count` is the
+    TOTAL number of matching listings on Etsy (the competition signal),
+    independent of how many rows `results` actually carries (bounded by the
+    request's `limit`)."""
+
+    count: int
+    results: list[EtsyActiveListingResult] = Field(default_factory=list)
+
+
 class EtsyShopSection(BaseModel):
     """getShopSections / createShopSection response row (shops_r/shops_w
     scopes, already held -- no new scope). Dead code until a future

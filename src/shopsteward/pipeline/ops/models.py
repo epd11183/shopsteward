@@ -252,6 +252,26 @@ class _OpsSocial(BaseModel):
     staleness_days: int = Field(gt=0, default=14)
 
 
+class _OpsKeywordProbe(BaseModel):
+    """`keyword_probe.py` (2026-08-25) -- the free first-party Etsy
+    keyword/competition research signal (findAllListingsActive, x-api-key
+    only, no scope). Read-only market research, NOT an autonomy-chassis
+    capability -- no Tier, no governor, nothing here spends or writes to
+    Etsy (see keyword_probe.py's module docstring). `top_n` bounds how many
+    of Etsy's own top-ranked (sort_on="score") results are pulled per probe
+    for tag/price/favorites aggregation; `max_phrases_per_run` bounds a
+    single `ops probe-keyword` invocation's phrase count (keeps a manual
+    research session from hammering Etsy's per-second rate limit).
+    `cadence_days` is informational only -- no scheduler reads it yet; it
+    documents the intended re-probe cadence for when one is built, so probes
+    accumulate into a meaningful time series rather than firing arbitrarily
+    often."""
+
+    top_n: int = Field(gt=0, default=25)
+    max_phrases_per_run: int = Field(gt=0, default=5)
+    cadence_days: int = Field(gt=0, default=14)
+
+
 class _OpsAutonomy(BaseModel):
     # Chassis master switch + caps (M8a spec §3, draft §5). enabled and
     # monthly_spend_cap_usd MUST default false/0.00 -- nothing auto-executes,
@@ -295,6 +315,9 @@ class OpsConfig(BaseModel):
     caption: _OpsCaption
     pinterest: _OpsPinterest
     social: _OpsSocial = Field(default_factory=_OpsSocial)
+    # Additive/default-factory (same precedent as `social` above) -- a
+    # stored config seeded before this field existed must still validate.
+    keyword_probe: _OpsKeywordProbe = Field(default_factory=_OpsKeywordProbe)
 
 
 # --- autonomy chassis (PR1) --------------------------------------------------

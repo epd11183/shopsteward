@@ -324,6 +324,65 @@ def test_get_raises_after_exhausting_429_retries(monkeypatch: pytest.MonkeyPatch
 
 
 @respx.mock
+def test_find_active_listings_sends_expected_params_and_parses() -> None:
+    # findAllListingsActive -- global (no {shop_id} in the path), single
+    # request, no pagination.
+    route = respx.get(f"{BASE}/listings/active").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "count": 42,
+                "results": [
+                    {
+                        "listing_id": 900001,
+                        "title": "Sandhill Crane Print Fine Art",
+                        "tags": ["sandhill crane", "bird print"],
+                        "price": {"amount": 1800, "divisor": 100, "currency_code": "USD"},
+                        "num_favorers": 40,
+                        "creation_timestamp": 1740000000,
+                        "listing_type": "physical",
+                        "taxonomy_id": 68887,
+                        "url": "https://www.etsy.com/listing/example",
+                        "state": "active",
+                    }
+                ],
+            },
+        )
+    )
+    adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
+    page = adapter.find_active_listings(
+        "sandhill crane print", taxonomy_id=68887, min_price=5.0, max_price=100.0, limit=10
+    )
+    assert page.count == 42
+    assert page.results[0].listing_id == 900001
+    assert page.results[0].price.as_float == 18.0
+
+    sent_params = dict(route.calls.last.request.url.params)
+    assert sent_params["keywords"] == "sandhill crane print"
+    assert sent_params["taxonomy_id"] == "68887"
+    assert sent_params["min_price"] == "5.0"
+    assert sent_params["max_price"] == "100.0"
+    assert sent_params["limit"] == "10"
+    assert sent_params["sort_on"] == "score"
+    sent = route.calls.last.request
+    assert sent.headers["x-api-key"] == "k"
+
+
+@respx.mock
+def test_find_active_listings_omits_unset_filters() -> None:
+    route = respx.get(f"{BASE}/listings/active").mock(
+        return_value=httpx.Response(200, json={"count": 0, "results": []})
+    )
+    adapter = LiveEtsyAdapter(api_key="k", shop_id=100001, access_token="tok")
+    adapter.find_active_listings("no matches phrase")
+
+    sent_params = dict(route.calls.last.request.url.params)
+    assert "taxonomy_id" not in sent_params
+    assert "min_price" not in sent_params
+    assert "max_price" not in sent_params
+
+
+@respx.mock
 def test_download_image_sends_no_auth_header() -> None:
     route = respx.get("https://i.etsystatic.com/img.jpg").mock(
         return_value=httpx.Response(200, content=b"\xff\xd8jpegbytes")

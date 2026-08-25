@@ -83,6 +83,11 @@
   "social": {
     "staleness_days": 14
   },
+  "keyword_probe": {
+    "top_n": 25,
+    "max_phrases_per_run": 5,
+    "cadence_days": 14
+  },
   "autonomy": {
     "enabled": true,
     "daily_action_cap": 1000,

@@ -1,0 +1,59 @@
+{
+  "sandhill crane print": {
+    "count": 5,
+    "results": [
+      {
+        "listing_id": 111,
+        "title": "Our Own Sandhill Crane Print",
+        "tags": ["sandhill crane", "bird print", "wall art"],
+        "price": { "amount": 2400, "divisor": 100, "currency_code": "USD" },
+        "num_favorers": 12,
+        "creation_timestamp": 1745000000,
+        "listing_type": "download",
+        "taxonomy_id": 68887,
+        "url": "https://www.etsy.com/listing/example-own",
+        "state": "active"
+      },
+      {
+        "listing_id": 900001,
+        "title": "Sandhill Crane Print Fine Art",
+        "tags": ["sandhill crane", "bird print", "nature photography"],
+        "price": { "amount": 1800, "divisor": 100, "currency_code": "USD" },
+        "num_favorers": 40,
+        "creation_timestamp": 1740000000,
+        "listing_type": "physical",
+        "taxonomy_id": 68887,
+        "url": "https://www.etsy.com/listing/example-competitor-1",
+        "state": "active"
+      },
+      {
+        "listing_id": 900002,
+        "title": "Sandhill Crane Wall Art",
+        "tags": ["sandhill crane", "wall art", "bird print"],
+        "price": { "amount": 3000, "divisor": 100, "currency_code": "USD" },
+        "num_favorers": 20,
+        "creation_timestamp": 1742000000,
+        "listing_type": "physical",
+        "taxonomy_id": 68887,
+        "url": "https://www.etsy.com/listing/example-competitor-2",
+        "state": "active"
+      },
+      {
+        "listing_id": 900003,
+        "title": "Crane Bird Photo Poster",
+        "tags": ["bird print", "poster"],
+        "price": { "amount": 1200, "divisor": 100, "currency_code": "USD" },
+        "num_favorers": 5,
+        "creation_timestamp": 1744000000,
+        "listing_type": "physical",
+        "taxonomy_id": 68887,
+        "url": "https://www.etsy.com/listing/example-competitor-3",
+        "state": "active"
+      }
+    ]
+  },
+  "no matches phrase": {
+    "count": 0,
+    "results": []
+  }
+}

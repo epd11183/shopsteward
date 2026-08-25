@@ -6,6 +6,7 @@ from typing import Any
 
 from shopsteward.adapters.etsy.interface import EtsyWriteError
 from shopsteward.adapters.etsy.models import (
+    EtsyActiveListingsPage,
     EtsyDraftSpec,
     EtsyFileRef,
     EtsyImageRef,
@@ -69,6 +70,28 @@ class FixtureEtsyAdapter:
         # result" shape get_listing_images uses for an unknown listing_id.
         row = self._load("listing_inventory").get(str(listing_id))
         return EtsyListingInventory.model_validate(row) if row else EtsyListingInventory()
+
+    def find_active_listings(
+        self,
+        keywords: str,
+        *,
+        taxonomy_id: int | None = None,
+        min_price: float | None = None,
+        max_price: float | None = None,
+        limit: int = 25,
+        sort_on: str = "score",
+    ) -> EtsyActiveListingsPage:
+        # active_listings.json maps a keyword phrase -> a full
+        # findAllListingsActive response body (already sorted the way a
+        # sort_on="score" request would return it). taxonomy_id/min_price/
+        # max_price/sort_on are NOT applied to fixture data -- each fixture
+        # entry represents one canned query's result already; `limit`
+        # truncates it, same shape a real Etsy `limit` param would.
+        body = self._load("active_listings").get(keywords)
+        if body is None:
+            return EtsyActiveListingsPage(count=0, results=[])
+        page = EtsyActiveListingsPage.model_validate(body)
+        return EtsyActiveListingsPage(count=page.count, results=page.results[:limit])
 
 
 class FakeEtsyWriteAdapter:

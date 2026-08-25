@@ -77,3 +77,25 @@ def test_list_taxonomy_nodes_returns_fixture_rows() -> None:
     assert len(nodes) == 1
     assert nodes[0].name == "Art & Collectibles"
     assert nodes[0].children[0].name == "Photography"
+
+
+def test_find_active_listings_returns_fixture_page() -> None:
+    adapter = FixtureEtsyAdapter(FIXTURES)
+    page = adapter.find_active_listings("sandhill crane print")
+    assert page.count == 5
+    assert len(page.results) == 4  # count is the total on Etsy, not the returned page size
+    assert page.results[0].listing_id == 111
+
+
+def test_find_active_listings_limit_truncates_results() -> None:
+    adapter = FixtureEtsyAdapter(FIXTURES)
+    page = adapter.find_active_listings("sandhill crane print", limit=2)
+    assert page.count == 5  # count is unaffected by limit
+    assert len(page.results) == 2
+
+
+def test_find_active_listings_unknown_phrase_returns_empty() -> None:
+    adapter = FixtureEtsyAdapter(FIXTURES)
+    page = adapter.find_active_listings("a phrase with zero fixture coverage")
+    assert page.count == 0
+    assert page.results == []
