@@ -78,6 +78,7 @@ from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.core.events import read_all
 from shopsteward.core.sync import read_live_observed
 from shopsteward.pipeline.ops.config import get_ops_config, ops_config_hash
+from shopsteward.pipeline.ops.keyword_probe import _is_safe_ranker_tag
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
 from shopsteward.pipeline.ops.registry import StaleTargetError, compute_action_id
 
@@ -224,7 +225,9 @@ def _eligible(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> dict[st
     return out
 
 
-def _validate_params(params: dict, target: _Target) -> dict[str, str | list[str]] | None:
+def _validate_params(
+    params: dict, target: _Target, cfg: OpsConfig
+) -> dict[str, str | list[str]] | None:
     """Structural validation against Etsy's real limits (drop, never clamp)
     plus a diff against `target`'s current title/tags/description -- returns
     only the fields that are both valid AND actually changed, or None if
@@ -239,7 +242,29 @@ def _validate_params(params: dict, target: _Target) -> dict[str, str | list[str]
     same intent independently. Description content does not need tags'
     comma-rejection check (that's specific to comma-joining tags into Etsy's
     form-urlencoded array field; description is a plain string field, sent
-    as-is)."""
+    as-is).
+
+    M2 (guardrail review 2026-08-25): `tags` also runs through
+    `keyword_probe._is_safe_ranker_tag` -- the SAME misrepresentation filter
+    the facts-JSON side already applies to probe-derived candidates
+    (planner.py's `_seo_edit_keyword_signals`), reused here so the guard is
+    deterministic on BOTH ends rather than trusting the prompt: this change
+    puts competitor medium-vocabulary (from keyword-probe facts) directly
+    next to the tag-writing task, and nothing stops the LLM composing e.g.
+    "bison painting" itself rather than copying it from a fact block.
+
+    Chose REJECT-THE-WHOLE-TAGS-UPDATE over silently dropping just the
+    offending tag: this function's existing structural rule for `tags`
+    already rejects the entire update on ANY single invalid tag (comma/
+    length) rather than repairing the list item-by-item -- reusing that same
+    shape means one validation semantics for the whole field, not two. More
+    importantly, `tags` is exactly what the operator reviews and approves
+    (T2/PROPOSE ceiling, module docstring); silently publishing a
+    LLM-authored list with one entry quietly removed is a different tag set
+    than what was proposed and approved, without the operator ever being
+    told. Title/description are untouched and may still proceed on the same
+    intent independently, same as every other per-field independence rule
+    here."""
     title = params.get("title")
     new_title: str | None = None
     if title is not None:
@@ -259,6 +284,8 @@ def _validate_params(params: dict, target: _Target) -> dict[str, str | list[str]
                 validate_tag(t, max_len=_MAX_TAG_LEN)
         except ValueError:
             return None  # drop, never clamp -- see module docstring
+        if not all(_is_safe_ranker_tag(t, cfg) for t in tags):
+            return None  # M2: misrepresentation -- reject the whole update, see docstring above
         new_tags = tags
 
     description = params.get("description")
@@ -336,7 +363,7 @@ class ListingSeoEdit:
         if target is None:
             return None  # ungrounded (hallucinated or ineligible target)
 
-        changed = _validate_params(intent.params, target)
+        changed = _validate_params(intent.params, target, cfg)
         if changed is None:
             return None  # invalid, or no actual change -- dropped, never clamped
 
@@ -359,7 +386,7 @@ class ListingSeoEdit:
                 f"listing {listing_id}: no longer active/eligible -- refusing edit"
             )
 
-        changed = _validate_params(action.params, target)
+        changed = _validate_params(action.params, target, cfg)
         if changed is None:
             # Deliberately plain ValueError, not StaleTargetError -- a bad
             # PARAMS problem (same class as reprice.py's/caption_draft.py's

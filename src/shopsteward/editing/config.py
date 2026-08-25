@@ -9,7 +9,9 @@ EDITING_DEFAULTS_PATH = _REPO_ROOT / "config" / "defaults" / "editing.json"
 
 
 def load_editing_defaults() -> dict:
-    return json.loads(EDITING_DEFAULTS_PATH.read_text())
+    # encoding="utf-8" explicit (M4, guardrail review 2026-08-25) --
+    # `read_text()`'s platform-default encoding is cp1252 on Windows.
+    return json.loads(EDITING_DEFAULTS_PATH.read_text(encoding="utf-8"))
 
 
 LOOKS_DIR = _REPO_ROOT / "config" / "defaults" / "looks"
@@ -21,7 +23,10 @@ def load_correction_knobs() -> dict:
 
 
 def load_look_prompt() -> str:
-    return LOOK_PROMPT_PATH.read_text()
+    # encoding="utf-8" explicit (M4, guardrail review 2026-08-25) -- a
+    # PROMPT file sent to an LLM; a silent cp1252 mojibake corruption on
+    # Windows changes the prompt without raising.
+    return LOOK_PROMPT_PATH.read_text(encoding="utf-8")
 
 
 def load_look_llm() -> dict:

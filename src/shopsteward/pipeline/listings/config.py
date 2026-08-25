@@ -18,7 +18,8 @@ LISTING_CONFIG_EVENT_TYPES = ("listingconfig.seeded", "listingconfig.updated")
 
 
 def load_listing_config(path: Path = LISTING_CONFIG_PATH) -> ListingConfig:
-    return ListingConfig.model_validate_json(Path(path).read_text())
+    # encoding="utf-8" explicit (M4, guardrail review 2026-08-25).
+    return ListingConfig.model_validate_json(Path(path).read_text(encoding="utf-8"))
 
 
 def config_hash(cfg: ListingConfig) -> str:

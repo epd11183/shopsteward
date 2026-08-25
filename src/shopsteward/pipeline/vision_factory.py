@@ -17,7 +17,10 @@ def build_vision_adapter(profile: TuningProfile, live: bool) -> VisionAdapter:
     if not live:
         return FixtureVisionAdapter()
 
-    prompt = COMMERCIAL_PROMPT_PATH.read_text()
+    # encoding="utf-8" explicit (M4, guardrail review 2026-08-25) -- this is
+    # a PROMPT sent to an LLM; a silent cp1252 mojibake corruption on
+    # Windows changes the prompt without raising.
+    prompt = COMMERCIAL_PROMPT_PATH.read_text(encoding="utf-8")
     provider = profile.vision.provider
     if provider == "openrouter":
         return OpenRouterVisionAdapter(

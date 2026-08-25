@@ -172,7 +172,15 @@ def test_candidates_excludes_within_cooldown(conn):
     _seed_scenario(conn)
     from shopsteward.pipeline.ops.capabilities.pinterest_post import _candidates
 
-    targets = _candidates(conn, USER_ID, _cfg())
+    # Pin the cooldown this test depends on instead of inheriting whatever
+    # config/defaults/ops.json currently says: the operator tunes that value
+    # for live tuning windows (it was dropped 30 -> 1 on 2026-08-25), and a
+    # test of cooldown LOGIC must not fail because the shop is mid-tune.
+    # LISTING_RECENTLY_PINNED is seeded 3 days ago, so anything > 3 exercises
+    # the exclusion branch.
+    cfg = _cfg()
+    cfg.pinterest.cooldown_days = 30
+    targets = _candidates(conn, USER_ID, cfg)
     assert str(LISTING_RECENTLY_PINNED) not in targets
 
 

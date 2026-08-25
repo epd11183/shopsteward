@@ -38,7 +38,25 @@ _logger = logging.getLogger(__name__)
 
 
 def load_ops_config(path: Path = OPS_CONFIG_PATH) -> OpsConfig:
-    return OpsConfig.model_validate_json(Path(path).read_text())
+    # encoding="utf-8" explicit -- config/defaults/ops.json is committed as
+    # UTF-8 (keyword_probe.brand_denylist_substrings' trademark symbols,
+    # 2026-08-25, are the first non-ASCII default values in this file) and
+    # `Path.read_text()`'s platform-default encoding is cp1252 on Windows,
+    # which silently mojibake-corrupts them instead of raising.
+    #
+    # M4 correction (guardrail review 2026-08-25): the live `ops run`/`ops
+    # brief` path does NOT read this file at request time -- it reads
+    # `get_ops_config()` from `proj_ops_config`, a JSON column populated by
+    # `append()`'s own `json.dumps()`, which already escapes ™/®/©/℠ as
+    # `\uXXXX` regardless of platform. So a live run's filter symbols come
+    # from the Python defaults in `models.py`, not this file, and this bug
+    # was never reachable from that path. The real bug is on the
+    # `ops config seed`/`ops config apply` ROUTE (this function): a
+    # mojibake'd read here means `ops_config_hash()` is computed over a
+    # corrupted `OpsConfig`, so a genuinely-unchanged file can hash-mismatch
+    # against what was last seeded/applied and get written INTO the DB as
+    # if the operator had edited it.
+    return OpsConfig.model_validate_json(Path(path).read_text(encoding="utf-8"))
 
 
 def ops_config_hash(cfg: OpsConfig) -> str:

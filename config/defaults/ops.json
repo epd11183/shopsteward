@@ -105,7 +105,33 @@
   "keyword_probe": {
     "top_n": 25,
     "max_phrases_per_run": 5,
-    "cadence_days": 14
+    "cadence_days": 14,
+    "max_age_days": 90,
+    "brand_denylist_substrings": [
+      "\u2122",
+      "\u00ae",
+      "\u00a9",
+      "\u2120"
+    ],
+    "non_photo_medium_terms": [
+      "paint",
+      "digital art",
+      "illustration",
+      "illustrations",
+      "draw",
+      "sketch",
+      "sketches",
+      "artwork",
+      "clipart",
+      "clip art",
+      "watercolor",
+      "watercolour",
+      "cartoon",
+      "anime",
+      "ai art",
+      "ai generated",
+      "vector"
+    ]
   },
   "autonomy": {
     "enabled": true,

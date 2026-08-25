@@ -11,7 +11,8 @@ MOCKUP_DEFAULTS_PATH = _REPO_ROOT / "config" / "defaults" / "mockups.json"
 
 
 def load_mockup_defaults() -> MockupConfig:
-    return MockupConfig.model_validate_json(MOCKUP_DEFAULTS_PATH.read_text())
+    # encoding="utf-8" explicit (M4, guardrail review 2026-08-25).
+    return MockupConfig.model_validate_json(MOCKUP_DEFAULTS_PATH.read_text(encoding="utf-8"))
 
 
 def config_hash(cfg: MockupConfig) -> str:

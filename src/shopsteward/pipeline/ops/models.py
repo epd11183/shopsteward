@@ -265,11 +265,63 @@ class _OpsKeywordProbe(BaseModel):
     `cadence_days` is informational only -- no scheduler reads it yet; it
     documents the intended re-probe cadence for when one is built, so probes
     accumulate into a meaningful time series rather than firing arbitrarily
-    often."""
+    often.
+
+    `max_age_days` (listing.seo_edit wiring, 2026-08-25): a probe older than
+    this is EXCLUDED from `keyword_probe.listing_keyword_signal()`, never
+    served stale -- absence, not a lie (Etsy's ranking vocabulary moves).
+    Default 90: ~6.4x `cadence_days` (14) so a few missed manual re-probe
+    cycles don't suddenly blank out coverage, while still matching this
+    chassis's other ~quarter-scale analytics windows
+    (`proven_window_days`=90 above; `dead_listing.window_days`=180).
+
+    `brand_denylist_substrings`/`non_photo_medium_terms`: a cheap, config-
+    driven filter over a probe's `tag_frequency` before it is ever surfaced
+    as a "ranker-rewarded tag" fact -- see `keyword_probe._is_safe_ranker_tag`
+    for what each one screens for and why (trademark/brand honesty; the
+    shop's photography-not-painting differentiation, docs/research/
+    2026-08-24-etsy-path-to-profitability.md "Positioning" / policy E16)."""
 
     top_n: int = Field(gt=0, default=25)
     max_phrases_per_run: int = Field(gt=0, default=5)
     cadence_days: int = Field(gt=0, default=14)
+    max_age_days: int = Field(gt=0, default=90)
+    # ℠ (U+2120) added alongside ™/® (M1/L1, guardrail review 2026-08-25) --
+    # same trademark-symbol floor, just a symbol the original list missed.
+    brand_denylist_substrings: list[str] = Field(default_factory=lambda: ["™", "®", "©", "℠"])
+    # M1 (guardrail review 2026-08-25): "paint"/"draw" are STEMS, deliberately
+    # not "painting"/"drawing" -- a bare -ing form misses "painted"/"hand
+    # painted"/"oil paint" (no -ing) and "drawn"/"hand drawn". No plausible
+    # over-block: re-verified against "wall art", "fine art print",
+    # "art print", "nature photography", "national park wall art" (none
+    # contain any entry below) -- see keyword_probe.py test suite.
+    non_photo_medium_terms: list[str] = Field(
+        default_factory=lambda: [
+            "paint",
+            "digital art",
+            "illustration",
+            "illustrations",
+            "draw",
+            "sketch",
+            "sketches",
+            "artwork",
+            "clipart",
+            "clip art",
+            "watercolor",
+            "watercolour",
+            # NOT "acrylic"/"charcoal"/"pastel" as bare terms: acrylic is a real
+            # print SUBSTRATE this shop can sell (see product_type_keywords.acrylic),
+            # and charcoal/pastel are common COLOUR words ("charcoal gray",
+            # "pastel sunset"). Blocking them would drop legitimate tags. Their
+            # misrepresenting senses are already caught by the "paint"/"draw"
+            # stems above ("acrylic painting", "charcoal drawing").
+            "cartoon",
+            "anime",
+            "ai art",
+            "ai generated",
+            "vector",
+        ]
+    )
 
 
 class _OpsAutonomy(BaseModel):

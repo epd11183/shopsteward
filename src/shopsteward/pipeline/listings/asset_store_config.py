@@ -19,7 +19,8 @@ ASSET_STORE_CONFIG_EVENT_TYPES = ("assetstoreconfig.seeded", "assetstoreconfig.u
 
 
 def load_asset_store_config(path: Path = ASSET_STORE_CONFIG_PATH) -> AssetStoreConfig:
-    return AssetStoreConfig.model_validate_json(Path(path).read_text())
+    # encoding="utf-8" explicit (M4, guardrail review 2026-08-25).
+    return AssetStoreConfig.model_validate_json(Path(path).read_text(encoding="utf-8"))
 
 
 def asset_store_config_hash(cfg: AssetStoreConfig) -> str:

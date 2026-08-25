@@ -303,5 +303,8 @@ def write_sidecar(image_path: Path, template: StagingTemplate, allowed_dirs: lis
 
     stem = resolved_image.stem
     sidecar_path = resolved_image.parent / f"{stem}{_SIDECAR_SUFFIX}"
-    sidecar_path.write_text(json.dumps(template.model_dump(by_alias=True), indent=2))
+    # encoding="utf-8" explicit (M4, guardrail review 2026-08-25).
+    sidecar_path.write_text(
+        json.dumps(template.model_dump(by_alias=True), indent=2), encoding="utf-8"
+    )
     return sidecar_path

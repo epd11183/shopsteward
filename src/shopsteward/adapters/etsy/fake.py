@@ -30,7 +30,11 @@ class FixtureEtsyAdapter:
         self._dir = Path(fixture_dir)
 
     def _load(self, name: str) -> dict[str, Any]:
-        return json.loads((self._dir / f"{name}.json").read_text())
+        # encoding="utf-8" explicit (M4, guardrail review 2026-08-25) --
+        # these are committed Etsy fixtures, and titles routinely carry
+        # em dashes/accents; `read_text()`'s platform-default encoding is
+        # cp1252 on Windows, which silently mojibake-corrupts them.
+        return json.loads((self._dir / f"{name}.json").read_text(encoding="utf-8"))
 
     def get_shop(self) -> EtsyShop:
         return EtsyShop.model_validate(self._load("shop"))

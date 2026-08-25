@@ -556,6 +556,36 @@ def test_materialize_drops_a_non_str_tag_even_bypassing_intent_validation(conn):
     assert cap.materialize(conn, USER_ID, cfg, intent) is None
 
 
+def test_materialize_drops_an_llm_authored_misrepresentation_tag(conn):
+    """M2 (guardrail review 2026-08-25): `_validate_params` runs
+    `keyword_probe._is_safe_ranker_tag` over `tags` too -- nothing stops the
+    LLM COMPOSING "bison painting" itself (not copied from a probe fact);
+    the guard must catch that regardless of provenance. Rejects the WHOLE
+    tags update (never silently drops just the one bad tag) -- see
+    `_validate_params`'s own docstring for why."""
+    _seed_listing(conn, LISTING_DIGITAL, "Bison Wall Art Photograph", tags=["bison"])
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cap = ListingSeoEdit(FakeEtsyWriteAdapter())
+    cfg = _cfg()
+
+    action = cap.materialize(
+        conn,
+        USER_ID,
+        cfg,
+        _intent(str(LISTING_DIGITAL), tags=["western wall art", "bison painting"]),
+    )
+    assert action is None  # the whole tags update is dropped, "bison painting" never reaches Etsy
+
+    # the same intent, minus the offending tag, is accepted -- proves the
+    # guard is on the CONTENT, not a blanket refusal of this target/target_id.
+    ok_action = cap.materialize(
+        conn, USER_ID, cfg, _intent(str(LISTING_DIGITAL), tags=["western wall art"])
+    )
+    assert ok_action is not None
+    assert ok_action.params == {"tags": ["western wall art"]}
+
+
 def test_materialize_drops_when_no_fields_present_at_all(conn):
     _seed_listing(conn, LISTING_DIGITAL, "Loon at Dusk", tags=["loon"])
     rebuild_core(conn)

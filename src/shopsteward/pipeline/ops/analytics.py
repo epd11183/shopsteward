@@ -20,6 +20,7 @@ import sqlite3
 from datetime import UTC, date, datetime, timedelta
 
 from shopsteward.core.events import read_all
+from shopsteward.pipeline.ops.keyword_probe import probe_coverage_note
 from shopsteward.pipeline.ops.models import (
     DeadListing,
     ListingSales,
@@ -645,6 +646,15 @@ def data_quality_notes(
     # view to the cooldown COUNT above (a stale draft is still holding its
     # own cooldown while sitting off-screen past brief.py's 7-day DONE/
     # REFUSED lookback window).
+    # T14 (2026-08-25): listing.seo_edit's own keyword-probe coverage --
+    # "why is this listing's edit un-informed" answerable without re-deriving
+    # keyword_probe.py's phrase->listing matching by hand.
+    coverage = probe_coverage_note(
+        conn, user_id, cfg, datetime(as_of.year, as_of.month, as_of.day, tzinfo=UTC)
+    )
+    if coverage is not None:
+        notes.append(coverage)
+
     stale = stale_drafts(conn, user_id, cfg, as_of)
     if stale:
         by_channel: dict[str, list[StaleDraft]] = {}

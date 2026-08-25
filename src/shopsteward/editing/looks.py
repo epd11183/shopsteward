@@ -36,7 +36,8 @@ def seed(conn: sqlite3.Connection, user_id: int, defaults_dir: Path) -> int:
     existing = _latest_by_name(conn, user_id)
     seeded = 0
     for path in sorted(Path(defaults_dir).glob("*.json")):
-        profile = LookProfile.model_validate(json.loads(path.read_text()))
+        # encoding="utf-8" explicit (M4, guardrail review 2026-08-25).
+        profile = LookProfile.model_validate(json.loads(path.read_text(encoding="utf-8")))
         prior = existing.get(profile.name)
         if prior is not None and prior.get("profile") == profile.model_dump():
             continue

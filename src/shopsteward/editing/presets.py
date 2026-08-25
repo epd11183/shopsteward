@@ -24,7 +24,8 @@ def seed(conn: sqlite3.Connection, user_id: int, defaults_dir: Path) -> int:
     existing = _latest_by_name(conn, user_id)
     seeded_count = 0
     for path in sorted(Path(defaults_dir).glob("*.json")):
-        family = PresetFamily.model_validate(json.loads(path.read_text()))
+        # encoding="utf-8" explicit (M4, guardrail review 2026-08-25).
+        family = PresetFamily.model_validate(json.loads(path.read_text(encoding="utf-8")))
         prior = existing.get(family.name)
         if prior is not None and prior.get("settings") == family.settings:
             continue

@@ -20,6 +20,7 @@ from shopsteward.core.events import Event, append, read_all
 from shopsteward.core.projections import rebuild as rebuild_core
 from shopsteward.pipeline.ops import config as ops_config
 from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
+from shopsteward.pipeline.ops.keyword_probe import KeywordProbeAggregates, KeywordProbeResult
 from shopsteward.pipeline.ops.models import Tier
 from shopsteward.pipeline.ops.planner import plan_proposals
 from shopsteward.pipeline.ops.projections import rebuild_ops
@@ -296,6 +297,123 @@ def test_facts_json_includes_expired_with_sales_for_seo_edit_target_discovery(co
             "lifetime_sales": 1,
         }
     ]
+
+
+def _seed_probe(conn, *, phrase: str, tag_frequency: dict[str, int], created_at: datetime) -> None:
+    result = KeywordProbeResult(
+        phrase=phrase,
+        top_n=25,
+        competition_count=100,
+        aggregates=KeywordProbeAggregates(
+            sample_size=sum(tag_frequency.values()) or 1,
+            tag_frequency=tag_frequency,
+            median_price_usd=30.0,
+            min_price_usd=20.0,
+            max_price_usd=40.0,
+            median_favorites_per_day=1.0,
+            min_favorites_per_day=0.5,
+            max_favorites_per_day=2.0,
+        ),
+    )
+    conn.execute(
+        "INSERT INTO events (user_id, type, payload, created_at) VALUES (?, ?, ?, ?)",
+        (
+            USER_ID,
+            "etsy.keyword.probed",
+            json.dumps(result.model_dump()),
+            created_at.isoformat().replace("+00:00", "Z"),
+        ),
+    )
+    conn.commit()
+
+
+def test_facts_json_includes_seo_edit_keyword_signal_when_fresh_and_matching(conn):
+    """T14: `seo_edit_keyword_signals` bridges keyword_probe.py's
+    phrase-keyed probes onto a real, currently-eligible listing.seo_edit
+    target_id -- FACTS the LLM composes tags from, never applied directly."""
+    LISTING = 703
+    seed_listing_observed_on(
+        conn,
+        listing_id=LISTING,
+        title="Bison Wall Art Photograph 16x20",
+        day=TODAY - timedelta(days=1),
+        views=42,
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    _seed_probe(
+        conn,
+        phrase="bison wall art",
+        tag_frequency={"western wall art": 5, "cabin wall decor": 3},
+        created_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    cfg = _cfg(enabled=True)
+    adapter = FakePlannerAdapter(plan=[])
+
+    plan_proposals(conn, USER_ID, cfg, adapter, [], soft_cap_usd=10.0)
+
+    (facts_json,) = adapter.plan_calls
+    facts = json.loads(facts_json)
+    signal = facts["seo_edit_keyword_signals"][str(LISTING)]
+    assert signal["matched_phrases"] == ["bison wall art"]
+    assert signal["ranker_tags"] == ["western wall art", "cabin wall decor"]
+
+
+def test_facts_json_omits_seo_edit_keyword_signal_when_no_fresh_matching_probe(conn):
+    """Absence, never an empty/misleading block: a listing.seo_edit target
+    with no probe at all is simply missing from the dict -- the key does
+    not exist, it is not present as `[]`."""
+    LISTING = 704
+    seed_listing_observed_on(
+        conn,
+        listing_id=LISTING,
+        title="Some Other Listing With No Probe Coverage",
+        day=TODAY - timedelta(days=1),
+        views=42,
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cfg = _cfg(enabled=True)
+    adapter = FakePlannerAdapter(plan=[])
+
+    plan_proposals(conn, USER_ID, cfg, adapter, [], soft_cap_usd=10.0)
+
+    (facts_json,) = adapter.plan_calls
+    facts = json.loads(facts_json)
+    assert str(LISTING) not in facts["seo_edit_keyword_signals"]
+
+
+def test_facts_json_omits_seo_edit_keyword_signal_when_probe_is_stale(conn):
+    # L2 (guardrail review 2026-08-25): a fixed, INJECTED as_of, not
+    # wall-clock `datetime.now(UTC)` -- proves `plan_proposals()`'s own
+    # `as_of` threads all the way into `seo_edit_keyword_signals`, rather
+    # than relying on this test's `now()` happening to agree with
+    # `listing_keyword_signal`'s own default.
+    as_of = datetime(2026, 8, 25, tzinfo=UTC)
+    LISTING = 705
+    seed_listing_observed_on(
+        conn,
+        listing_id=LISTING,
+        title="Bison Wall Art Photograph 16x20",
+        day=TODAY - timedelta(days=1),
+        views=42,
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    _seed_probe(
+        conn,
+        phrase="bison wall art",
+        tag_frequency={"western wall art": 5},
+        created_at=as_of - timedelta(days=91),  # older than max_age_days=90
+    )
+    cfg = _cfg(enabled=True)
+    adapter = FakePlannerAdapter(plan=[])
+
+    plan_proposals(conn, USER_ID, cfg, adapter, [], soft_cap_usd=10.0, as_of=as_of)
+
+    (facts_json,) = adapter.plan_calls
+    facts = json.loads(facts_json)
+    assert str(LISTING) not in facts["seo_edit_keyword_signals"]
 
 
 def test_proven_listings_facts_block_and_grounded_ids_use_the_widened_proven_set(conn):

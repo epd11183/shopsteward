@@ -29,6 +29,7 @@ entirely downstream, in `runner.run()`."""
 import json
 import logging
 import sqlite3
+from datetime import datetime
 
 import httpx
 
@@ -44,7 +45,9 @@ from shopsteward.pipeline.ops import analytics
 from shopsteward.pipeline.ops.capabilities.caption_draft import _candidates as _caption_candidates
 from shopsteward.pipeline.ops.capabilities.pinterest_post import _candidates as _pin_candidates
 from shopsteward.pipeline.ops.capabilities.pinterest_post import _last_pinned_at
+from shopsteward.pipeline.ops.capabilities.seo_edit import _eligible as _seo_edit_eligible
 from shopsteward.pipeline.ops.capabilities.seo_edit import _latest_observed
+from shopsteward.pipeline.ops.keyword_probe import listing_keyword_signal
 from shopsteward.pipeline.ops.models import OpsConfig, ProposedAction
 from shopsteward.pipeline.ops.registry import Capability
 
@@ -158,6 +161,38 @@ def _zero_tag_listings(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -
     return out
 
 
+def _seo_edit_keyword_signals(
+    conn: sqlite3.Connection,
+    user_id: int,
+    cfg: OpsConfig,
+    *,
+    as_of: datetime | None = None,
+) -> dict[str, dict]:
+    """target_id -> ranker-rewarded-tag FACTS for `listing.seo_edit` (T14,
+    2026-08-25: wires `keyword_probe.py`'s free first-party Etsy-ranker
+    signal into seo_edit's copy, previously LLM-guessed from the title
+    alone). Computed over the SAME `_eligible()` grounding function
+    seo_edit.py's own materialize()/execute() use, so a target_id keyed here
+    is always a real, currently-eligible seo_edit target -- never invented.
+
+    Absence (a target_id simply missing from this dict) is the honest state
+    for "no fresh, title-matching probe" (`listing_keyword_signal`'s own
+    absence-is-not-zero rule, reused here) -- never an empty/misleading
+    value. This is FACTS for the LLM to compose tags from, never applied
+    directly: `_validate_params()`/`validate_tag()` in seo_edit.py still gate
+    every tag that survives into an actual proposal (13-tag/20-char limits,
+    drop-never-truncate) -- exactly like every other block in this module,
+    this is target/content DISCOVERY, not the safety boundary."""
+    out: dict[str, dict] = {}
+    for target_id, target in _seo_edit_eligible(conn, user_id, cfg).items():
+        signal = listing_keyword_signal(
+            conn, user_id, cfg, target.listing_id, target.current_title, as_of=as_of
+        )
+        if signal is not None:
+            out[target_id] = signal.model_dump(mode="json")
+    return out
+
+
 def _pin_eligible_listings(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> list[dict]:
     """listing_id/title for every `social.pinterest_post`-eligible listing
     (active, has an image, outside the cooldown -- pinterest_post.py's own
@@ -214,7 +249,12 @@ def _caption_eligible_targets(conn: sqlite3.Connection, user_id: int, cfg: OpsCo
 
 
 def _build_facts_json(
-    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, capabilities: list[Capability]
+    conn: sqlite3.Connection,
+    user_id: int,
+    cfg: OpsConfig,
+    capabilities: list[Capability],
+    *,
+    as_of: datetime | None = None,
 ) -> str:
     """Real SQL only (design §2/§6): dead-listing candidates + trending from
     `analytics.py`, plus, per registered capability, the exact grounded
@@ -265,6 +305,12 @@ def _build_facts_json(
         # construction, never gated on views). materialize()'s _eligible()
         # still re-grounds.
         "zero_tag_listings": zero_tag_listings,
+        # T14 (2026-08-25): per-listing.seo_edit-target ranker-rewarded-tag
+        # facts, bridged from keyword_probe.py's phrase-keyed probes (see
+        # `_seo_edit_keyword_signals`'s own docstring). A target_id missing
+        # here simply has no fresh, title-matching probe -- absence, not an
+        # empty list.
+        "seo_edit_keyword_signals": _seo_edit_keyword_signals(conn, user_id, cfg, as_of=as_of),
         # social.caption_draft is ALSO planner-only (propose() always []) --
         # without this block the LLM has no target ids for it either (M8b
         # slice 6). materialize() still re-grounds against the SAME
@@ -379,12 +425,20 @@ def plan_proposals(
     capabilities: list[Capability],
     *,
     soft_cap_usd: float,
+    as_of: datetime | None = None,
 ) -> list[ProposedAction]:
     """Returns the validated, materialized `ProposedAction`s the planner's
     intents survive the gate to become -- never anything the LLM invented
     directly. Over the shared monthly cap, or a transport/parse failure,
     returns `[]` so the caller falls back to the deterministic `propose()`
-    path -- this function NEVER raises for a provider/cost problem."""
+    path -- this function NEVER raises for a provider/cost problem.
+
+    `as_of` (L2, guardrail review 2026-08-25): threaded through to
+    `_build_facts_json`'s `seo_edit_keyword_signals` block so the facts JSON
+    and `analytics.brief_notes`'s `probe_coverage_note` call agree on what
+    "fresh" means for the SAME brief/plan run -- defaults to wall-clock now,
+    same as `listing_keyword_signal` itself, when the caller doesn't pin
+    one."""
     if monthly_spend(conn, user_id) >= soft_cap_usd:
         logger.warning(
             "monthly llm.call soft cap reached (>= %.2f usd); skipping planner.plan()",
@@ -398,7 +452,7 @@ def plan_proposals(
         )
         for cap in capabilities
     ]
-    facts_json = _build_facts_json(conn, user_id, cfg, capabilities)
+    facts_json = _build_facts_json(conn, user_id, cfg, capabilities, as_of=as_of)
     limits = PlannerLimits(
         reprice_min_price_usd=cfg.reprice.min_price_usd,
         reprice_max_pct_change=cfg.reprice.max_pct_change,

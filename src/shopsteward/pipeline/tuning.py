@@ -21,7 +21,8 @@ def _latest_by_name(conn: sqlite3.Connection, user_id: int) -> dict[str, dict]:
 
 
 def seed(conn: sqlite3.Connection, user_id: int, path: Path) -> bool:
-    profile = TuningProfile.model_validate(json.loads(Path(path).read_text()))
+    # encoding="utf-8" explicit (M4, guardrail review 2026-08-25).
+    profile = TuningProfile.model_validate(json.loads(Path(path).read_text(encoding="utf-8")))
     profile_dump = profile.model_dump(by_alias=True)
 
     # Seed only when this profile name has never been written for the user.

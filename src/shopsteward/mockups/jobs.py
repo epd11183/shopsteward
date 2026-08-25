@@ -73,7 +73,8 @@ def _candidate_templates(conn: sqlite3.Connection, user_id: int) -> list[dict]:
 
 
 def _load_template_object(sidecar_path: str) -> StagingTemplate:
-    data = json.loads(Path(sidecar_path).read_text())
+    # encoding="utf-8" explicit (M4, guardrail review 2026-08-25).
+    data = json.loads(Path(sidecar_path).read_text(encoding="utf-8"))
     return StagingTemplate.model_validate(data)
 
 

@@ -29,7 +29,9 @@ class FixturePinterestAdapter:
         self._dir = Path(fixture_dir)
 
     def _load(self, name: str) -> dict[str, Any]:
-        return json.loads((self._dir / f"{name}.json").read_text())
+        # encoding="utf-8" explicit (M4, guardrail review 2026-08-25) -- see
+        # adapters/etsy/fake.py's identical fix for why.
+        return json.loads((self._dir / f"{name}.json").read_text(encoding="utf-8"))
 
     def list_boards(self) -> list[PinterestBoard]:
         return [PinterestBoard.model_validate(r) for r in self._load("boards")["results"]]

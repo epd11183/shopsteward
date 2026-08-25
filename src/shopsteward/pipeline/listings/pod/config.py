@@ -48,7 +48,8 @@ def resolve_store_id(cfg: PodConfig) -> str:
 
 
 def load_pod_config(path: Path = POD_CONFIG_PATH) -> PodConfig:
-    return PodConfig.model_validate_json(Path(path).read_text())
+    # encoding="utf-8" explicit (M4, guardrail review 2026-08-25).
+    return PodConfig.model_validate_json(Path(path).read_text(encoding="utf-8"))
 
 
 def pod_config_hash(cfg: PodConfig) -> str:

@@ -97,7 +97,19 @@ def _plan_system_prompt(limits: PlannerLimits) -> str:
         "lifetime views and no recent sale, expired listings with real "
         "historical sales, or active listings with (near-)zero tags "
         "(search-invisible regardless of views) -- you never need to check "
-        "any of these conditions yourself, it's given for context.)"
+        "any of these conditions yourself, it's given for context.)\n\n"
+        "When a listing.seo_edit target_id appears in "
+        '"seo_edit_keyword_signals", its "ranker_tags" are REAL tags that '
+        "Etsy's own top-ranked competing listings use for a phrase that "
+        "genuinely matches this listing's title (already filtered for "
+        "brand/trademark terms and for non-photographic-medium terms -- see "
+        "below). Ground your proposed tags in them where they fit; you "
+        "still choose the final tag set and it still must obey the tag "
+        "limits above. This shop sells REAL PHOTOGRAPHS, never paintings, "
+        "digital art, illustrations, or any other non-photographic medium -- "
+        "never adopt a ranker tag (or otherwise word a title/tags/"
+        "description) that describes the work as one, even if a competitor "
+        "ranks well using it; doing so would misrepresent the listing."
     )
 
 
