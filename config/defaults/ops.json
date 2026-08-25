@@ -17,15 +17,28 @@
     "max_listing_count": 3
   },
   "product_type_keywords": {
-    "acrylic": ["acrylic"],
-    "poster": ["poster", "fine art poster"],
-    "canvas": ["canvas"],
-    "digital": ["digital download", "printable"]
+    "acrylic": [
+      "acrylic"
+    ],
+    "poster": [
+      "poster",
+      "fine art poster"
+    ],
+    "canvas": [
+      "canvas"
+    ],
+    "digital": [
+      "digital download",
+      "printable"
+    ]
   },
   "planner": {
     "model": "google/gemini-2.5-flash-lite",
     "est_cost_per_mtok": {
-      "google/gemini-2.5-flash-lite": { "in": 0.10, "out": 0.40 }
+      "google/gemini-2.5-flash-lite": {
+        "in": 0.1,
+        "out": 0.4
+      }
     }
   },
   "brief_sections": {
@@ -41,18 +54,18 @@
   },
   "reprice": {
     "min_price_usd": 3.0,
-    "max_pct_change": 0.40,
-    "default_reduction_pct": 0.10,
+    "max_pct_change": 0.4,
+    "default_reduction_pct": 0.1,
     "min_lifetime_views": 5
   },
   "seo_edit": {
     "min_lifetime_views": 5,
     "min_tags_before_flagged": 0,
-    "cooldown_days": 60
+    "cooldown_days": 1
   },
   "renew": {
     "min_lifetime_sales": 1,
-    "listing_fee_usd": 0.20
+    "listing_fee_usd": 0.2
   },
   "catalog_expansion": {
     "enabled": true,
@@ -61,17 +74,23 @@
     "max_new_per_week": 5,
     "min_long_edge_px": 6000,
     "dedup_max_distance": 6,
-    "listing_fee_usd": 0.20
+    "listing_fee_usd": 0.2
   },
   "caption": {
     "max_len": 2200,
     "channels": {
-      "instagram": { "eligibility": "proven", "cooldown_days": 14 },
-      "facebook": { "eligibility": "proven", "cooldown_days": 14 }
+      "instagram": {
+        "eligibility": "proven",
+        "cooldown_days": 1
+      },
+      "facebook": {
+        "eligibility": "proven",
+        "cooldown_days": 1
+      }
     }
   },
   "pinterest": {
-    "cooldown_days": 30,
+    "cooldown_days": 1,
     "max_title_len": 100,
     "max_description_len": 500,
     "max_alt_text_len": 500,
@@ -93,7 +112,7 @@
     "daily_action_cap": 1000,
     "per_capability_daily_cap": 1000,
     "weekly_catalog_pct_cap": 1.0,
-    "monthly_spend_cap_usd": 20.00,
+    "monthly_spend_cap_usd": 20.0,
     "proposal_ttl_days": 14,
     "planner_enabled": true,
     "planner_max_per_capability_per_run": 1,
