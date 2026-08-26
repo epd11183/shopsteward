@@ -61,6 +61,7 @@
   "seo_edit": {
     "min_lifetime_views": 5,
     "min_tags_before_flagged": 0,
+    "min_ranker_tag_overlap": 4,
     "cooldown_days": 1
   },
   "renew": {

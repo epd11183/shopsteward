@@ -20,6 +20,7 @@ import sqlite3
 from datetime import UTC, date, datetime, timedelta
 
 from shopsteward.core.events import read_all
+from shopsteward.pipeline.ops.capabilities.seo_edit import misaligned_candidates
 from shopsteward.pipeline.ops.keyword_probe import probe_coverage_note
 from shopsteward.pipeline.ops.models import (
     DeadListing,
@@ -654,6 +655,24 @@ def data_quality_notes(
     )
     if coverage is not None:
         notes.append(coverage)
+
+    # Tag-MISALIGNMENT branch (2026-08-25): "has tags" and "has the RIGHT
+    # tags" are different questions -- surfaced here so the operator sees
+    # the backlog without running a planner pass, same "answerable from the
+    # brief without re-deriving it by hand" rationale as the coverage note
+    # above.
+    misaligned = misaligned_candidates(
+        conn, user_id, cfg, as_of=datetime(as_of.year, as_of.month, as_of.day, tzinfo=UTC)
+    )
+    if misaligned:
+        worst = sorted(misaligned, key=lambda m: m["overlap"])
+        sample = ", ".join(m["title"] for m in worst[:3])
+        notes.append(
+            f"{len(misaligned)} active, tagged listing(s) have tags that are MISALIGNED with "
+            f"what Etsy's ranker rewards (overlap at or below "
+            f"{cfg.seo_edit.min_ranker_tag_overlap} tags) -- listing.seo_edit candidates. "
+            f"Worst: {sample}."
+        )
 
     stale = stale_drafts(conn, user_id, cfg, as_of)
     if stale:

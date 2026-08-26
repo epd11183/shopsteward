@@ -39,6 +39,47 @@ more urgent defect) and shares the same `if key in out: continue` de-dup
 guard the other branches use, so a listing already claimed by branch 1
 (active + enough views) is never flagged twice.
 
+**A fourth branch flags active, TAGGED listings whose tags are MISALIGNED
+with what Etsy's ranker actually rewards** (operator report, 2026-08-25 --
+`keyword_probe.py`'s free first-party signal makes this newly measurable).
+"Has 13 tags" (passes branch 3) and "0 views" (fails branch 2's floor) used
+to leave a real listing invisible to every existing branch even though its
+tags are provably the wrong ones (real example: 13 tags, only 3 overlap the
+ranker-rewarded set the probe found for a matching phrase, vs. a sibling
+listing at 9/13 overlap that is genuinely well-optimized and must NOT be
+flagged). Gated on `keyword_probe.listing_keyword_signal()` returning a
+FRESH, title-matching signal (absence -- never probed, or the freshest
+matching reading has aged out -- means NOT a candidate, same
+absence-is-not-zero rule that function already applies) AND the listing's
+current tags overlapping that signal's `ranker_tags` at or below
+`cfg.seo_edit.min_ranker_tag_overlap` tags (see that field's own docstring
+in models.py for the threshold and why it separates the two real examples
+above). Checked AFTER the zero-tags branch (so a genuinely untagged listing
+still gets that more urgent, clearer message) and AFTER the views/refresh
+branch (so a listing the views branch already claims keeps that reason,
+never silently swapped for the misalignment one) -- same `if key in out:
+continue` de-dup guard. `views`/sale-window are NEVER checked here: a
+never-viewed but genuinely misaligned listing (the real motivating case)
+must not wait on traffic that its bad tags are precisely what's suppressing.
+
+Execute()-time re-validation deliberately does NOT require the probe to
+still be fresh (`execute()`'s own docstring/comment below): probe
+freshness is an artifact of when this shop last happened to run keyword
+research, not a fact about the target that can genuinely go stale between
+an operator approving a proposal and it executing days later -- unlike
+every other branch's gating condition (views, sale-window, tag count,
+listing state), which really can change and legitimately terminalize a
+stale action. Baking a time-decaying research cache's age into the ONE
+grounding function `execute()` re-validates against is exactly the
+policy-gate-inside-a-re-validated-grounding-function shape this chassis's
+own guardrail history says never to repeat -- this module's own T6
+cooldown_days precedent (docstring above) already handles an analogous
+timing concern the same way: outside `_eligible()`, never re-checked here.
+Concretely: `execute()` re-tries `_eligible()` with the probe's staleness
+window widened before ever raising `StaleTargetError`, so a probe that
+merely aged out between propose and approve never terminalizes an
+otherwise-still-valid action.
+
 **Planner-only, like `ops.tune_threshold`'s trigger is SQL but this
 capability's COPY is not**: `propose()` always returns `[]` -- writing good
 SEO copy is exactly the "deterministic heuristic too blunt" case (design
@@ -78,7 +119,11 @@ from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.core.events import read_all
 from shopsteward.core.sync import read_live_observed
 from shopsteward.pipeline.ops.config import get_ops_config, ops_config_hash
-from shopsteward.pipeline.ops.keyword_probe import _is_safe_ranker_tag
+from shopsteward.pipeline.ops.keyword_probe import (
+    ListingKeywordSignal,
+    _is_safe_ranker_tag,
+    listing_keyword_signal,
+)
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
 from shopsteward.pipeline.ops.registry import StaleTargetError, compute_action_id
 
@@ -100,6 +145,11 @@ class _Target:
     current_description: str | None
     lifetime_views: int
     reason: str
+    # Only set (non-None) by branch 3 (tag misalignment) -- the ranker-tag
+    # overlap count that made this listing a candidate. Every other branch
+    # leaves this None; `misaligned_candidates()` uses its presence, never a
+    # string-parse of `reason`, to identify branch-3 targets.
+    ranker_tag_overlap: int | None = None
 
 
 def _latest_observed(conn: sqlite3.Connection, user_id: int, listing_id: int) -> EtsyListing | None:
@@ -117,26 +167,87 @@ def _latest_observed(conn: sqlite3.Connection, user_id: int, listing_id: int) ->
     return latest
 
 
-def _eligible(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> dict[str, _Target]:
+def _tag_overlap(current_tags: list[str], ranker_tags: list[str]) -> int:
+    """Case-insensitive overlap count between a listing's current tags and
+    a keyword-probe signal's `ranker_tags` -- Etsy tags are free-text and a
+    casing difference (e.g. an operator-typed "Elk Wall Art" vs. a
+    probe-observed "elk wall art") must never make a genuinely matching tag
+    look misaligned."""
+    return len({t.lower() for t in current_tags} & {t.lower() for t in ranker_tags})
+
+
+def _misalignment_signal(
+    conn: sqlite3.Connection,
+    user_id: int,
+    cfg: OpsConfig,
+    listing_id: int,
+    title: str,
+    *,
+    as_of: datetime | None,
+    ignore_probe_staleness: bool = False,
+) -> ListingKeywordSignal | None:
+    """`keyword_probe.listing_keyword_signal()`, optionally with
+    `keyword_probe.max_age_days` widened to effectively unbounded --
+    `execute()`'s own re-validation uses `ignore_probe_staleness=True` so a
+    probe merely aging out between propose and approve never terminalizes
+    an otherwise-still-valid action (module docstring, execute()'s own
+    comment below). `materialize()`/target-discovery callers always use the
+    default (strict freshness) -- a BRAND NEW proposal must be grounded on
+    current evidence."""
+    probe_cfg = cfg
+    if ignore_probe_staleness:
+        # 999_999_999 -- timedelta's own max `days` magnitude (Python's
+        # datetime.timedelta hard ceiling), i.e. as close to "unbounded" as
+        # `keyword_probe.max_age_days`'s int type can express.
+        probe_cfg = cfg.model_copy(
+            update={
+                "keyword_probe": cfg.keyword_probe.model_copy(update={"max_age_days": 999_999_999})
+            }
+        )
+    return listing_keyword_signal(conn, user_id, probe_cfg, listing_id, title, as_of=as_of)
+
+
+def _eligible(
+    conn: sqlite3.Connection,
+    user_id: int,
+    cfg: OpsConfig,
+    *,
+    as_of: datetime | None = None,
+    _ignore_probe_staleness: bool = False,
+) -> dict[str, _Target]:
     """target_id -> the eligible-for-SEO-edit facts for that listing -- the
     ONE grounding function shared by materialize() and execute() so the two
-    can never disagree. Three branches, checked in this order, never
+    can never disagree. Four branches, checked in this order, never
     double-counting a listing (the `if key in out: continue` de-dup guard):
 
     1. Active with (near-)zero tags -- search-invisible by construction,
        checked FIRST since it's the more urgent defect and must never be
-       skipped just because branch 2 also would have claimed the listing
-       (module docstring). `views`/sale-window are NEVER checked here.
+       skipped just because a later branch also would have claimed the
+       listing (module docstring). `views`/sale-window are NEVER checked
+       here.
     2. Active, viewed but not selling -> copy/SEO may be the problem (the
        same signal analytics.viewed_not_sold surfaces on the Brief, applied
        here with a revenue-window bound rather than lifetime, to match
        reprice's own eligibility shape).
-    3. Expired with genuine historical sales -- the same bar `listing.renew`
+    3. Active, tagged, but MISALIGNED with what Etsy's ranker rewards --
+       checked AFTER 1/2 so a listing either already claims doesn't get a
+       second, less-urgent reason (module docstring's fourth-branch
+       section). `views`/sale-window are NEVER checked here either: this
+       branch's whole point is to catch a listing branch 2's view floor
+       can't reach.
+    4. Expired with genuine historical sales -- the same bar `listing.renew`
        uses (`cfg.renew.min_lifetime_sales` against `proj_sale_items`, which
        only ever holds real, non-fixture sale line-items -- see renew.py's
        module docstring). `views` is NEVER checked for this branch (module
        docstring -- Etsy returns 0 for every expired listing regardless of
        real sales history).
+
+    `_ignore_probe_staleness` (execute()-only, see `_misalignment_signal`'s
+    own docstring): widens branch 3's probe-freshness requirement so a
+    probe aging out between propose and approve never drops an
+    already-approved target out of this dict. Never passed by
+    materialize()/propose()/planner target-discovery -- those must always
+    ground a NEW proposal on current evidence.
 
     No digital/POD split -- see module docstring."""
     start = datetime.now(UTC).date() - timedelta(days=cfg.windows.revenue_window_days - 1)
@@ -192,6 +303,40 @@ def _eligible(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> dict[st
             ),
         )
 
+    for r in active_rows:
+        key = str(r["listing_id"])
+        if key in out:
+            continue  # already claimed by the zero-tags or refresh branch above
+        listing = _latest_observed(conn, user_id, r["listing_id"])
+        if listing is None or len(listing.tags) <= cfg.seo_edit.min_tags_before_flagged:
+            continue  # untagged handled by branch 1; nothing to overlap-check either way
+        signal = _misalignment_signal(
+            conn,
+            user_id,
+            cfg,
+            r["listing_id"],
+            r["title"],
+            as_of=as_of,
+            ignore_probe_staleness=_ignore_probe_staleness,
+        )
+        if signal is None:
+            continue  # no fresh, title-matching probe -- absence, not evidence of misalignment
+        overlap = _tag_overlap(listing.tags, signal.ranker_tags)
+        if overlap > cfg.seo_edit.min_ranker_tag_overlap:
+            continue  # well-aligned -- not a candidate
+        out[key] = _Target(
+            listing_id=r["listing_id"],
+            current_title=r["title"],
+            current_tags=listing.tags,
+            current_description=listing.description,
+            lifetime_views=r["views"],
+            reason=(
+                f"{overlap} of {len(listing.tags)} tags match what Etsy's ranker rewards for "
+                f"{signal.matched_phrases[0]!r} -- realign title/tags."
+            ),
+            ranker_tag_overlap=overlap,
+        )
+
     expired_rows = conn.execute(
         "SELECT listing_id, title FROM proj_listings WHERE user_id=? AND state='expired'",
         (user_id,),
@@ -223,6 +368,30 @@ def _eligible(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> dict[st
             ),
         )
     return out
+
+
+def misaligned_candidates(
+    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, *, as_of: datetime | None = None
+) -> list[dict]:
+    """listing_id/title/tag_count/overlap for every listing branch 3
+    (tag-misalignment) of `_eligible()` currently claims -- exposed so
+    planner.py's facts JSON (target discovery) and analytics.py's
+    `data_quality_notes()` (operator visibility) share ONE computation
+    rather than re-deriving `_eligible()`'s misalignment logic twice.
+    Target discovery only, same "courtesy to the model/operator, not the
+    safety boundary" every other planner.py discovery helper documents --
+    materialize()'s own `_eligible()` still re-grounds."""
+    return [
+        {
+            "listing_id": t.listing_id,
+            "title": t.current_title,
+            "tag_count": len(t.current_tags),
+            "overlap": t.ranker_tag_overlap,
+            "reason": t.reason,
+        }
+        for t in _eligible(conn, user_id, cfg, as_of=as_of).values()
+        if t.ranker_tag_overlap is not None
+    ]
 
 
 def _validate_params(
@@ -379,6 +548,20 @@ class ListingSeoEdit:
         listing_id = int(action.target_id)
         cfg = get_ops_config(conn, user_id)
         target = _eligible(conn, user_id, cfg).get(action.target_id)
+        if target is None:
+            # Branch-3 (misalignment) fallback: retry with the probe's
+            # staleness window widened before ever declaring this target
+            # genuinely gone -- a probe merely aging out between propose and
+            # approve is a research-cache artifact, not a real change to the
+            # target, and must never terminalize an otherwise-still-valid
+            # action (module docstring's execute()-time re-validation
+            # section, `_misalignment_signal`'s own docstring). If the
+            # listing is ALSO no longer active/tagged/misaligned for a real
+            # reason, this retry finds nothing either and the branch below
+            # still raises.
+            target = _eligible(conn, user_id, cfg, _ignore_probe_staleness=True).get(
+                action.target_id
+            )
         if target is None:
             # StaleTargetError (H2b, guardrail review 2026-08-25): genuine
             # per-target staleness -> the runner terminalizes this one.

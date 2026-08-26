@@ -127,6 +127,28 @@ class _OpsSeoEdit(BaseModel):
     # ask ("zero tags") and IS the sensible default; configurable only in
     # case the operator later wants a slightly less strict bar.
     min_tags_before_flagged: int = Field(ge=0, default=0)
+    # Fourth eligibility branch (tag MISALIGNMENT, 2026-08-25): an active,
+    # tagged listing whose current tags overlap the keyword-probe-derived
+    # ranker-rewarded set at or below this many tags is flagged -- "has
+    # tags" and "has the RIGHT tags" are different questions, and
+    # keyword_probe.py's free first-party signal can now answer the second
+    # one. Absolute COUNT, not a fraction of the listing's own tag count:
+    # Etsy's real tag ceiling (13, adapters/copy/tags.py MAX_TAGS) is a
+    # constant every listing shares, so an absolute bar is comparable
+    # shop-wide, whereas a fraction would treat a 4-tag listing's "2 of 4
+    # match" the same as a 13-tag listing's "2 of 13 match" even though the
+    # latter is a much thinner signal (only ~15% of its tag budget spent on
+    # what the ranker rewards). Default 4, chosen against the two real,
+    # live data points that motivated this branch (2026-08): listing
+    # 4464098863 (13 tags, 9/13 overlap incl. the exact-match "elk wall
+    # art") must NOT be flagged -- well optimized, its problem is shop
+    # authority, not tags; listing 4465118874 (13 tags, 3/13 overlap, its
+    # tags are hyper-specific while the ranker rewards generic regional
+    # terms) MUST be flagged. 4 sits below 9 and above 3 with headroom on
+    # both sides, and reads honestly on its own terms too: at most a third
+    # of Etsy's 13-tag ceiling actually matching what the ranker rewards is
+    # a fair bar for "misaligned," not just "imperfect."
+    min_ranker_tag_overlap: int = Field(ge=0, default=4)
     # T6 (2026-08-25 guardrail review): per-listing cooldown -- governed as a
     # RefusalReason.INELIGIBLE (governor.py), NOT re-checked inside
     # `_eligible()`/execute(), same H1/H2a precedent every other rate/policy

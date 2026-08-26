@@ -46,7 +46,7 @@ from shopsteward.pipeline.ops.capabilities.caption_draft import _candidates as _
 from shopsteward.pipeline.ops.capabilities.pinterest_post import _candidates as _pin_candidates
 from shopsteward.pipeline.ops.capabilities.pinterest_post import _last_pinned_at
 from shopsteward.pipeline.ops.capabilities.seo_edit import _eligible as _seo_edit_eligible
-from shopsteward.pipeline.ops.capabilities.seo_edit import _latest_observed
+from shopsteward.pipeline.ops.capabilities.seo_edit import _latest_observed, misaligned_candidates
 from shopsteward.pipeline.ops.keyword_probe import listing_keyword_signal
 from shopsteward.pipeline.ops.models import OpsConfig, ProposedAction
 from shopsteward.pipeline.ops.registry import Capability
@@ -184,7 +184,7 @@ def _seo_edit_keyword_signals(
     drop-never-truncate) -- exactly like every other block in this module,
     this is target/content DISCOVERY, not the safety boundary."""
     out: dict[str, dict] = {}
-    for target_id, target in _seo_edit_eligible(conn, user_id, cfg).items():
+    for target_id, target in _seo_edit_eligible(conn, user_id, cfg, as_of=as_of).items():
         signal = listing_keyword_signal(
             conn, user_id, cfg, target.listing_id, target.current_title, as_of=as_of
         )
@@ -287,6 +287,7 @@ def _build_facts_json(
     sellers = analytics.proven_listings(conn, user_id, cfg, limit=10)
     expired_with_sales = _expired_with_sales(conn, user_id, cfg)
     zero_tag_listings = _zero_tag_listings(conn, user_id, cfg)
+    misaligned_tag_listings = misaligned_candidates(conn, user_id, cfg, as_of=as_of)
     facts = {
         "dead_listings": [dl.model_dump(mode="json") for dl in dead],
         "trending": [t.model_dump(mode="json") for t in trend],
@@ -305,6 +306,12 @@ def _build_facts_json(
         # construction, never gated on views). materialize()'s _eligible()
         # still re-grounds.
         "zero_tag_listings": zero_tag_listings,
+        # listing.seo_edit's FOURTH eligibility branch (active + tagged, but
+        # current tags overlap the keyword-probe ranker-rewarded set at or
+        # below cfg.seo_edit.min_ranker_tag_overlap -- see
+        # `misaligned_candidates`'s own docstring). materialize()'s
+        # `_eligible()` still re-grounds.
+        "misaligned_tag_listings": misaligned_tag_listings,
         # T14 (2026-08-25): per-listing.seo_edit-target ranker-rewarded-tag
         # facts, bridged from keyword_probe.py's phrase-keyed probes (see
         # `_seo_edit_keyword_signals`'s own docstring). A target_id missing
@@ -345,7 +352,12 @@ def _build_facts_json(
 # capability-to-block wiring: each planner-only capability's docstring
 # there already names the block it draws candidates from).
 _EXTRA_TARGET_BLOCKS: dict[str, tuple[str, ...]] = {
-    "listing.seo_edit": ("expired_with_sales", "zero_tag_listings", "viewed_not_sold"),
+    "listing.seo_edit": (
+        "expired_with_sales",
+        "zero_tag_listings",
+        "misaligned_tag_listings",
+        "viewed_not_sold",
+    ),
     # T5+E5: "caption_eligible_targets" (composite target_ids), not
     # "proven_listings" (bare listing ids, informational only, M3: renamed
     # from "top_sellers") -- a bare listing_id was never a materialize()-

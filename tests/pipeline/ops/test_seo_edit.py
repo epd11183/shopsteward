@@ -9,6 +9,7 @@ historical sales (the same bar `listing.renew` uses,
 baseline (`current_description`) to keep undo always truthful. Entirely on
 FakeEtsyWriteAdapter, zero network."""
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -19,7 +20,8 @@ from shopsteward.core.db import connect, migrate
 from shopsteward.core.events import Event, append, read_all
 from shopsteward.core.projections import rebuild as rebuild_core
 from shopsteward.pipeline.ops import config as ops_config
-from shopsteward.pipeline.ops.capabilities.seo_edit import ListingSeoEdit
+from shopsteward.pipeline.ops.capabilities.seo_edit import ListingSeoEdit, _eligible
+from shopsteward.pipeline.ops.keyword_probe import KeywordProbeAggregates, KeywordProbeResult
 from shopsteward.pipeline.ops.models import ProposedAction, Tier
 from shopsteward.pipeline.ops.projections import capability_states, rebuild_ops
 from shopsteward.pipeline.ops.registry import REGISTRY, register
@@ -379,6 +381,331 @@ def test_e2e_zero_tag_listing_materialize_execute_round_trip(conn):
         e for e in read_all(conn, "action.executed") if e.payload["action_id"] == action_id
     ][0]
     assert executed_event.payload["before"]["tags"] == []
+
+
+# --- eligibility: tag MISALIGNMENT (keyword-probe backed, 2026-08-25) ------
+#
+# Anchored on the two real live listings that motivated this branch:
+# 4464098863 "Majestic Bull Elk Wall Art" (13 tags, 9/13 overlap the
+# ranker-rewarded set -- well optimized, must NOT be flagged) and 4465118874
+# "Garden of the Gods Print | Colorado Red Rock Landscape" (13 tags, 3/13
+# overlap -- genuinely misaligned, MUST be flagged).
+
+LISTING_MISALIGN = 951
+
+_RANKER_TAGS_9 = [
+    "elk wall art",
+    "elk photograph",
+    "wildlife wall art",
+    "rocky mountain print",
+    "nature photography",
+    "cabin wall decor",
+    "elk print",
+    "wildlife photograph",
+    "mountain wall art",
+]
+
+
+def _seed_probe(conn, *, phrase: str, tag_frequency: dict, created_at: datetime) -> None:
+    result = KeywordProbeResult(
+        phrase=phrase,
+        top_n=25,
+        competition_count=100,
+        aggregates=KeywordProbeAggregates(
+            sample_size=sum(tag_frequency.values()) or 1,
+            tag_frequency=tag_frequency,
+            median_price_usd=30.0,
+            min_price_usd=20.0,
+            max_price_usd=40.0,
+            median_favorites_per_day=1.0,
+            min_favorites_per_day=0.5,
+            max_favorites_per_day=2.0,
+        ),
+    )
+    conn.execute(
+        "INSERT INTO events (user_id, type, payload, created_at) VALUES (?, ?, ?, ?)",
+        (
+            USER_ID,
+            "etsy.keyword.probed",
+            json.dumps(result.model_dump()),
+            created_at.isoformat().replace("+00:00", "Z"),
+        ),
+    )
+    conn.commit()
+
+
+def test_well_aligned_tagged_listing_is_not_flagged_misaligned(conn):
+    """9/13 overlap (the real "Majestic Bull Elk Wall Art" case) -- well
+    optimized, its problem is shop authority (0 views), not tags. Must not
+    be flagged by ANY branch."""
+    now = datetime.now(UTC)
+    tags = _RANKER_TAGS_9 + ["16x20 print", "home decor", "gift for him", "photography"]
+    assert len(tags) == 13
+    _seed_listing(
+        conn, LISTING_MISALIGN, "Majestic Bull Elk Wall Art Photograph", views=0, tags=tags
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    _seed_probe(
+        conn,
+        phrase="elk wall art",
+        tag_frequency={t: 5 for t in _RANKER_TAGS_9},
+        created_at=now - timedelta(days=1),
+    )
+    cap = ListingSeoEdit(FakeEtsyWriteAdapter())
+
+    assert cap.materialize(conn, USER_ID, _cfg(), _intent(str(LISTING_MISALIGN), title="X")) is None
+
+
+def test_misaligned_tagged_listing_is_flagged_with_specific_reason(conn):
+    """3/13 overlap (the real "Garden of the Gods" case) -- hyper-specific
+    tags while the ranker rewards generic regional terms. Must be flagged,
+    with an operator-facing reason naming the overlap, and must never claim
+    a never-sold listing is a top seller."""
+    now = datetime.now(UTC)
+    overlap_tags = ["colorado wall art", "colorado landscape", "colorado print"]
+    hyper_specific = [
+        "garden rocks print",
+        "rock formation art",
+        "red rock canyon",
+        "garden of the gods",
+        "colorado springs print",
+        "sandstone formation",
+        "pikes peak view",
+        "colorado hiking print",
+        "red rock landscape",
+        "colorado geology art",
+    ]
+    tags = overlap_tags + hyper_specific
+    assert len(tags) == 13
+    _seed_listing(
+        conn,
+        LISTING_MISALIGN,
+        "Garden of the Gods Print Colorado Red Rock Landscape",
+        views=0,
+        tags=tags,
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    _seed_probe(
+        conn,
+        phrase="colorado landscape print",
+        tag_frequency={
+            "colorado wall art": 9,
+            "colorado landscape": 7,
+            "colorado print": 6,
+            "mountain wall art": 3,
+        },
+        created_at=now - timedelta(days=1),
+    )
+    cap = ListingSeoEdit(FakeEtsyWriteAdapter())
+
+    action = cap.materialize(
+        conn, USER_ID, _cfg(), _intent(str(LISTING_MISALIGN), title="Realigned Title")
+    )
+    assert action is not None
+    assert action.target_id == str(LISTING_MISALIGN)
+    assert "3 of 13 tags match what Etsy's ranker rewards" in action.reason
+    assert "colorado landscape print" in action.reason
+    assert "top seller" not in action.reason.lower()
+    assert "best seller" not in action.reason.lower()
+
+
+def test_no_probe_coverage_is_not_flagged_misaligned(conn):
+    """Absence is not zero -- a listing with no fresh probe evidence at all
+    must never be flagged as misaligned, even if it has plenty of tags."""
+    _seed_listing(
+        conn,
+        LISTING_MISALIGN,
+        "Never Probed Print",
+        views=0,
+        tags=["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m"],
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cap = ListingSeoEdit(FakeEtsyWriteAdapter())
+
+    assert cap.materialize(conn, USER_ID, _cfg(), _intent(str(LISTING_MISALIGN), title="X")) is None
+
+
+def test_zero_tag_listing_with_a_matching_probe_is_still_claimed_by_the_zero_tag_branch(conn):
+    """A zero-tag listing trivially has 0 overlap (0 <= any threshold), but
+    the zero-tags branch is checked FIRST and must keep the more urgent,
+    clearer message -- never silently swapped for the misalignment one."""
+    now = datetime.now(UTC)
+    _seed_listing(conn, LISTING_MISALIGN, "Elk Wall Art Print", views=0, tags=[])
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    _seed_probe(
+        conn,
+        phrase="elk wall art",
+        tag_frequency={t: 5 for t in _RANKER_TAGS_9},
+        created_at=now - timedelta(days=1),
+    )
+    cfg = _cfg()
+
+    targets = _eligible(conn, USER_ID, cfg)
+    assert list(targets).count(str(LISTING_MISALIGN)) == 1
+    assert "zero tags" in targets[str(LISTING_MISALIGN)].reason
+
+
+def test_listing_claimed_by_the_refresh_branch_is_not_double_claimed_by_misalignment(conn):
+    """A listing with enough views to qualify for the refresh (views) branch
+    keeps that reason -- the misalignment branch must never steal it, even
+    though its tags would also qualify as misaligned."""
+    cfg = _cfg()
+    now = datetime.now(UTC)
+    overlap_tags = ["colorado wall art", "colorado landscape", "colorado print"]
+    hyper_specific = [f"unique tag {i}" for i in range(10)]
+    tags = overlap_tags + hyper_specific
+    _seed_listing(
+        conn,
+        LISTING_MISALIGN,
+        "Garden of the Gods Print Colorado Red Rock Landscape",
+        views=cfg.seo_edit.min_lifetime_views,
+        tags=tags,
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    _seed_probe(
+        conn,
+        phrase="colorado landscape print",
+        tag_frequency={"colorado wall art": 9, "colorado landscape": 7, "colorado print": 6},
+        created_at=now - timedelta(days=1),
+    )
+
+    targets = _eligible(conn, USER_ID, cfg)
+    assert list(targets).count(str(LISTING_MISALIGN)) == 1
+    assert "refresh title/tags." in targets[str(LISTING_MISALIGN)].reason
+    assert "ranker rewards" not in targets[str(LISTING_MISALIGN)].reason
+
+
+def test_overlap_threshold_boundary(conn):
+    """Overlap exactly AT the configured threshold is flagged; one more
+    overlapping tag than the threshold is not."""
+    cfg = _cfg()
+    threshold = cfg.seo_edit.min_ranker_tag_overlap
+    now = datetime.now(UTC)
+    ranker_pool = [f"ranker tag {i}" for i in range(threshold + 1)]
+
+    def _build(overlap_n: int, listing_id: int) -> None:
+        overlap_tags = ranker_pool[:overlap_n]
+        filler = [f"unique tag {listing_id} {i}" for i in range(13 - overlap_n)]
+        _seed_listing(
+            conn,
+            listing_id,
+            "Boundary Test Wall Art Print",
+            views=0,
+            tags=overlap_tags + filler,
+        )
+
+    _build(threshold, 960)  # at the threshold -- flagged
+    _build(threshold + 1, 961)  # one more -- not flagged
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    _seed_probe(
+        conn,
+        phrase="boundary test wall art",
+        tag_frequency={t: 5 for t in ranker_pool},
+        created_at=now - timedelta(days=1),
+    )
+
+    targets = _eligible(conn, USER_ID, cfg)
+    assert "960" in targets
+    assert "961" not in targets
+
+
+def test_misalignment_branch_deterministic_for_a_fixed_as_of(conn):
+    fixed_as_of = datetime(2026, 8, 25, tzinfo=UTC)
+    overlap_tags = ["colorado wall art", "colorado landscape", "colorado print"]
+    hyper_specific = [f"unique tag {i}" for i in range(10)]
+    _seed_listing(
+        conn,
+        LISTING_MISALIGN,
+        "Garden of the Gods Print Colorado Red Rock Landscape",
+        views=0,
+        tags=overlap_tags + hyper_specific,
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    _seed_probe(
+        conn,
+        phrase="colorado landscape print",
+        tag_frequency={"colorado wall art": 9, "colorado landscape": 7, "colorado print": 6},
+        created_at=fixed_as_of - timedelta(days=1),
+    )
+    cfg = _cfg()
+
+    first = _eligible(conn, USER_ID, cfg, as_of=fixed_as_of)
+    second = _eligible(conn, USER_ID, cfg, as_of=fixed_as_of)
+    assert first[str(LISTING_MISALIGN)] == second[str(LISTING_MISALIGN)]
+
+
+def test_stale_probe_between_propose_and_approve_does_not_terminalize(conn):
+    """A probe merely aging out between materialize()/propose and
+    execute()/approve must NOT terminalize an otherwise-still-valid action
+    (StaleTargetError) -- probe freshness is a research-cache artifact, not
+    a fact about the target. The action was validly proposed while the
+    probe was fresh; execute() must still succeed even though, by the time
+    it runs, the probe is stale by wall-clock `now()`."""
+    now = datetime.now(UTC)
+    overlap_tags = ["colorado wall art", "colorado landscape", "colorado print"]
+    hyper_specific = [f"unique tag {i}" for i in range(10)]
+    tags = overlap_tags + hyper_specific
+    _seed_listing(
+        conn,
+        LISTING_MISALIGN,
+        "Garden of the Gods Print Colorado Red Rock Landscape",
+        views=0,
+        tags=tags,
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    ops_config.seed(conn, USER_ID)
+    rebuild_ops(conn)
+    # The probe is STALE right now (default max_age_days=90) -- it was only
+    # ever fresh in the past, simulating "it aged out since the action was
+    # proposed".
+    _seed_probe(
+        conn,
+        phrase="colorado landscape print",
+        tag_frequency={"colorado wall art": 9, "colorado landscape": 7, "colorado print": 6},
+        created_at=now - timedelta(days=91),
+    )
+    cfg = ops_config.load_ops_config()
+
+    # Sanity: with the probe stale, strict _eligible() (materialize()'s own
+    # path) no longer offers this target at all.
+    assert str(LISTING_MISALIGN) not in _eligible(conn, USER_ID, cfg)
+
+    fake = FakeEtsyWriteAdapter()
+    fake.seed_listing(
+        LISTING_MISALIGN,
+        state="active",
+        title="Garden of the Gods Print Colorado Red Rock Landscape",
+        tags=tags,
+    )
+    cap = ListingSeoEdit(fake)
+    forged = ProposedAction(
+        action_id="forged-stale-probe",
+        capability="listing.seo_edit",
+        target_type="listing",
+        target_id=str(LISTING_MISALIGN),
+        tier=Tier.PROPOSE,
+        reason="realign tags",
+        inputs_hash="irrelevant",
+        estimated_cost_usd=0.0,
+        undo_available=True,
+        expires_at=(TODAY + timedelta(days=14)).isoformat(),
+        params={"tags": ["colorado wall art", "colorado landscape", "colorado print", "new tag"]},
+    )
+
+    result = cap.execute(conn, USER_ID, forged)  # must NOT raise StaleTargetError
+    assert result.after == {
+        "tags": ["colorado wall art", "colorado landscape", "colorado print", "new tag"]
+    }
+    update_calls = [c for c in fake.calls if c[0] == "update_listing"]
+    assert len(update_calls) == 1
 
 
 # --- materialize(): structural validation + diff ----------------------------
