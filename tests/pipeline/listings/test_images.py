@@ -1,6 +1,11 @@
+import pytest
 from PIL import Image
 
-from shopsteward.pipeline.listings.images import order_listing_images, resolve_sellable_file
+from shopsteward.pipeline.listings.images import (
+    SellableFileTooLargeError,
+    order_listing_images,
+    resolve_sellable_file,
+)
 from shopsteward.pipeline.listings.models import ListingConfig
 
 _CFG_BASE = {
@@ -104,11 +109,38 @@ def test_resolve_sellable_file_derives_jpeg_for_tiff(tmp_path):
     assert sellable.source == "derived_jpeg"
 
 
+def _noisy_jpeg(path, size=(400, 400)) -> None:
+    # Random pixel noise resists compression, so it behaves like a real
+    # oversized photo (unlike a flat color, which q100 already compresses
+    # to almost nothing) -- needed to exercise the "still over the cap at
+    # q100" path this bug lived in.
+    import os
+
+    width, height = size
+    pixels = os.urandom(width * height * 3)
+    Image.frombytes("RGB", size, pixels).save(path, "JPEG", quality=100)
+
+
 def test_resolve_sellable_file_derives_jpeg_when_over_limit(tmp_path):
+    # Mutation-relevant case the original test lacked: it used
+    # sellable_max_bytes=1 (impossible at any quality) and only asserted
+    # source == "derived_jpeg", never that the derived bytes actually fit
+    # under the cap -- so the quality=100 no-op re-encode bug would have
+    # passed it.
     path = tmp_path / "hero.jpg"
-    Image.new("RGB", (200, 200), (10, 20, 30)).save(path, "JPEG")
-    sellable = resolve_sellable_file(str(path), sellable_max_bytes=1)
+    _noisy_jpeg(path)
+    at_q100 = path.stat().st_size
+    cap = at_q100 // 2
+    sellable = resolve_sellable_file(str(path), sellable_max_bytes=cap)
     assert sellable.source == "derived_jpeg"
+    assert sellable.bytes <= cap
+
+
+def test_resolve_sellable_file_raises_when_floor_quality_still_too_big(tmp_path):
+    path = tmp_path / "hero.jpg"
+    _noisy_jpeg(path)
+    with pytest.raises(SellableFileTooLargeError):
+        resolve_sellable_file(str(path), sellable_max_bytes=100)
 
 
 def test_resolve_sellable_file_deterministic(tmp_path):
