@@ -99,6 +99,7 @@ def seed_fully_built_draft(
     set_key: str,
     user_id: int = USER_ID,
     intents: list[str] = ["single"],  # noqa: B006 - never mutated
+    format: str = "digital_download",  # noqa: A002 - matches the listingdraft.created field name
 ) -> str:
     """Appends the four upstream events push_drafts() expects (created,
     images_selected, copy_generated, priced) directly -- the same shape
@@ -144,7 +145,7 @@ def seed_fully_built_draft(
                 "photo_id": photo_id,
                 "set_key": set_key,
                 "provider": "etsy_digital",
-                "format": "digital_download",
+                "format": format,
                 "sku_source": "etsy",
                 "listing_type": "download",
                 "config_hash": cfg_hash,

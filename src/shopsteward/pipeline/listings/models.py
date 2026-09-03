@@ -227,6 +227,7 @@ class ResetPlanRow(BaseModel):
     draft_id: str
     landing_file_id: str | None
     state: str
+    format: str | None
     etsy_listing_id: str | None
     provider_product_id: str | None
     pod_status: str | None
