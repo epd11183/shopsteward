@@ -19,7 +19,7 @@
     "shadow_range_high": 35,
     "lens_profile_corrections": true,
     "remove_chromatic_aberration": true,
-    "auto_white_balance": true,
+    "auto_white_balance": false,
     "grayworld_blend": 0.0,
     "wb_temp_offset_k": -30,
     "wb_tint_offset": -26,
@@ -47,3 +47,4 @@
     "max_split_saturation": 60
   }
 }
+
