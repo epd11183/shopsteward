@@ -4,7 +4,7 @@
   "jpeg_quality": 92,
   "correction": {
     "exposure_target_luma": 0.40,
-    "exposure_bias": -0.45,
+    "exposure_bias": -0.2,
     "exposure_max_stops": 1.5,
     "exposure_highlight_ceiling": 0.92,
     "highlight_clip_threshold": 0.90,

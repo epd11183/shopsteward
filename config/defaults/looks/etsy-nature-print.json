@@ -1,0 +1,16 @@
+{
+  "name": "etsy-nature-print",
+  "description": "Commercial wall-art grade: bright, crisp, vibrant-but-believable, clean whites, real depth. Tuned to the shop's proven canvas look.",
+  "contrast": 15,
+  "highlights": -12,
+  "whites": 16,
+  "blacks": -8,
+  "clarity": 14,
+  "dehaze": 8,
+  "texture": 12,
+  "tone_curve": [[0, 0], [64, 56], [128, 134], [192, 206], [255, 255]],
+  "hsl": {},
+  "split_toning": {},
+  "vibrance": 24,
+  "saturation": 4
+}
