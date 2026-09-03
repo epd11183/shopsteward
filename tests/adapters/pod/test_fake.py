@@ -157,8 +157,8 @@ def test_duplicate_create_same_idempotency_key_raises() -> None:
 
 def test_same_print_file_and_variant_key_but_different_idempotency_key_is_not_a_duplicate() -> None:
     # the old dedupe key (print_file_url, variant_keys) fired falsely here:
-    # every shipped variant_key is the literal "<OPERATOR>" placeholder, so
-    # two DIFFERENT product types built from one photo would collide.
+    # two DIFFERENT product types built from one photo can share a
+    # variant_key.
     adapter = FakeGelatoAdapter()
     adapter.create_product(_spec(idempotency_key="draft-1"))
     product = adapter.create_product(_spec(idempotency_key="draft-2"))

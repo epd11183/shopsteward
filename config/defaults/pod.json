@@ -142,8 +142,8 @@
               "aspect": "2:3",
               "orientation": "landscape",
               "long_edge_inches": 18,
-              "variant_key": "<OPERATOR>",
-              "placeholder": "<OPERATOR>",
+              "variant_key": "7cdcda4a-0d5f-4087-8a6a-ae007054aeba",
+              "placeholder": "CR7_3440.jpg",
               "fit_method": "slice",
               "base_cost": 25.39,
               "shipping_est": 0.0,
@@ -155,30 +155,17 @@
               "aspect": "2:3",
               "orientation": "landscape",
               "long_edge_inches": 24,
-              "variant_key": "<OPERATOR>",
-              "placeholder": "<OPERATOR>",
+              "variant_key": "84372170-84e6-4dd8-a97a-14a077c38f1b",
+              "placeholder": "CR7_3440.jpg",
               "fit_method": "slice",
               "base_cost": 28.69,
               "shipping_est": 0.0,
               "retail_override": 109.0
-            },
-            {
-              "format": "canvas_20x30_hor",
-              "size": "20x30\" slim canvas - Horizontal",
-              "aspect": "2:3",
-              "orientation": "landscape",
-              "long_edge_inches": 30,
-              "variant_key": "<OPERATOR>",
-              "placeholder": "<OPERATOR>",
-              "fit_method": "slice",
-              "base_cost": 51.79,
-              "shipping_est": 0.0,
-              "retail_override": 169.0
             }
           ]
         },
         "canvas_portrait": {
-          "template_id": "<OPERATOR>",
+          "template_id": "f7a159e5-8475-4d1b-abe7-1ef70f7e0ada",
           "variants": [
             {
               "format": "canvas_12x18_ver",
@@ -186,8 +173,8 @@
               "aspect": "2:3",
               "orientation": "portrait",
               "long_edge_inches": 18,
-              "variant_key": "<OPERATOR>",
-              "placeholder": "<OPERATOR>",
+              "variant_key": "17ef9215-9b1e-4cb4-96aa-e98731318939",
+              "placeholder": "20260807-1J4A5496.jpg",
               "fit_method": "slice",
               "base_cost": 25.39,
               "shipping_est": 0.0,
@@ -199,25 +186,12 @@
               "aspect": "2:3",
               "orientation": "portrait",
               "long_edge_inches": 24,
-              "variant_key": "<OPERATOR>",
-              "placeholder": "<OPERATOR>",
+              "variant_key": "cb2596bb-d1c1-43e5-9186-6d29f0edd44a",
+              "placeholder": "20260807-1J4A5496.jpg",
               "fit_method": "slice",
               "base_cost": 28.69,
               "shipping_est": 0.0,
               "retail_override": 109.0
-            },
-            {
-              "format": "canvas_20x30_ver",
-              "size": "20x30\" slim canvas - Vertical",
-              "aspect": "2:3",
-              "orientation": "portrait",
-              "long_edge_inches": 30,
-              "variant_key": "<OPERATOR>",
-              "placeholder": "<OPERATOR>",
-              "fit_method": "slice",
-              "base_cost": 51.79,
-              "shipping_est": 0.0,
-              "retail_override": 169.0
             }
           ]
         }
