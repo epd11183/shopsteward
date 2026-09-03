@@ -9,9 +9,11 @@ markup on them.
 """
 
 import base64
+import io
 import json
 
 import httpx
+from PIL import Image
 from pydantic import ValidationError
 
 from shopsteward.adapters.vision.interface import (
@@ -43,6 +45,26 @@ _VERDICT_SCHEMA = {
 }
 
 _MAX_ERROR_LEN = 500
+
+# Vision models cap effective resolution, and the API rejects oversized image
+# payloads with HTTP 413. Full-res exports (6000px+) must be shrunk first.
+_MAX_IMAGE_EDGE = 1536
+
+
+def _downscale_jpeg(jpeg_bytes: bytes, max_edge: int = _MAX_IMAGE_EDGE) -> bytes:
+    """Bound the image to `max_edge` on its long side and re-encode as JPEG.
+    Returns the original bytes unchanged if it already fits or on any error."""
+    try:
+        with Image.open(io.BytesIO(jpeg_bytes)) as im:
+            im = im.convert("RGB")
+            if max(im.size) <= max_edge:
+                return jpeg_bytes
+            im.thumbnail((max_edge, max_edge))
+            out = io.BytesIO()
+            im.save(out, "JPEG", quality=85)
+            return out.getvalue()
+    except Exception:  # noqa: BLE001 - never fail a scoring call over resizing
+        return jpeg_bytes
 
 
 class OpenRouterVisionAdapter:
@@ -77,7 +99,7 @@ class OpenRouterVisionAdapter:
                             "image_url": {
                                 "url": (
                                     "data:image/jpeg;base64,"
-                                    f"{base64.b64encode(jpeg_bytes).decode('ascii')}"
+                                    f"{base64.b64encode(_downscale_jpeg(jpeg_bytes)).decode('ascii')}"
                                 )
                             },
                         },

@@ -163,3 +163,22 @@ def test_huge_payload_error_message_is_truncated() -> None:
         raise AssertionError("expected VisionParseError")
     except VisionParseError as exc:
         assert len(str(exc)) < 700
+
+
+def test_downscale_jpeg_bounds_large_images_and_passes_small_through():
+    import io
+
+    from PIL import Image
+
+    from shopsteward.adapters.vision.openrouter import _MAX_IMAGE_EDGE, _downscale_jpeg
+
+    big = io.BytesIO()
+    Image.new("RGB", (6000, 4000), (120, 90, 60)).save(big, "JPEG", quality=90)
+    out = _downscale_jpeg(big.getvalue())
+    assert len(out) < len(big.getvalue())
+    with Image.open(io.BytesIO(out)) as im:
+        assert max(im.size) == _MAX_IMAGE_EDGE
+
+    small = io.BytesIO()
+    Image.new("RGB", (800, 600), (10, 20, 30)).save(small, "JPEG", quality=90)
+    assert _downscale_jpeg(small.getvalue()) == small.getvalue()
