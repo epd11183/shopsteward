@@ -68,21 +68,70 @@ class LiveGelatoAdapter:
         self._client = httpx.Client(headers={"X-API-KEY": api_key}, timeout=timeout)
 
     def _to_product(self, data: dict, *, variant_count: int) -> PodProduct:
+        """Classify by Gelato's actual error signals, NOT by guessing at a
+        status-string whitelist -- Gelato's OpenAPI spec types `status` as a
+        bare, unconstrained string (no published enum), and a real live
+        response has been observed with `status: "publishing_queued"`
+        (still-processing, `errors: []`, `publishingErrorCode: null`) which a
+        whitelist-based mapping misclassified as "failed" on the very first
+        poll. `errors` (non-empty) and `publishingErrorCode` (truthy) are the
+        unambiguous, documented-shape error signals; a status string
+        containing "error" is a belt-and-suspenders fallback for a future
+        error-shaped status with those fields empty for some reason."""
         external = _as_int(data.get("externalId"))
         raw = data.get("status")
-        if raw in ("created", "publishing"):
-            status = raw
-        elif raw == "active":
-            status = "linked" if external is not None else "publishing"
-        else:  # publishing_error / unknown
+        raw_str = raw if isinstance(raw, str) else ""
+        linked = raw_str == "active" and external is not None
+        failed = not linked and (
+            bool(data.get("publishingErrorCode"))
+            or bool(data.get("errors"))
+            or "error" in raw_str.lower()
+        )
+        if linked:
+            # A confirmed active+externalId listing wins over any error
+            # signal: if Gelato ever uses `errors` as a non-terminal warnings
+            # channel on an already-published product, treating it as
+            # "failed" here would drop a REAL etsy_listing_id and leave the
+            # draft permanently re-polling a product that already succeeded.
+            status = "linked"
+        elif failed:
             status = "failed"
+        else:
+            # created / publishing / publishing_queued / active-with-no-
+            # externalId-yet / any other unrecognized non-error status: all
+            # still-processing, non-terminal from the poll loop's point of
+            # view (provider.py's link_pod_drafts only branches on "linked"
+            # and "failed"; everything else keeps polling until poll_max).
+            status = "publishing"
+
+        error_message = None
+        if status == "failed":
+            details = data.get("publishingErrorDetails")
+            error_code = data.get("publishingErrorCode")
+            errors_list = data.get("errors")
+            if isinstance(details, str) and details:
+                error_message = details
+            elif errors_list:
+                # A real error signal (non-empty `errors`) is the whole
+                # reason this draft is being marked failed -- surface it
+                # verbatim rather than the (often benign) status string, or
+                # the operator gets a provider_failed event with no usable
+                # cause.
+                error_message = "; ".join(str(e) for e in errors_list)
+            elif error_code:
+                error_message = f"Gelato publishingErrorCode={error_code!r}"
+            else:
+                error_message = _safe_error_from_data(data) or (
+                    f"Gelato reported an unrecognized/error status: {raw!r}"
+                )
+
         return PodProduct(
             provider_product_id=str(data["id"]),
             status=status,
             etsy_listing_id=external if status == "linked" else None,
             etsy_listing_state="draft" if status == "linked" else None,
             variant_count=variant_count,
-            error=_safe_error_from_data(data) if status == "failed" else None,
+            error=error_message,
         )
 
     def create_product(self, spec: PodProductSpec) -> PodProduct:
