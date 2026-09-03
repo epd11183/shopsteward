@@ -16,7 +16,7 @@ import sqlite3
 from pathlib import Path
 
 from shopsteward.adapters.copy.fake import FixtureCopyAdapter
-from shopsteward.adapters.copy.interface import CopyAdapter, CopyInputs
+from shopsteward.adapters.copy.interface import CopyAdapter, CopyInputs, CopyParseError
 from shopsteward.adapters.copy.openrouter import OpenRouterCopyAdapter
 from shopsteward.core.events import Event, append
 from shopsteward.pipeline.listings.models import ListingConfig, ListingImage
@@ -128,7 +128,19 @@ def generate_copy(
         return False
 
     inputs = _build_inputs(conn, user_id, landing_file_id, photo_id, cfg)
-    result = adapter.generate_copy(inputs, model=cfg.copy_.model)
+    try:
+        result = adapter.generate_copy(inputs, model=cfg.copy_.model)
+    except CopyParseError:
+        # A malformed/truncated provider response is a per-draft, retryable
+        # failure -- not a reason to kill the whole run. Same "no event
+        # appended, fill-forward picks it up next time" contract as the
+        # soft-cap-refusal branch above.
+        logger.warning(
+            "copy provider returned an unparseable response for draft %s; will retry next run",
+            draft_id,
+            exc_info=True,
+        )
+        return False
 
     description = result.verdict.description
     # ponytail: M5a always builds the listing images from the M4 mockup set,

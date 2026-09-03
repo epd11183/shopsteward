@@ -83,15 +83,24 @@ class OpenRouterCopyAdapter:
         }
         resp = self._client.post(BASE, json=body)
         resp.raise_for_status()
-        payload = resp.json()
 
+        # payload = resp.json() used to sit outside this try, so a truncated
+        # HTTP body (not just truncated model content) raised a bare
+        # json.JSONDecodeError instead of CopyParseError -- the caller's
+        # narrow `except CopyParseError` (copy.py) wouldn't catch that, and
+        # it would crash the whole pipeline the same way the original bug
+        # did. Bringing it inside means ANY malformed-response shape --
+        # truncated body or truncated content -- surfaces the same way.
+        payload: object = None
         try:
+            payload = resp.json()
             text = payload["choices"][0]["message"]["content"]
             verdict_json = json.loads(text)
             verdict = CopyVerdict.model_validate(verdict_json)
         except (KeyError, IndexError, json.JSONDecodeError, ValidationError) as exc:
+            raw = payload if payload is not None else resp.text
             raise CopyParseError(
-                f"could not parse OpenRouter response: {payload!r:.{_MAX_ERROR_LEN}}"
+                f"could not parse OpenRouter response: {raw!r:.{_MAX_ERROR_LEN}}"
             ) from exc
 
         usage = self._build_usage(payload, model)
