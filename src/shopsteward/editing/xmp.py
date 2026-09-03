@@ -43,6 +43,10 @@ def compose(correction: CorrectionSettings, look: LookProfile) -> str:
     wb_custom = correction.temperature is not None and correction.tint is not None
     attrs: list[str] = [
         'crs:Version="15.0"',
+        # ProcessVersion is required: without it Lightroom falls back to a legacy
+        # process (PV2010) that hides Highlights/Shadows/Whites/Dehaze/Texture and
+        # ignores the 2012 tone values + ToneCurvePV2012 below. "15.4" = current.
+        'crs:ProcessVersion="15.4"',
         'crs:WhiteBalance="Custom"' if wb_custom else 'crs:WhiteBalance="As Shot"',
     ]
     if wb_custom:

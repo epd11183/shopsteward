@@ -4,7 +4,7 @@
   "jpeg_quality": 92,
   "correction": {
     "exposure_target_luma": 0.40,
-    "exposure_bias": -0.45,
+    "exposure_bias": -0.2,
     "exposure_max_stops": 1.5,
     "exposure_highlight_ceiling": 0.92,
     "highlight_clip_threshold": 0.90,
@@ -19,7 +19,7 @@
     "shadow_range_high": 35,
     "lens_profile_corrections": true,
     "remove_chromatic_aberration": true,
-    "auto_white_balance": true,
+    "auto_white_balance": false,
     "grayworld_blend": 0.0,
     "wb_temp_offset_k": -30,
     "wb_tint_offset": -26,
@@ -47,3 +47,4 @@
     "max_split_saturation": 60
   }
 }
+

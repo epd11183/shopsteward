@@ -19,6 +19,9 @@ def test_compose_is_wellformed_and_wb_as_shot():
     root = _parse(xmp)
     desc = root.find(".//{http://www.w3.org/1999/02/22-rdf-syntax-ns#}Description")
     assert desc.get(f"{{{CRS}}}WhiteBalance") == "As Shot"
+    # Modern process version must be stamped, else Lightroom uses a legacy PV
+    # that hides Highlights/Shadows/Whites/Dehaze/Texture and drops those values.
+    assert desc.get(f"{{{CRS}}}ProcessVersion") == "15.4"
     assert f"{{{CRS}}}Temperature" not in desc.attrib
     assert f"{{{CRS}}}Tint" not in desc.attrib
     assert desc.get(f"{{{CRS}}}Exposure2012") == "0.50"
