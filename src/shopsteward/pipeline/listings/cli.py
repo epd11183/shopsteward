@@ -159,6 +159,15 @@ def reset_cmd(
     reason: Annotated[
         str, typer.Option("--reason", help="Recorded on every event for forensics")
     ] = "operator_reset",
+    format_: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--format",
+            help="Limit the plan to only these format values (e.g. acrylic, poster, "
+            "canvas, canvas_portrait, digital_download). Repeatable. Omitted: all "
+            "formats in the folder, unchanged from today.",
+        ),
+    ] = None,
 ) -> None:
     """Winners-batch reset: un-poisons listing drafts built from files in
     `folder` (e.g. a fake dry-run push that left a fully-built draft with a
@@ -168,7 +177,12 @@ def reset_cmd(
     always refused, no override. A draft already pushed/POD-linked (a
     non-NULL etsy_listing_id or provider_product_id) additionally needs
     --include-pushed plus one --confirm-listing-id per external id, matching
-    EXACTLY the set this run would reset. Note: unless --keep-landing, the
+    EXACTLY the set this run would reset. --format (repeatable) narrows the
+    plan to only rows whose format matches -- e.g. resetting fake POD-format
+    drafts (acrylic/poster/canvas/canvas_portrait) for a folder that also has
+    real, correctly-pushed digital_download listings, without ever putting
+    those digital rows in the plan (and therefore never being forced to
+    confirm/reset them). Note: unless --keep-landing, the
     landing re-observe step (scan_landing) scans the WHOLE folder, not just
     the reset files -- any other new file sitting in it gets ingested too,
     same as a normal `listings build` run would."""
@@ -183,12 +197,15 @@ def reset_cmd(
     conn = connect(db)
     try:
         migrate(conn)
-        plan = plan_reset(conn, DEFAULT_USER_ID, folder, include_pushed=include_pushed)
+        formats = set(format_) if format_ else None
+        plan = plan_reset(
+            conn, DEFAULT_USER_ID, folder, include_pushed=include_pushed, formats=formats
+        )
 
         typer.echo(f"folder: {folder}")
         typer.echo(f"matched draft rows: {len(plan)}")
         typer.echo(
-            f"{'draft_id':<14} {'landing_file_id':<16} {'state':<12} "
+            f"{'draft_id':<14} {'landing_file_id':<16} {'state':<12} {'format':<16} "
             f"{'etsy_id':<10} {'pod_status':<12} verdict"
         )
         verdict_label = {
@@ -203,8 +220,8 @@ def reset_cmd(
             short_landing = (row.landing_file_id or "-")[:14]
             typer.echo(
                 f"{short_draft:<14} {short_landing:<16} {row.state:<12} "
-                f"{row.etsy_listing_id or '-':<10} {row.pod_status or '-':<12} "
-                f"{verdict_label.get(row.verdict, row.verdict)}"
+                f"{row.format or '-':<16} {row.etsy_listing_id or '-':<10} "
+                f"{row.pod_status or '-':<12} {verdict_label.get(row.verdict, row.verdict)}"
             )
             if row.verdict in ("reset", "needs_confirmation"):
                 if row.etsy_listing_id is not None:

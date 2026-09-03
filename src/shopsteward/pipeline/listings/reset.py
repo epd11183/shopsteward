@@ -41,11 +41,24 @@ def _verdict(row: sqlite3.Row, *, include_pushed: bool) -> str:
 
 
 def plan_reset(
-    conn: sqlite3.Connection, user_id: int, folder: Path, *, include_pushed: bool
+    conn: sqlite3.Connection,
+    user_id: int,
+    folder: Path,
+    *,
+    include_pushed: bool,
+    formats: set[str] | None = None,
 ) -> list[ResetPlanRow]:
     """Read-only: re-hashes files in `folder` the same way landing.py does,
     finds proj_listing_drafts rows built from a file currently in that
-    folder, and classifies each into a verdict. Never writes an event."""
+    folder, and classifies each into a verdict. Never writes an event.
+
+    `formats`, if given, additionally scopes the plan to only rows whose
+    `format` column is in that set (e.g. {"acrylic", "poster"}) -- lets an
+    operator reset only the POD-format rows for a folder that also has real,
+    correctly-pushed digital_download rows sitting alongside them, without
+    ever including the digital rows in the plan (and therefore never being
+    forced to confirm/reset them). Omitted (None): unchanged, all formats in
+    the folder, exactly as before this parameter existed."""
     rebuild_listings(conn)
 
     file_ids = list(set(landing.folder_file_ids(folder).values()))
@@ -54,9 +67,9 @@ def plan_reset(
 
     placeholders = ",".join("?" for _ in file_ids)
     rows = conn.execute(
-        "SELECT draft_id, landing_file_id, state, etsy_listing_id, provider_product_id, "
-        "pod_status FROM proj_listing_drafts WHERE user_id=? AND landing_file_id IN "
-        f"({placeholders}) ORDER BY draft_id",
+        "SELECT draft_id, landing_file_id, state, format, etsy_listing_id, "
+        "provider_product_id, pod_status FROM proj_listing_drafts WHERE user_id=? AND "
+        f"landing_file_id IN ({placeholders}) ORDER BY draft_id",
         (user_id, *file_ids),
     ).fetchall()
 
@@ -65,12 +78,14 @@ def plan_reset(
             draft_id=row["draft_id"],
             landing_file_id=row["landing_file_id"],
             state=row["state"],
+            format=row["format"],
             etsy_listing_id=row["etsy_listing_id"],
             provider_product_id=row["provider_product_id"],
             pod_status=row["pod_status"],
             verdict=_verdict(row, include_pushed=include_pushed),
         )
         for row in rows
+        if formats is None or row["format"] in formats
     ]
 
 

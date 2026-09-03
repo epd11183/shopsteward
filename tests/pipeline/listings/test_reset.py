@@ -433,6 +433,33 @@ def test_scoped_to_folder(conn, tmp_path):
     assert all(r.draft_id != draft_id for r in plan)
 
 
+def test_format_filter_narrows_plan(conn, tmp_path):
+    """A --format filter must scope plan_reset to only the given format
+    values -- a same-folder row of a different format must never appear in
+    the filtered plan's output."""
+    folder = tmp_path / "winners"
+    folder.mkdir()
+    digital_draft_id = _seed_fully_built_in_folder(
+        conn, folder, photo_id="photo-digital", title="Digital", set_key="set-digital"
+    )
+    pod_draft_id = seed_fully_built_draft(
+        conn,
+        folder,
+        file_id=_FULLY_BUILT_FILE_ID,
+        photo_id="photo-pod",
+        title="POD",
+        set_key="set-pod",
+        format="acrylic",
+    )
+
+    plan_all = plan_reset(conn, USER_ID, folder, include_pushed=True)
+    assert {r.draft_id for r in plan_all} == {digital_draft_id, pod_draft_id}
+
+    plan_pod_only = plan_reset(conn, USER_ID, folder, include_pushed=True, formats={"acrylic"})
+    assert {r.draft_id for r in plan_pod_only} == {pod_draft_id}
+    assert all(r.format == "acrylic" for r in plan_pod_only)
+
+
 def test_apply_reset_refuses_a_row_that_gained_an_external_id_after_plan(conn, tmp_path):
     """F3 guard: a plan-time "reset" verdict (freely resettable, no external
     id yet) must not still authorize a reset if a concurrent push gave the
@@ -478,3 +505,129 @@ def test_apply_reset_refuses_a_row_that_gained_an_external_id_after_plan(conn, t
     ).fetchone()
     assert row_after["etsy_listing_id"] == "4242"
     assert row_after["state"] == "pushed"
+
+
+def test_format_filter_leaves_real_digital_listing_untouched_when_resetting_pod_rows(
+    tmp_path, monkeypatch
+):
+    """The load-bearing safety property this feature exists for: a shop with
+    a real, correctly-pushed digital_download listing AND fake POD-format
+    drafts (from an earlier fake-Gelato dry run) sitting in the SAME folder.
+    Resetting only the POD formats via --format must never sweep up the real
+    digital row -- doing so would null its etsy_listing_id, and the next
+    `listings build`/push would then create a DUPLICATE real Etsy listing
+    for the same photo (draft_id is deterministic, so it rebuilds identically
+    but pushes fresh)."""
+    db = tmp_path / "t.db"
+    monkeypatch.setenv("SHOPSTEWARD_DB", str(db))
+    folder = tmp_path / "winners"
+    folder.mkdir()
+
+    conn = connect(db)
+    migrate(conn)
+
+    digital_draft_id = seed_fully_built_draft(
+        conn,
+        folder,
+        file_id=_FULLY_BUILT_FILE_ID,
+        photo_id="photo-mix",
+        title="Real Digital",
+        set_key="set-mix-digital",
+        format="digital_download",
+    )
+    append(
+        conn,
+        Event(
+            user_id=USER_ID,
+            type="listingdraft.pushed_to_etsy",
+            payload={
+                "draft_id": digital_draft_id,
+                "etsy_listing_id": "4567788153",
+                "listing_type": "download",
+                "quantity": 999,
+                "state": "draft",
+            },
+        ),
+    )
+
+    pod_formats = ["acrylic", "poster", "canvas", "canvas_portrait"]
+    pod_draft_ids: dict[str, str] = {}
+    confirm_ids: set[str] = set()
+    for i, fmt in enumerate(pod_formats, start=1):
+        draft_id = seed_fully_built_draft(
+            conn,
+            folder,
+            file_id=_FULLY_BUILT_FILE_ID,
+            photo_id=f"photo-mix-{fmt}",
+            title=f"Fake {fmt}",
+            set_key=f"set-mix-{fmt}",
+            format=fmt,
+        )
+        pod_draft_ids[fmt] = draft_id
+        provider_product_id = f"prov-{fmt}-{i}"
+        etsy_listing_id = 1000 + i
+        append(
+            conn,
+            Event(
+                user_id=USER_ID,
+                type="listingdraft.provider_created",
+                payload={"draft_id": draft_id, "provider_product_id": provider_product_id},
+            ),
+        )
+        append(
+            conn,
+            Event(
+                user_id=USER_ID,
+                type="listingdraft.provider_linked",
+                payload={"draft_id": draft_id, "etsy_listing_id": etsy_listing_id},
+            ),
+        )
+        confirm_ids.add(provider_product_id)
+        confirm_ids.add(str(etsy_listing_id))
+
+    rebuild_listings(conn)
+    conn.close()
+
+    confirm_flags = []
+    for cid in sorted(confirm_ids):
+        confirm_flags += ["--confirm-listing-id", cid]
+
+    result = runner.invoke(
+        app,
+        [
+            "listings",
+            "reset",
+            str(folder),
+            "--apply",
+            "--include-pushed",
+            "--keep-landing",
+            "--format",
+            "acrylic",
+            "--format",
+            "poster",
+            "--format",
+            "canvas",
+            "--format",
+            "canvas_portrait",
+            *confirm_flags,
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    conn = connect(db)
+    rebuild_listings(conn)
+    digital_row = conn.execute(
+        "SELECT state, etsy_listing_id FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
+        (USER_ID, digital_draft_id),
+    ).fetchone()
+    assert digital_row is not None
+    assert digital_row["state"] == "pushed"
+    assert digital_row["etsy_listing_id"] == "4567788153"
+
+    for draft_id in pod_draft_ids.values():
+        pod_row = conn.execute(
+            "SELECT 1 FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
+            (USER_ID, draft_id),
+        ).fetchone()
+        assert pod_row is None
+    conn.close()
