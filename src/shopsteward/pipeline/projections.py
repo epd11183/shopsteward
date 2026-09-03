@@ -10,6 +10,14 @@ pipeline/listings/copy.py still reads it for vision-verdict copy signals, but
 it has no live producer anymore: it only projects historical/seeded
 `photo.scored` events. proj_gate1 had no kept-side consumer and was removed
 along with the gate1.* event handlers.
+
+Winners-batch reset (pipeline/listings/reset.py) adds landing.file_reset,
+but this projection has NO fold for it -- reviewer finding: the DELETE this
+module used to run for it was dead code, since a re-observe's
+landing.file_observed already folds via INSERT OR REPLACE and overwrites
+the row regardless. The load-bearing half of a reset lives entirely in
+landing.py's `_known_file_ids()` ordered fold, which discards the file_id on
+landing.file_reset so scan_landing treats it as unseen and re-observes it.
 """
 
 import json

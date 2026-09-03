@@ -138,6 +138,129 @@ def status() -> None:
         conn.close()
 
 
+@listings_app.command("reset")
+def reset_cmd(
+    folder: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
+    apply_: Annotated[
+        bool, typer.Option("--apply", help="Write reset events (default: dry-run)")
+    ] = False,
+    include_pushed: Annotated[
+        bool,
+        typer.Option("--include-pushed", help="Allow resetting pushed/POD-linked drafts too"),
+    ] = False,
+    confirm_listing_id: Annotated[
+        list[str] | None,
+        typer.Option("--confirm-listing-id", help="One per external id being reset"),
+    ] = None,
+    keep_landing: Annotated[
+        bool,
+        typer.Option("--keep-landing", help="Don't reset/re-scan the matching landing rows"),
+    ] = False,
+    reason: Annotated[
+        str, typer.Option("--reason", help="Recorded on every event for forensics")
+    ] = "operator_reset",
+) -> None:
+    """Winners-batch reset: un-poisons listing drafts built from files in
+    `folder` (e.g. a fake dry-run push that left a fully-built draft with a
+    fake etsy_listing_id) so `listings build` / `listings push` can run
+    again for them. Dry-run by default: prints the plan and writes nothing.
+    A draft in state=published or adopted (draft_id starting "adopted-") is
+    always refused, no override. A draft already pushed/POD-linked (a
+    non-NULL etsy_listing_id or provider_product_id) additionally needs
+    --include-pushed plus one --confirm-listing-id per external id, matching
+    EXACTLY the set this run would reset. Note: unless --keep-landing, the
+    landing re-observe step (scan_landing) scans the WHOLE folder, not just
+    the reset files -- any other new file sitting in it gets ingested too,
+    same as a normal `listings build` run would."""
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.pipeline import tuning
+    from shopsteward.pipeline.config import TUNING_PROFILE_PATH
+    from shopsteward.pipeline.listings.reset import ResetIncomplete, apply_reset, plan_reset
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        plan = plan_reset(conn, DEFAULT_USER_ID, folder, include_pushed=include_pushed)
+
+        typer.echo(f"folder: {folder}")
+        typer.echo(f"matched draft rows: {len(plan)}")
+        typer.echo(
+            f"{'draft_id':<14} {'landing_file_id':<16} {'state':<12} "
+            f"{'etsy_id':<10} {'pod_status':<12} verdict"
+        )
+        verdict_label = {
+            "reset": "reset",
+            "needs_confirmation": "needs --include-pushed",
+            "refused_published": "REFUSED (published)",
+            "refused_adopted": "REFUSED (use archive adopt-local --revoke)",
+        }
+        needs_confirmation_ids: set[str] = set()
+        for row in plan:
+            short_draft = row.draft_id[:12]
+            short_landing = (row.landing_file_id or "-")[:14]
+            typer.echo(
+                f"{short_draft:<14} {short_landing:<16} {row.state:<12} "
+                f"{row.etsy_listing_id or '-':<10} {row.pod_status or '-':<12} "
+                f"{verdict_label.get(row.verdict, row.verdict)}"
+            )
+            if row.verdict in ("reset", "needs_confirmation"):
+                if row.etsy_listing_id is not None:
+                    needs_confirmation_ids.add(row.etsy_listing_id)
+                if row.provider_product_id is not None:
+                    needs_confirmation_ids.add(row.provider_product_id)
+
+        if needs_confirmation_ids:
+            typer.echo(f"external ids requiring confirmation: {sorted(needs_confirmation_ids)}")
+
+        if not apply_:
+            hint = "--apply"
+            if needs_confirmation_ids:
+                confirm_flags = " ".join(
+                    f"--confirm-listing-id {i}" for i in sorted(needs_confirmation_ids)
+                )
+                hint = f"--apply --include-pushed {confirm_flags}"
+            typer.echo(f"Dry-run: nothing written. Re-run with {hint} to write.")
+            return
+
+        supplied_ids = set(confirm_listing_id or [])
+        if needs_confirmation_ids != supplied_ids:
+            missing = needs_confirmation_ids - supplied_ids
+            extra = supplied_ids - needs_confirmation_ids
+            typer.secho(
+                f"--confirm-listing-id set mismatch. missing={sorted(missing)} "
+                f"extra={sorted(extra)}",
+                fg="red",
+            )
+            raise typer.Exit(code=1)
+
+        if not keep_landing:
+            # A follow-up scan_landing() inside apply_reset needs a seeded
+            # tuning profile for landing.allowed_formats/min_long_edge_px --
+            # only seeded here, on the write path, so a plain dry-run never
+            # writes the tuningprofile.seeded event (design §5: dry-run
+            # writes nothing).
+            tuning.seed(conn, DEFAULT_USER_ID, TUNING_PROFILE_PATH)
+
+        try:
+            report = apply_reset(
+                conn,
+                DEFAULT_USER_ID,
+                plan,
+                folder=folder,
+                reason=reason,
+                keep_landing=keep_landing,
+            )
+        except ResetIncomplete as exc:
+            typer.secho(str(exc), fg="red")
+            raise typer.Exit(code=1) from exc
+        typer.echo(f"listings reset: {report.model_dump()}")
+    finally:
+        conn.close()
+
+
 def _build_live_etsy_read_adapter() -> "LiveEtsyAdapter":
     """Mirrors shopsteward.cli._build_live_etsy_adapter (that helper lives at
     the root CLI, which imports THIS module -- importing it back here would

@@ -75,6 +75,20 @@ linkage. listing.source_match_revoked is the undo path: it DELETEs the
 derived row (never the event -- events stay immutable; this is a
 projection-table correction, not a rewrite of history) for the same
 computed draft_id.
+
+Winners-batch reset (design: winners-batch-reset) adds one more undo of the
+same shape: listingdraft.reset (pipeline/listings/reset.py, an
+operator-invoked CLI, never autonomous) DELETEs a draft's proj_listing_
+drafts row entirely, for the same reason source_match_revoked does -- the
+original listingdraft.created/.priced/etc events stay in the log forever;
+only the derived row is removed. One delete clears digital AND POD state
+for that draft_id since they share the row (pod_config_hash,
+provider_product_id, pod_status, variants_json, print_file_key are columns
+on the same table) -- there is no separate POD undo needed. A later
+listingdraft.created for the same draft_id (build_drafts re-running against
+the same landing_file_id/config_hash/set_key) reproduces the row
+identically, which is how a reset "un-poisons" a fake-pushed draft so
+build/push can run again.
 """
 
 import json
@@ -412,6 +426,12 @@ def rebuild_listings(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "DELETE FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
                 (e.user_id, f"adopted-{p['etsy_listing_id']}"),
+            )
+
+        elif e.type == "listingdraft.reset":
+            conn.execute(
+                "DELETE FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
+                (e.user_id, p["draft_id"]),
             )
 
         elif e.type == "asset.archived":

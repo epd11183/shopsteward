@@ -31,12 +31,35 @@ def _sha256_file(path: Path) -> str:
 def _known_file_ids(conn: sqlite3.Connection, user_id: int) -> set[str]:
     """File ids already recorded — valid or invalid — so an unfixed bad file
     doesn't re-emit landing.file_invalid on every scan. A fixed file has new
-    bytes, hence a new sha256, and is picked up normally."""
-    return {
-        e.payload["file_id"]
-        for e in read_all(conn, "landing.file_")
-        if e.user_id == user_id and e.payload.get("file_id")
-    }
+    bytes, hence a new sha256, and is picked up normally.
+
+    An ordered fold, not a set comprehension: a landing.file_reset event (id
+    order, read_all is ORDER BY id) removes a file_id from this set so
+    scan_landing re-observes it -- the content hash is unchanged so it gets
+    the SAME file_id back (winners-batch reset, pipeline/listings/reset.py)."""
+    known: set[str] = set()
+    for e in read_all(conn, "landing.file_"):
+        if e.user_id != user_id or not e.payload.get("file_id"):
+            continue
+        if e.type == "landing.file_reset":
+            known.discard(e.payload["file_id"])
+        else:
+            known.add(e.payload["file_id"])
+    return known
+
+
+def folder_file_ids(folder: Path) -> dict[Path, str]:
+    """sha256 every recognized landing-format file directly in `folder`
+    (non-recursive, mirrors scan_landing's own top-level iterdir) -- used by
+    the winners-batch reset (pipeline/listings/reset.py) to find which
+    proj_landing_files rows correspond to files still present in a named
+    folder, without duplicating scan_landing's own hashing logic."""
+    result: dict[Path, str] = {}
+    for f in sorted(folder.iterdir()):
+        if not f.is_file() or f.suffix.lower() not in _SUFFIX_FORMATS:
+            continue
+        result[f] = _sha256_file(f)
+    return result
 
 
 def _known_base_names(conn: sqlite3.Connection, user_id: int) -> list[tuple[str, str]]:
@@ -172,4 +195,29 @@ def scan_landing(
     rebuild_pipeline(conn)
     return LandingReport(
         observed=observed, matched=matched, manual_drops=observed - matched, invalid=invalid
+    )
+
+
+def reset_file(conn: sqlite3.Connection, user_id: int, file_id: str, *, reason: str) -> None:
+    """Appends landing.file_reset for one file_id (winners-batch reset,
+    pipeline/listings/reset.py). Purely additive -- the original
+    landing.file_observed event is never touched; only the derived
+    proj_landing_files row is removed on rebuild (pipeline/projections.py),
+    and _known_file_ids() forgets the id so a follow-up scan_landing()
+    re-observes it (refreshing path/width/height if the winners folder
+    moved) with the SAME file_id, since the bytes are unchanged."""
+    row = conn.execute(
+        "SELECT path FROM proj_landing_files WHERE user_id=? AND file_id=?", (user_id, file_id)
+    ).fetchone()
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="landing.file_reset",
+            payload={
+                "file_id": file_id,
+                "reason": reason,
+                "prior_path": row["path"] if row is not None else None,
+            },
+        ),
     )
