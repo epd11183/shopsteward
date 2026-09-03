@@ -128,6 +128,29 @@ def test_second_scan_is_idempotent(conn, tmp_path):
     assert len(read_all(conn, "landing.file_observed")) == 1
 
 
+def test_known_file_ids_forgets_reset_then_relearns(conn, tmp_path):
+    _ingest_hero_photo(conn, tmp_path, "hero1")
+    landing_dir = tmp_path / "landing"
+    landing_dir.mkdir()
+    Image.new("RGB", (3500, 3600)).save(landing_dir / "hero1.tif", "TIFF")
+
+    first = landing.scan_landing(conn, user_id=1, landing_path=landing_dir)
+    assert first.observed == 1
+
+    second = landing.scan_landing(conn, user_id=1, landing_path=landing_dir)
+    assert second.observed == 0
+
+    file_id = read_all(conn, "landing.file_observed")[0].payload["file_id"]
+    landing.reset_file(conn, 1, file_id, reason="fake_dry_run_reset")
+
+    third = landing.scan_landing(conn, user_id=1, landing_path=landing_dir)
+    assert third.observed == 1
+    assert read_all(conn, "landing.file_observed")[-1].payload["file_id"] == file_id
+
+    fourth = landing.scan_landing(conn, user_id=1, landing_path=landing_dir)
+    assert fourth.observed == 0
+
+
 def test_unfixed_invalid_file_not_reemitted(conn, tmp_path):
     landing_dir = tmp_path / "landing"
     landing_dir.mkdir()

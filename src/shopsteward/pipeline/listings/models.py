@@ -13,12 +13,15 @@ via adapters.copy.tags.validate_tag; the count/length ceilings
 (MAX_TAGS/MAX_TAG_LEN) come from the same module.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from shopsteward.adapters.copy.interface import CopyInputs
 from shopsteward.adapters.copy.tags import MAX_TAG_LEN as _MAX_TAG_LEN
 from shopsteward.adapters.copy.tags import MAX_TAGS as _MAX_TAGS
 from shopsteward.adapters.copy.tags import validate_tag
+from shopsteward.pipeline.models import LandingReport
 
 __all__ = [
     "AdoptReport",
@@ -34,6 +37,8 @@ __all__ = [
     "MatchConfig",
     "MatchResult",
     "PricingRules",
+    "ResetPlanRow",
+    "ResetReport",
     "SellableFile",
 ]
 
@@ -209,6 +214,33 @@ class GateEditFields(BaseModel):
         for tag in tags:
             validate_tag(tag, max_len=_MAX_TAG_LEN)
         return tags
+
+
+class ResetPlanRow(BaseModel):
+    """One row of `listings reset`'s dry-run plan (winners-batch reset,
+    pipeline/listings/reset.py). `verdict` is one of: "reset" (free, no
+    confirmation needed), "needs_confirmation" (pushed/POD-linked, requires
+    --include-pushed + --confirm-listing-id), "refused_published", or
+    "refused_adopted" -- the latter two are hard refusals with no override
+    flag."""
+
+    draft_id: str
+    landing_file_id: str | None
+    state: str
+    etsy_listing_id: str | None
+    provider_product_id: str | None
+    pod_status: str | None
+    verdict: Literal["reset", "needs_confirmation", "refused_published", "refused_adopted"]
+
+
+class ResetReport(BaseModel):
+    """Result of `listings reset --apply` (pipeline/listings/reset.py's
+    apply_reset). `landing` is None when --keep-landing was passed (no
+    landing-row reset/re-observe happened at all)."""
+
+    drafts_reset: int = 0
+    landing_files_reset: int = 0
+    landing: LandingReport | None = None
 
 
 class Gate3Card(BaseModel):
