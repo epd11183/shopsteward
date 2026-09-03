@@ -3,6 +3,8 @@ import hashlib
 import pytest
 from PIL import Image
 
+from shopsteward.adapters.copy.fake import FakeCopyAdapter
+from shopsteward.adapters.copy.interface import CopyParseError, CopyResult, CopyVerdict
 from shopsteward.core.db import connect, migrate
 from shopsteward.core.events import Event, append, read_all
 from shopsteward.pipeline.listings import config as listing_config
@@ -91,6 +93,34 @@ def test_build_emits_created_and_images_selected(conn, tmp_path):
     assert payload["set_key"], "set_key must be carried in listingdraft.created"
     assert len(payload["config_hash"]) == 64  # sha256 hex of the listing config
     assert payload["landing_file_id"]
+
+
+def test_one_drafts_parse_error_does_not_crash_the_batch(conn, tmp_path, monkeypatch):
+    """Proven live: a truncated OpenRouter response during copy generation
+    used to propagate out of generate_copy and kill the whole
+    run_shop_build. The other draft(s) in the same batch must still get
+    built."""
+    _seed_one(conn, tmp_path, file_id="a" * 64, photo_id="photo-a")
+    _seed_one(conn, tmp_path, file_id="b" * 64, photo_id="photo-b")
+
+    good_verdict = CopyVerdict(title="t", tags=["a"] * 13, description="d")
+    adapter = FakeCopyAdapter(
+        [CopyParseError("truncated"), CopyResult(verdict=good_verdict, usage=None)]
+    )
+    monkeypatch.setattr(
+        "shopsteward.pipeline.listings.drafts.build_copy_adapter", lambda cfg, live: adapter
+    )
+
+    result = build_drafts(conn, USER_ID)
+
+    assert result.drafts_built == 2
+    assert result.copy_calls == 1  # the parse-error draft is retried next run
+    copy_events = {
+        e.payload["draft_id"]
+        for e in read_all(conn, "listingdraft.copy_generated")
+        if e.user_id == USER_ID
+    }
+    assert len(copy_events) == 1
 
 
 def test_image_order_hero_single_first_and_whatyougot_present(conn, tmp_path):

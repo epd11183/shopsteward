@@ -175,3 +175,26 @@ def test_huge_payload_error_message_is_truncated() -> None:
         raise AssertionError("expected CopyParseError")
     except CopyParseError as exc:
         assert len(str(exc)) < 700
+
+
+@respx.mock
+def test_truncated_http_body_raises_copy_parse_error_not_bare_json_error() -> None:
+    """A truncated HTTP response body (not just truncated model content --
+    e.g. a proxy/edge cutting the connection mid-response) used to raise a
+    bare json.JSONDecodeError from resp.json(), which sat OUTSIDE the
+    adapter's try block -- the caller's narrow `except CopyParseError`
+    (pipeline/listings/copy.py) wouldn't catch that, crashing the whole
+    pipeline the same way the original bug did. resp.json() now runs inside
+    the same try, so this failure mode surfaces as CopyParseError too."""
+    respx.post(BASE).mock(
+        return_value=httpx.Response(
+            200, content=b'{"choices": [{"message": {"content": "truncat', headers={}
+        )
+    )
+    adapter = OpenRouterCopyAdapter(api_key="k", prompt_template=TEMPLATE)
+
+    try:
+        adapter.generate_copy(INPUTS, model=MODEL)
+        raise AssertionError("expected CopyParseError")
+    except CopyParseError:
+        pass

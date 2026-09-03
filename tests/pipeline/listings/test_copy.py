@@ -1,7 +1,7 @@
 import pytest
 
 from shopsteward.adapters.copy.fake import FakeCopyAdapter, FixtureCopyAdapter
-from shopsteward.adapters.copy.interface import CopyResult, CopyUsage, CopyVerdict
+from shopsteward.adapters.copy.interface import CopyParseError, CopyResult, CopyUsage, CopyVerdict
 from shopsteward.core.db import connect, migrate
 from shopsteward.core.events import Event, append, read_all
 from shopsteward.pipeline.listings import config as listing_config
@@ -260,6 +260,33 @@ def test_generate_copy_refuses_when_soft_cap_reached(conn, cfg):
     assert ok is False
     assert adapter.calls == []
     assert [e for e in read_all(conn, "listingdraft.copy_generated") if e.user_id == USER_ID] == []
+
+
+def test_generate_copy_returns_false_and_appends_no_event_on_parse_error(conn, cfg):
+    """A truncated/malformed live provider response must not crash the run --
+    it's a per-draft, retryable failure, same contract as the soft-cap
+    refusal (proven live: a truncated OpenRouter response during POD
+    enrichment used to propagate and kill the whole run_shop_build)."""
+    _seed_landscape_landing_file(conn)
+    _seed_score(conn)
+
+    adapter = FakeCopyAdapter([CopyParseError("could not parse OpenRouter response: ...")])
+    ok = generate_copy(
+        conn,
+        USER_ID,
+        DRAFT_ID,
+        LANDING_FILE_ID,
+        PHOTO_ID,
+        [IMAGE],
+        adapter,
+        cfg,
+        live=True,
+        soft_cap_usd=10.0,
+    )
+
+    assert ok is False
+    assert [e for e in read_all(conn, "listingdraft.copy_generated") if e.user_id == USER_ID] == []
+    assert [e for e in read_all(conn, "llm.call") if e.user_id == USER_ID] == []
 
 
 def test_generate_copy_soft_cap_does_not_apply_offline(conn, cfg):
