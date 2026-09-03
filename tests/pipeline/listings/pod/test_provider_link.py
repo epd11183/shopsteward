@@ -47,10 +47,12 @@ def _land(conn, tmp_path, *, file_id, photo_id, width, height, fmt="JPEG"):
 
 
 # The shipped catalog's "2:3" aspect, landscape orientation -- matches
-# acrylic/poster/canvas (test_build.py precedent). canvas's shipped
-# template_id is still the "<OPERATOR>" placeholder (pod.json), so every
-# build here always produces exactly one draft link_pod_drafts CANNOT
-# succeed on -- useful for proving a per-draft failure never stops the rest.
+# acrylic/poster/canvas (test_build.py precedent). All three now have real
+# Gelato catalog identity (template_id + variant_key + placeholder), so
+# link_pod_drafts links all of them cleanly -- see
+# test_one_bad_catalog_entry_fails_without_stopping_the_other_products below
+# for the per-draft-failure-doesn't-stop-the-rest case, using an edited
+# config that reintroduces a bad template_id for one product type.
 _W, _H = 6000, 4000
 
 
@@ -74,11 +76,11 @@ def test_create_poll_link_succeeds_and_never_leaks_print_file_url(conn, tmp_path
 
     report = link_pod_drafts(conn, USER_ID, adapter=adapter, print_file_host=host, cfg=cfg)
 
-    # acrylic + poster have real catalog identity and link cleanly; canvas's
-    # shipped template_id is still "<OPERATOR>" and fails spec construction.
-    assert report.created == 2
-    assert report.linked == 2
-    assert report.failed == 1
+    # acrylic, poster, and canvas all have real catalog identity and link
+    # cleanly.
+    assert report.created == 3
+    assert report.linked == 3
+    assert report.failed == 0
 
     acrylic = _row(conn, "acrylic", "p1")
     assert acrylic["pod_status"] == "linked"
@@ -116,10 +118,9 @@ def test_second_run_is_idempotent_and_creates_nothing_new(conn, tmp_path):
 
     report2 = link_pod_drafts(conn, USER_ID, adapter=adapter, print_file_host=host, cfg=cfg)
 
-    # acrylic + poster are already confirmed linked -> skipped outright;
-    # canvas has no provider_product_id (its spec never validated) so it is
-    # retried and fails again, but NEVER reaches the adapter.
-    assert report2.skipped_idempotent == 2
+    # acrylic, poster, and canvas are all already confirmed linked -> skipped
+    # outright on the second run.
+    assert report2.skipped_idempotent == 3
     assert report2.created == 0
     assert report2.linked == 0
     assert adapter.calls == calls_after_first_run  # no new create_product/get_product calls
@@ -154,3 +155,36 @@ def test_poll_exhaustion_fails_without_raising_and_other_drafts_still_process(co
             "listingdraft.provider_failed",
         ]
         assert events[-1].payload["reason"] == "poll_exhausted"
+
+
+def test_one_bad_catalog_entry_fails_without_stopping_the_other_products(conn, tmp_path):
+    from shopsteward.pipeline.listings.pod.projections import rebuild_pod_config
+
+    # Deliberately reintroduce a bad template_id for one product type
+    # (canvas) to prove a single per-draft spec-construction failure never
+    # stops the other product types from linking (test_build.py precedent
+    # for editing a loaded config in-test).
+    edited = pod_config.load_pod_config().model_dump(by_alias=True)
+    edited["catalog"]["gelato"]["products"]["canvas"]["template_id"] = "<OPERATOR>"
+    edited_path = tmp_path / "bad_canvas_pod.json"
+    edited_path.write_text(json.dumps(edited))
+    pod_config.apply(conn, USER_ID, edited_path)
+    rebuild_pod_config(conn)
+
+    _seed_hosted_drafts(conn, tmp_path, "p1")
+    cfg = pod_config.get_pod_config(conn, USER_ID)
+    adapter = FakeGelatoAdapter()
+    host = FakePrintFileHost()
+
+    report = link_pod_drafts(conn, USER_ID, adapter=adapter, print_file_host=host, cfg=cfg)
+
+    assert report.created == 2
+    assert report.linked == 2
+    assert report.failed == 1
+
+    acrylic = _row(conn, "acrylic", "p1")
+    poster = _row(conn, "poster", "p1")
+    canvas = _row(conn, "canvas", "p1")
+    assert acrylic["pod_status"] == "linked"
+    assert poster["pod_status"] == "linked"
+    assert canvas["pod_status"] == "failed"
