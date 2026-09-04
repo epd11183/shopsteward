@@ -10,11 +10,17 @@ updateListing itself -- Etsy's real endpoint for a post-create price change
 is updateListingInventory, PRD §13 decision 39/41). publish() is the SOLE
 call site for
 EtsyWriteAdapter.publish_listing anywhere in this codebase (PRD §13
-decision 41) -- no other module may call it. retry_push() resumes a
-push_failed draft from whichever stage last failed, reusing push.py's
-resumable stage functions instead of re-running the whole push (which would
-risk a duplicate Etsy listing for a draft that already has an
-etsy_listing_id).
+decision 41) -- no other module may call it. It accepts two shapes of
+eligible draft: a digital draft in state pushed/publish_failed (M5a), OR a
+POD draft that has reached pod_status='enriched' (a real Etsy draft listing,
+created by Gelato via POD-first creation and already carrying real copy +
+images, PRD §13 decision 44) while its `state` column is still 'built' --
+POD drafts never advance `state` past 'built' via push.py, since their
+lifecycle lives in the separate pod_status column instead (design:
+pod-publish). retry_push() resumes a push_failed draft from whichever stage
+last failed, reusing push.py's resumable stage functions instead of
+re-running the whole push (which would risk a duplicate Etsy listing for a
+draft that already has an etsy_listing_id).
 """
 
 import json
@@ -46,7 +52,12 @@ from shopsteward.pipeline.listings.push import (
 )
 
 _QUEUE_STATES = ("pushed", "push_failed", "publish_failed")
-_FORMAT = "digital_download"  # only digital format M5a builds (design §1)
+# queue() (Gate 3's digital-only review UI/API surface) only ever lists this
+# format -- POD drafts (acrylic/poster/canvas/canvas_portrait) never enter
+# the queue, they're published via `shopsteward pod publish` instead
+# (design: pod-publish). publish() itself is NOT limited to this format --
+# see its docstring.
+_FORMAT = "digital_download"
 
 
 def _last_error(
@@ -96,7 +107,7 @@ def _row_to_card(
 def _fetch_row(conn: sqlite3.Connection, user_id: int, draft_id: str) -> sqlite3.Row | None:
     return conn.execute(
         "SELECT draft_id, etsy_listing_id, title, tags_json, description, price, currency, "
-        "margin_floor, images_json, file_source, landing_file_id, state "
+        "margin_floor, images_json, file_source, landing_file_id, state, pod_status, format "
         "FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
         (user_id, draft_id),
     ).fetchone()
@@ -117,8 +128,9 @@ def queue(conn: sqlite3.Connection, user_id: int) -> list[Gate3Card]:
     rows = conn.execute(
         "SELECT draft_id, etsy_listing_id, title, tags_json, description, price, currency, "
         "margin_floor, images_json, file_source, landing_file_id, state "
-        "FROM proj_listing_drafts WHERE user_id=? AND state IN (?,?,?) ORDER BY draft_id",
-        (user_id, *_QUEUE_STATES),
+        "FROM proj_listing_drafts WHERE user_id=? AND format=? AND state IN (?,?,?) "
+        "ORDER BY draft_id",
+        (user_id, _FORMAT, *_QUEUE_STATES),
     ).fetchall()
     return [_row_to_card(conn, user_id, cfg, row) for row in rows]
 
@@ -134,6 +146,15 @@ def edit(
     row = _fetch_row(conn, user_id, draft_id)
     if row is None:
         raise ValueError(f"unknown draft_id {draft_id!r}")
+    if row["format"] != _FORMAT:
+        # A POD draft entering a failed-publish state (e.g. a live 429/500
+        # partway through a batch) must never become editable here: edit()
+        # validates price against the DIGITAL margin floor and calls
+        # update_listing_price directly against a Gelato-created listing,
+        # which is a provider-set-pricing mutation CLAUDE.md forbids
+        # ("never modify provider-set SKU values or variation structure").
+        # POD drafts have no edit path in this codebase by design.
+        raise ValueError(f"draft {draft_id!r} is a {row['format']!r} draft, not editable here")
     if row["state"] == "published":
         raise ValueError(f"draft {draft_id!r} is already published and can no longer be edited")
     if row["etsy_listing_id"] is None:
@@ -185,12 +206,18 @@ def publish(
     """The sole call site for EtsyWriteAdapter.publish_listing anywhere in
     this codebase (PRD §13 decision 41). Never raises on an adapter failure
     -- emits gate3.publish_failed and returns the card in that state so the
-    API layer can return a clean error response instead of a 500."""
+    API layer can return a clean error response instead of a 500.
+
+    Eligible: a digital draft in state pushed/publish_failed (M5a), OR a POD
+    draft with pod_status='enriched' while state is still 'built' (design:
+    pod-publish -- POD drafts never advance state past 'built' via push.py,
+    their lifecycle lives in the separate pod_status column instead)."""
     rebuild_listings(conn)
     row = _fetch_row(conn, user_id, draft_id)
     if row is None:
         raise ValueError(f"unknown draft_id {draft_id!r}")
-    if row["state"] not in ("pushed", "publish_failed"):
+    is_pod_enriched = row["pod_status"] == "enriched" and row["state"] == "built"
+    if row["state"] not in ("pushed", "publish_failed") and not is_pod_enriched:
         raise ValueError(f"draft {draft_id!r} is not publishable (state={row['state']!r})")
     if row["etsy_listing_id"] is None:
         raise ValueError(f"draft {draft_id!r} has no Etsy listing id yet")
