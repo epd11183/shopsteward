@@ -4,11 +4,12 @@ from PIL import Image
 from shopsteward.adapters.etsy.fake import FakeEtsyWriteAdapter
 from shopsteward.adapters.etsy.interface import EtsyWriteError
 from shopsteward.core.db import connect, migrate
-from shopsteward.core.events import read_all
+from shopsteward.core.events import Event, append, read_all
 from shopsteward.pipeline.listings import config as listing_config
 from shopsteward.pipeline.listings import gate3
 from shopsteward.pipeline.listings.drafts import build_drafts
 from shopsteward.pipeline.listings.pricing import BelowFloor
+from shopsteward.pipeline.listings.projections import rebuild_listings
 from shopsteward.pipeline.listings.push import push_drafts
 
 from .helpers import USER_ID, seed_fully_built_draft, seed_landing_file_with_mockup_set
@@ -369,6 +370,139 @@ def test_publish_retries_after_publish_failed(conn, tmp_path):
 
     second = gate3.publish(conn, USER_ID, draft_id, adapter)
     assert second.state == "published"
+
+
+# --- publish: POD (design: pod-publish) ------------------------------------
+
+
+def _seed_pod_draft(
+    conn, adapter: FakeEtsyWriteAdapter, *, draft_id="pod-draft-1", etsy_listing_id=9001, pod_status
+) -> str:
+    """Seeds a POD draft directly via the same events pod/provider.py ->
+    pod/enrich.py would have appended by the time it reaches `pod_status`
+    (mirrors test_enrich.py's _seed_linked_pod_draft, minus the mockup/copy
+    machinery gate3.publish() doesn't need): listingdraft.created (with
+    pod_config_hash set -- the digital/POD discriminator) ->
+    listingdraft.provider_linked (pod_status='linked', etsy_listing_id set)
+    -> optionally listingdraft.enriched (pod_status='enriched'). Also
+    preloads the fake adapter's in-memory listing with >=1 image/file so
+    publish_listing() (FakeEtsyWriteAdapter's write-safety invariant) can
+    succeed."""
+    listing_config.seed(conn, USER_ID)
+    append(
+        conn,
+        Event(
+            user_id=USER_ID,
+            type="listingdraft.created",
+            payload={
+                "draft_id": draft_id,
+                "landing_file_id": None,
+                "photo_id": None,
+                "set_key": None,
+                "provider": "gelato",
+                "format": "acrylic",
+                "sku_source": "provider",
+                "listing_type": "physical",
+                "config_hash": None,
+                "pod_config_hash": "pod-cfg-hash-1",
+            },
+        ),
+    )
+    append(
+        conn,
+        Event(
+            user_id=USER_ID,
+            type="listingdraft.provider_linked",
+            payload={
+                "draft_id": draft_id,
+                "etsy_listing_id": etsy_listing_id,
+                "etsy_listing_state": "draft",
+            },
+        ),
+    )
+    if pod_status == "enriched":
+        append(
+            conn,
+            Event(
+                user_id=USER_ID,
+                type="listingdraft.enriched",
+                payload={"draft_id": draft_id, "etsy_listing_id": etsy_listing_id},
+            ),
+        )
+    adapter.listings[etsy_listing_id] = {
+        "title": "POD title",
+        "description": "d",
+        "price": 149.0,
+        "quantity": 1,
+        "tags": [],
+        "state": "draft",
+        "images": [{"listing_image_id": 1, "rank": 1}],
+        "files": [{"listing_file_id": 1, "rank": 1, "name": "print.png"}],
+    }
+    rebuild_listings(conn)
+    return draft_id
+
+
+def test_publish_accepts_an_enriched_pod_draft(conn):
+    adapter = FakeEtsyWriteAdapter()
+    draft_id = _seed_pod_draft(conn, adapter, pod_status="enriched")
+
+    card = gate3.publish(conn, USER_ID, draft_id, adapter)
+
+    assert card.state == "published"
+    published = [e for e in read_all(conn, "gate3.published") if e.user_id == USER_ID]
+    assert len(published) == 1
+    assert published[0].payload["draft_id"] == draft_id
+    row = conn.execute(
+        "SELECT state FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
+        (USER_ID, draft_id),
+    ).fetchone()
+    assert row["state"] == "published"
+
+
+def test_publish_still_rejects_a_pod_draft_that_is_not_yet_enriched(conn):
+    adapter = FakeEtsyWriteAdapter()
+    draft_id = _seed_pod_draft(conn, adapter, pod_status="linked")
+
+    with pytest.raises(ValueError):
+        gate3.publish(conn, USER_ID, draft_id, adapter)
+
+
+def test_publish_never_republishes_an_already_published_pod_draft(conn):
+    adapter = FakeEtsyWriteAdapter()
+    draft_id = _seed_pod_draft(conn, adapter, pod_status="enriched")
+    gate3.publish(conn, USER_ID, draft_id, adapter)
+
+    with pytest.raises(ValueError):
+        gate3.publish(conn, USER_ID, draft_id, adapter)
+
+
+def test_queue_never_lists_a_pod_draft_even_after_a_failed_publish(conn):
+    """A POD publish failure sets state='publish_failed' -- the SAME state
+    digital's own queue() lists. Without scoping queue() by format, a failed
+    POD draft would enter the digital-only Gate 3 review queue and become
+    edit()-able (validating price against the wrong margin floor and
+    mutating a Gelato-created listing's price directly -- CLAUDE.md forbids
+    modifying provider-set SKU/pricing)."""
+
+    class _FailPublishAdapter(FakeEtsyWriteAdapter):
+        def publish_listing(self, listing_id: int) -> None:
+            raise EtsyWriteError(429, "rate limited")
+
+    adapter = _FailPublishAdapter()
+    draft_id = _seed_pod_draft(conn, adapter, pod_status="enriched")
+    card = gate3.publish(conn, USER_ID, draft_id, adapter)
+    assert card.state == "publish_failed"
+
+    assert gate3.queue(conn, USER_ID) == []
+
+
+def test_edit_refuses_a_pod_draft_even_if_reached_directly(conn):
+    adapter = FakeEtsyWriteAdapter()
+    draft_id = _seed_pod_draft(conn, adapter, pod_status="enriched")
+
+    with pytest.raises(ValueError, match="not editable here"):
+        gate3.edit(conn, USER_ID, draft_id, {"price": 149.0}, adapter)
 
 
 # --- retry_push --------------------------------------------------------

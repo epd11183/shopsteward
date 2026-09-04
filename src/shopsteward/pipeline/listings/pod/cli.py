@@ -7,11 +7,24 @@ through print_file_hosted -- provider create/poll/link/enrich is slice 3/4,
 so there is no --live-pod flag yet. --dry-run runs the same selection +
 pricing computation and prints it; it appends nothing and never reads or
 hosts a print file (build_pod_drafts precedent: `listings build` in
-listings/cli.py)."""
+listings/cli.py).
 
+`shopsteward pod publish <format>` (design: pod-publish): batch-publishes
+every currently-eligible (pod_status='enriched', has an etsy_listing_id, not
+already published) draft of ONE named POD format -- "publish all my canvas
+listings" as a single operator action, since a POD draft's real Etsy draft
+listing already carries real copy+images by the time it reaches
+pod_status='enriched' (Gelato create + pod/enrich.py). Routes every publish
+through gate3.publish() (the sole call site for
+EtsyWriteAdapter.publish_listing, PRD §13 decision 41) -- this command is a
+batch caller of it, not a parallel publish path. Dry-run by default."""
+
+import json
 from typing import Annotated
 
 import typer
+
+_POD_FORMATS = ("acrylic", "poster", "canvas", "canvas_portrait")
 
 pod_app = typer.Typer(no_args_is_help=True, help="POD (print-on-demand) physical listings.")
 config_app = typer.Typer(no_args_is_help=True, help="pod.json config.")
@@ -116,5 +129,112 @@ def build(
             conn, DEFAULT_USER_ID, photo_id=photo_id, force=force, print_file_host=host
         )
         typer.echo(f"pod build: {report.model_dump()}")
+    finally:
+        conn.close()
+
+
+@pod_app.command("publish")
+def publish(
+    format_: Annotated[
+        str,
+        typer.Argument(metavar="FORMAT", help="acrylic, poster, canvas, or canvas_portrait"),
+    ],
+    apply_: Annotated[
+        bool, typer.Option("--apply", help="Publish for real (default: dry-run)")
+    ] = False,
+    live_etsy_write: Annotated[
+        bool, typer.Option("--live-etsy-write", help="Publish via the real Etsy API")
+    ] = False,
+) -> None:
+    """Publish every currently-eligible (pod_status='enriched', has an
+    etsy_listing_id, not already published) POD draft of ONE format --
+    a real-money action (Etsy's per-listing fee applies). Dry-run by
+    default: prints the count and a one-line-per-draft plan, writes
+    nothing. --apply calls gate3.publish() (the sole call site for
+    EtsyWriteAdapter.publish_listing, PRD §13 decision 41) for each
+    eligible draft."""
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.pipeline.listings import gate3
+    from shopsteward.pipeline.listings.projections import rebuild_listings
+    from shopsteward.pipeline.listings.push import build_etsy_write_adapter
+    from shopsteward.pipeline.live_gate import live_etsy_write_error, live_etsy_write_open
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    if format_ not in _POD_FORMATS:
+        typer.secho(f"format must be one of {_POD_FORMATS}, got {format_!r}.", fg="red")
+        raise typer.Exit(code=1)
+
+    if apply_ and not live_etsy_write:
+        # --apply alone would silently run the real event-append path
+        # against the FAKE adapter: gate3.publish() still appends a real,
+        # permanent gate3.approved/gate3.published event and flips state
+        # out of 'built' -- on a real POD draft this is unrecoverable
+        # (undoing it means listingdraft.reset, which deletes the whole
+        # provider_product_id/etsy_listing_id linkage). This is a real-
+        # money action; require the operator to say so explicitly both ways.
+        typer.secho(
+            "--apply requires --live-etsy-write (a fake-adapter apply would still "
+            "permanently mutate real draft state). Pass both, or omit --apply for "
+            "a dry-run.",
+            fg="red",
+        )
+        raise typer.Exit(code=1)
+
+    if live_etsy_write and not live_etsy_write_open():
+        typer.secho(live_etsy_write_error(), fg="red")
+        raise typer.Exit(code=1)
+
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        rebuild_listings(conn)
+        rows = conn.execute(
+            "SELECT draft_id, etsy_listing_id, title, variants_json FROM proj_listing_drafts "
+            "WHERE user_id=? AND format=? AND pod_status='enriched' "
+            "AND etsy_listing_id IS NOT NULL AND state != 'published' ORDER BY draft_id",
+            (DEFAULT_USER_ID, format_),
+        ).fetchall()
+
+        typer.echo(f"format: {format_}")
+        typer.echo(f"eligible drafts: {len(rows)}")
+        typer.echo(f"{'draft_id':<14} {'etsy_id':<12} {'title':<40} price")
+        for row in rows:
+            title = (row["title"] or "-")[:40]
+            # A POD draft's price lives per-variant in variants_json (the
+            # digital-only `price` column is always NULL here) -- show the
+            # lowest variant's retail_price as a representative figure.
+            variants = json.loads(row["variants_json"] or "[]")
+            retail_prices = [v["retail_price"] for v in variants if v.get("retail_price")]
+            price = f"{min(retail_prices):.2f}+" if retail_prices else "-"
+            typer.echo(
+                f"{row['draft_id'][:12]:<14} {row['etsy_listing_id']:<12} {title:<40} {price}"
+            )
+
+        if not apply_:
+            typer.echo("Dry-run: nothing written. Re-run with --apply to publish.")
+            return
+
+        adapter = build_etsy_write_adapter(live=live_etsy_write)
+        published = 0
+        failed = 0
+        for row in rows:
+            # gate3.publish() raises ValueError for an ineligible draft; this
+            # query's predicate already matches its eligibility check, so it
+            # shouldn't fire -- but one unexpected raise must not abort the
+            # rest of a real-money batch with no summary printed.
+            try:
+                card = gate3.publish(conn, DEFAULT_USER_ID, row["draft_id"], adapter)
+            except ValueError as exc:
+                failed += 1
+                typer.echo(f"  FAILED {row['draft_id'][:12]}: {exc}")
+                continue
+            if card.state == "published":
+                published += 1
+            else:
+                failed += 1
+                typer.echo(f"  FAILED {row['draft_id'][:12]}: {card.retry_error}")
+        typer.echo(f"published: {published} failed: {failed} total: {len(rows)}")
     finally:
         conn.close()
