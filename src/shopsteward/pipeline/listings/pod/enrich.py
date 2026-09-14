@@ -79,7 +79,7 @@ class PodEnrichReport(BaseModel):
 def _eligible_drafts(conn: sqlite3.Connection, user_id: int) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT draft_id, landing_file_id, photo_id, etsy_listing_id, images_json, "
-        "title, tags_json, description FROM proj_listing_drafts WHERE user_id=? "
+        "title, tags_json, description, format FROM proj_listing_drafts WHERE user_id=? "
         "AND pod_config_hash IS NOT NULL AND pod_status IN (?,?) ORDER BY draft_id",
         (user_id, *_ELIGIBLE_POD_STATUSES),
     ).fetchall()
@@ -88,7 +88,8 @@ def _eligible_drafts(conn: sqlite3.Connection, user_id: int) -> list[sqlite3.Row
 def _fetch_row(conn: sqlite3.Connection, user_id: int, draft_id: str) -> sqlite3.Row:
     row = conn.execute(
         "SELECT draft_id, landing_file_id, photo_id, etsy_listing_id, images_json, "
-        "title, tags_json, description FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
+        "title, tags_json, description, format FROM proj_listing_drafts "
+        "WHERE user_id=? AND draft_id=?",
         (user_id, draft_id),
     ).fetchone()
     if row is None:  # pragma: no cover - defensive, caller just wrote this row
@@ -198,6 +199,11 @@ def _enrich_one(
             cfg,
             live=live,
             soft_cap_usd=soft_cap_usd,
+            # POD drafts are ALWAYS physical products (canvas/acrylic/poster);
+            # medium="physical" + the draft's format keep the copy from being
+            # written as a digital download (the 2026-09-03 mislabel defect).
+            medium="physical",
+            product_format=row["format"],
         )
         if not ran:
             return "skipped"

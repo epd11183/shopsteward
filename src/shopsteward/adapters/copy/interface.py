@@ -34,6 +34,11 @@ class CopyInputs(BaseModel):
     format: str = "digital_download"
     sizes: list[str]
     formats: list[str]
+    # True for a physical POD product (canvas/acrylic/poster), False for a
+    # digital download. Drives medium-correct copy: a physical print must
+    # never be titled/described as a digital download (the 2026-09-03 POD
+    # defect -- physical Gelato canvases enriched with digital copy).
+    is_physical: bool = False
 
 
 class CopyVerdict(BaseModel):

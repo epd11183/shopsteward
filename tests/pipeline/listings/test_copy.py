@@ -324,6 +324,104 @@ def test_generate_copy_soft_cap_does_not_apply_offline(conn, cfg):
     assert ok is True
 
 
+def test_generate_copy_physical_medium_builds_physical_inputs(conn, cfg):
+    """medium="physical" must feed the copy adapter physical facts (a print
+    label + physical sizes), not the hardcoded digital_download the
+    2026-09-03 defect fed for Gelato canvases."""
+    _seed_landscape_landing_file(conn)
+    _seed_score(conn)
+
+    adapter = FakeCopyAdapter(
+        [CopyResult(verdict=CopyVerdict(title="t", tags=["a"] * 13, description="d"), usage=None)]
+    )
+    generate_copy(
+        conn,
+        USER_ID,
+        DRAFT_ID,
+        LANDING_FILE_ID,
+        PHOTO_ID,
+        [IMAGE],
+        adapter,
+        cfg,
+        live=False,
+        soft_cap_usd=10.0,
+        medium="physical",
+        product_format="canvas",
+    )
+
+    inputs, _ = adapter.calls[0]
+    assert inputs.is_physical is True
+    assert inputs.format == "canvas print"
+    # physical sizes (mockups.json whatyougot_physical), not digital's A2/A3/A4
+    assert "16x24" in inputs.sizes
+    assert "A4" not in inputs.sizes
+
+
+def test_generate_copy_physical_fixture_is_not_labeled_digital(conn, cfg):
+    _seed_landscape_landing_file(conn)
+    _seed_score(conn)
+
+    ok = generate_copy(
+        conn,
+        USER_ID,
+        DRAFT_ID,
+        LANDING_FILE_ID,
+        PHOTO_ID,
+        [IMAGE],
+        FixtureCopyAdapter(),
+        cfg,
+        live=False,
+        soft_cap_usd=10.0,
+        medium="physical",
+        product_format="canvas",
+    )
+    assert ok is True
+
+    payload = [
+        e for e in read_all(conn, "listingdraft.copy_generated") if e.user_id == USER_ID
+    ][0].payload
+    assert "Digital Download" not in payload["title"]
+    assert "(Canvas Print)" in payload["title"]
+
+
+def test_generate_copy_physical_refuses_digital_download_copy(conn, cfg):
+    """Backstop for a live model that ignores the prompt: if a PHYSICAL
+    draft's generated copy still reads as a digital download, refuse it
+    (retryable, no event) rather than write a mislabeled listing."""
+    _seed_landscape_landing_file(conn)
+    _seed_score(conn)
+
+    adapter = FakeCopyAdapter(
+        [
+            CopyResult(
+                verdict=CopyVerdict(
+                    title="Osprey Wall Art (Digital Download)",
+                    tags=["a"] * 13,
+                    description="An instant digital download.",
+                ),
+                usage=None,
+            )
+        ]
+    )
+    ok = generate_copy(
+        conn,
+        USER_ID,
+        DRAFT_ID,
+        LANDING_FILE_ID,
+        PHOTO_ID,
+        [IMAGE],
+        adapter,
+        cfg,
+        live=False,
+        soft_cap_usd=10.0,
+        medium="physical",
+        product_format="canvas",
+    )
+
+    assert ok is False
+    assert [e for e in read_all(conn, "listingdraft.copy_generated") if e.user_id == USER_ID] == []
+
+
 def test_build_copy_adapter_offline_returns_fixture(cfg):
     adapter = build_copy_adapter(cfg, live=False)
     assert isinstance(adapter, FixtureCopyAdapter)

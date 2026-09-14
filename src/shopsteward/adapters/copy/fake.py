@@ -18,12 +18,23 @@ class FixtureCopyAdapter:
         subject = (inputs.subject or "wildlife").title()
         style = (inputs.strongest_room_style or "cabin").title()
 
+        # Medium-correct suffix/description: a physical POD product reflects
+        # its format (e.g. "(Canvas Print)"), never "(Digital Download)" --
+        # so the fixture path never reproduces the 2026-09-03 mislabel and
+        # passes generate_copy's physical guard.
+        if inputs.is_physical:
+            suffix = f"({inputs.format.title()})"
+            included = f"A physical {inputs.format} that ships to you."
+        else:
+            suffix = "(Digital Download)"
+            included = "An instant digital download."
+
         verdict = CopyVerdict(
-            title=f"{subject} Wall Art, {style} Decor (Digital Download) [{digest}]",
+            title=f"{subject} Wall Art, {style} Decor {suffix} [{digest}]",
             tags=[f"tag{i}-{digest}" for i in range(13)],
             description=(
                 f"A {subject.lower()} photograph fitted for {style.lower()} interiors. "
-                f"Fixture copy, ref {digest}."
+                f"{included} Fixture copy, ref {digest}."
             ),
             materials=None,
         )

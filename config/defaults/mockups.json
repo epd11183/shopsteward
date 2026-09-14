@@ -33,6 +33,11 @@
     "formats": ["JPEG 300 DPI", "sRGB"],
     "headline": "Instant Digital Download"
   },
+  "whatyougot_physical": {
+    "sizes": ["8x10", "11x14", "12x18", "16x20", "16x24", "24x36"],
+    "formats": ["museum-quality print, ready to hang", "made to order and shipped to you"],
+    "headline": "Physical Print - Ships to You"
+  },
   "listing_copy": {
     "ai_disclosure_line": "Room scenes are AI-generated staging mockups. The photograph itself is the artist's original work and is never AI-generated or AI-edited."
   }
