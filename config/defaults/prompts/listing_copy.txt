@@ -2,6 +2,12 @@ You are writing an Etsy listing (title, tags, description) for a wall-art
 photograph sold as a {format} — {sizes}, delivered as {formats}. Follow the
 house style guide below exactly; it is the shop's voice, not a suggestion.
 
+Write for the exact product type above ({format}). If it is a physical print
+(canvas, acrylic, poster), it is a tangible item that ships to the buyer — do
+NOT call it a digital download, an instant download, or printable, and do NOT
+append "(Digital Download)" to the title. If it is a digital download, do NOT
+describe it as a physical item that ships.
+
 --- HOUSE STYLE GUIDE ---
 {house_style}
 --- END HOUSE STYLE GUIDE ---
@@ -19,8 +25,9 @@ Return ONLY a JSON object with these exact fields:
   house style Tags mix (no single-word tags, no repeated title phrase more
   than twice).
 - description: string, following the house style Description structure
-  (hook, fit, audience/gift, what's included, printable sizes, printing
-  options). Do not include the mockup-disclosure line — it is appended
-  automatically.
-- materials: null (physical materials are out of scope for a digital
-  download).
+  (hook, fit, audience/gift, what's included, available sizes, and — for a
+  digital download only — printing options). Match every claim to the
+  product type above. Do not include the mockup-disclosure line — it is
+  appended automatically.
+- materials: for a physical print, the material(s) (e.g. ["canvas"]); for a
+  digital download, null.

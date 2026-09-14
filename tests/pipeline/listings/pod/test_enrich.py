@@ -164,7 +164,13 @@ def test_enriches_linked_draft_with_copy_reflecting_vision_subject_and_uploads_i
     update_calls = [c for c in adapter.calls if c[0] == "update_listing"]
     assert len(update_calls) == 1
     assert update_calls[0][1]["listing_id"] == LISTING_ID
-    assert "Trail Runner" in update_calls[0][1]["fields"]["title"]
+    enriched_title = update_calls[0][1]["fields"]["title"]
+    assert "Trail Runner" in enriched_title
+    # POD is a physical product (format="acrylic") -- its copy must NOT be
+    # labeled a digital download (the 2026-09-03 defect); it reflects the
+    # real medium instead.
+    assert "Digital Download" not in enriched_title
+    assert "(Acrylic Print)" in enriched_title
 
     # Never touches price -- EtsyListingUpdate has no price field, and
     # update_listing_price is never called for a POD draft.

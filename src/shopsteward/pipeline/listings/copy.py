@@ -59,9 +59,33 @@ def _whatyougot() -> dict:
     return json.loads(_MOCKUPS_CONFIG_PATH.read_text(encoding="utf-8"))["whatyougot"]
 
 
+def _whatyougot_physical() -> dict:
+    return json.loads(_MOCKUPS_CONFIG_PATH.read_text(encoding="utf-8"))["whatyougot_physical"]
+
+
+def _physical_format_label(product_format: str | None) -> str:
+    """Human product label for a physical POD draft's `format` column
+    (canvas/canvas_portrait/acrylic/poster) -> e.g. "canvas print". Feeds
+    CopyInputs.format so the copy prompt states the true medium."""
+    base = (product_format or "wall art").replace("_", " ")
+    return base if base.endswith(("print", "art")) else f"{base} print"
+
+
 def _disclosure_line() -> str:
     cfg = json.loads(_MOCKUPS_CONFIG_PATH.read_text(encoding="utf-8"))
     return cfg["listing_copy"]["ai_disclosure_line"]
+
+
+_DIGITAL_MARKERS = ("digital download", "instant download", "printable")
+
+
+def _reads_as_digital_download(title: str, description: str) -> bool:
+    """True if copy meant for a PHYSICAL listing still describes a digital
+    download -- the exact symptom of the 2026-09-03 defect ("(Digital
+    Download)" on a Gelato canvas). Case-insensitive substring scan over
+    title + description."""
+    haystack = f"{title}\n{description}".lower()
+    return any(marker in haystack for marker in _DIGITAL_MARKERS)
 
 
 def _build_inputs(
@@ -70,6 +94,9 @@ def _build_inputs(
     landing_file_id: str,
     photo_id: str | None,
     cfg: ListingConfig,
+    *,
+    medium: str = "digital",
+    product_format: str | None = None,
 ) -> CopyInputs:
     house_style = (_CONFIG_DEFAULTS_DIR / cfg.copy_.house_style_path).read_text(encoding="utf-8")
 
@@ -87,7 +114,18 @@ def _build_inputs(
             (user_id, photo_id),
         ).fetchone()
 
-    wyg = _whatyougot()
+    # Medium-correct facts: a physical POD product (canvas/acrylic/poster) is
+    # NOT a digital download. Hardcoding "digital_download" here is exactly
+    # what mislabeled the 2026-09-03 Gelato canvases.
+    if medium == "physical":
+        wyg = _whatyougot_physical()
+        format_label = _physical_format_label(product_format)
+        is_physical = True
+    else:
+        wyg = _whatyougot()
+        format_label = "digital_download"
+        is_physical = False
+
     return CopyInputs(
         house_style=house_style,
         subject=score_row["subject"] if score_row else None,
@@ -95,9 +133,10 @@ def _build_inputs(
         one_risk=score_row["one_risk"] if score_row else None,
         rationale=score_row["rationale"] if score_row else None,
         orientation=orientation,
-        format="digital_download",
+        format=format_label,
         sizes=wyg["sizes"],
         formats=wyg["formats"],
+        is_physical=is_physical,
     )
 
 
@@ -113,11 +152,22 @@ def generate_copy(
     *,
     live: bool,
     soft_cap_usd: float,
+    medium: str = "digital",
+    product_format: str | None = None,
 ) -> bool:
     """Appends listingdraft.copy_generated (+ llm.call when usage is present)
     for one draft. Returns False (no event appended) when a live call is
     refused by the shared monthly soft cap -- the draft stays without copy
-    and is picked up by the next run's fill-forward."""
+    and is picked up by the next run's fill-forward.
+
+    `medium` ("digital" | "physical") + `product_format` (the POD draft's
+    format column, physical only) make the copy medium-correct: a physical
+    POD listing must never be titled or described as a digital download. The
+    POD enrich caller passes medium="physical"; the digital build path uses
+    the default. If a physical draft's generated copy still reads as a
+    digital download (a live model ignoring the prompt), it is refused the
+    same retryable way a parse error is -- no mislabeled listing is ever
+    written."""
     if live and monthly_spend(conn, user_id) >= soft_cap_usd:
         logger.warning(
             "monthly llm.call soft cap reached (>= %.2f usd); refusing live listing "
@@ -127,7 +177,9 @@ def generate_copy(
         )
         return False
 
-    inputs = _build_inputs(conn, user_id, landing_file_id, photo_id, cfg)
+    inputs = _build_inputs(
+        conn, user_id, landing_file_id, photo_id, cfg, medium=medium, product_format=product_format
+    )
     try:
         result = adapter.generate_copy(inputs, model=cfg.copy_.model)
     except CopyParseError:
@@ -139,6 +191,20 @@ def generate_copy(
             "copy provider returned an unparseable response for draft %s; will retry next run",
             draft_id,
             exc_info=True,
+        )
+        return False
+
+    # Medium guard: a physical POD listing must never carry digital-download
+    # copy. If the generated title/description reads as a digital download
+    # anyway, refuse it (retryable, no event) rather than write a mislabeled
+    # listing -- the structural backstop behind the format-aware inputs above.
+    if inputs.is_physical and _reads_as_digital_download(
+        result.verdict.title, result.verdict.description
+    ):
+        logger.warning(
+            "copy for PHYSICAL draft %s reads as a digital download; refusing it "
+            "(will retry next run) rather than mislabel a physical listing",
+            draft_id,
         )
         return False
 
