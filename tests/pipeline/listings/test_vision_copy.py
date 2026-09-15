@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from shopsteward.adapters.vision.fake import FakeVisionAdapter
 from shopsteward.adapters.vision.interface import VisionResult, VisionUsage, VisionVerdict
 from shopsteward.core.db import connect, migrate
@@ -6,6 +8,11 @@ from shopsteward.pipeline.listings.vision_copy import run_vision_copy
 from shopsteward.pipeline.projections import rebuild_pipeline
 
 USER = 1
+# Current UTC month -- the planted llm.call is stamped now by the DB, so the
+# soft-cap test must query the same month or the window goes empty once the
+# month rolls over (the rest of this file plants no spend, so their fixed
+# month_prefix is harmless and left as-is).
+_MONTH = datetime.now(UTC).strftime("%Y-%m")
 
 
 def _landing_winner(conn, file_id="abc123def456", path="/w/A.jpg"):
@@ -103,6 +110,6 @@ def test_soft_cap_stops_scoring_without_raising(monkeypatch):
         adapter=FakeVisionAdapter([_verdict_result()]),
         model="m",
         soft_cap_usd=5.0,
-        month_prefix="2026-08",
+        month_prefix=_MONTH,
     )
     assert out["scored"] == 0 and out["cap_hit"] is True

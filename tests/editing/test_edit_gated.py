@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,9 @@ from shopsteward.editing.edit import run_edit
 from shopsteward.editing.rawdecode import DecodedImage, FakeRawDecoder
 
 USER = 1
+# Current UTC month -- the ledger event is stamped now by the DB, so query
+# the same month (a fixed past month goes empty once it rolls over).
+_MONTH = datetime.now(UTC).strftime("%Y-%m")
 KNOBS = {
     "exposure_target_luma": 0.4,
     "exposure_max_stops": 1.5,
@@ -59,9 +63,9 @@ def test_run_edit_forwards_guard_and_ledgers(tmp_path: Path):
         batch_lock=False,
         guard_knobs=GUARD,
         soft_cap_usd=5.0,
-        month_prefix="2026-08",
+        month_prefix=_MONTH,
     )
     assert report.written == 1
     from shopsteward.editing.look_cost import month_look_cost
 
-    assert month_look_cost(conn, USER, "2026-08") == 0.01
+    assert month_look_cost(conn, USER, _MONTH) == 0.01

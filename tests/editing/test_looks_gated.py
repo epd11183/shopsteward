@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 
 from shopsteward.adapters.look.fake import FakeLookAdapter
@@ -8,6 +10,11 @@ from shopsteward.editing.config import LOOKS_DIR
 from shopsteward.editing.look_cost import month_look_cost
 
 USER = 1
+# Current UTC month -- events are stamped at wall-clock time by the DB
+# (core.events.append ignores created_at), so a cost-ledger test must query
+# the month its planted/generated events actually land in, not a fixed past
+# month, or it silently stops exercising the cap after that month rolls over.
+_MONTH = datetime.now(UTC).strftime("%Y-%m")
 GUARD = {
     "max_saturation_load": 220,
     "max_contrast_tone": 140,
@@ -55,13 +62,13 @@ def test_garish_generation_falls_back_to_seed_after_retry():
         regenerate=False,
         guard_knobs=GUARD,
         fallback_look="bright-and-true",
-        month_prefix="2026-08",
+        month_prefix=_MONTH,
     )
     # Fell back to the seed's develop values, cached under the description key.
     assert out.contrast == seed.contrast and out.vibrance == seed.vibrance
     assert "bright-and-true" in out.description
     assert len(adapter.calls) == 2
-    assert month_look_cost(c, USER, "2026-08") == 0.04  # both attempts ledgered
+    assert month_look_cost(c, USER, _MONTH) == 0.04  # both attempts ledgered
     # Re-requesting the same description reloads the cached fallback (no new LLM call).
     again = looks.resolve_look(
         c,
@@ -71,7 +78,7 @@ def test_garish_generation_falls_back_to_seed_after_retry():
         model="m",
         regenerate=False,
         guard_knobs=GUARD,
-        month_prefix="2026-08",
+        month_prefix=_MONTH,
     )
     assert again.contrast == seed.contrast
 
@@ -87,10 +94,10 @@ def test_tasteful_generation_is_kept_and_ledgered():
         model="m",
         regenerate=False,
         guard_knobs=GUARD,
-        month_prefix="2026-08",
+        month_prefix=_MONTH,
     )
     assert out.contrast == 15
-    assert month_look_cost(c, USER, "2026-08") == 0.02
+    assert month_look_cost(c, USER, _MONTH) == 0.02
 
 
 def test_soft_cap_refuses_before_generating():
@@ -109,7 +116,7 @@ def test_soft_cap_refuses_before_generating():
             model="m",
             regenerate=False,
             guard_knobs=GUARD,
-            month_prefix="2026-08",
+            month_prefix=_MONTH,
             soft_cap_usd=5.0,
         )
     assert adapter.calls == []
