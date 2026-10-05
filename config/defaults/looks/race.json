@@ -1,0 +1,13 @@
+{
+  "name": "race",
+  "description": "Punchy, high-clarity grade for motorsport and endurance-event action shots: strong contrast, boosted vibrance and clarity, deep blacks, clean natural skin tones.",
+  "contrast": 20,
+  "highlights": -8,
+  "whites": 0,
+  "blacks": -6,
+  "clarity": 15,
+  "dehaze": 0,
+  "texture": 8,
+  "vibrance": 25,
+  "saturation": 0
+}
