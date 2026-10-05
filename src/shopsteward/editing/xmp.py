@@ -2,14 +2,17 @@
 it next to the RAW. WB is as-shot (Temp/Tint omitted) unless the correction
 carries an estimated temperature+tint, in which case WhiteBalance="Custom" with
 crs:Temperature/crs:Tint is emitted. Correction owns
-Exposure2012, adaptive Highlights/Blacks recovery, and a local luminance-range
-shadow-lift mask; the look owns Contrast, presence (Whites/Clarity/Dehaze/
+Exposure2012, adaptive Highlights/Blacks recovery, and a global Shadows2012
+push; the look owns Contrast, presence (Whites/Clarity/Dehaze/
 Texture), tone curve, HSL, split toning, vibrance, saturation, plus a creative
 Highlights/Blacks bias that sums onto the correction's adaptive value.
 
-ponytail: the local-mask (MaskGroupBasedCorrections) block is the fiddliest part
-of the ACR schema; it is verified structurally in tests and MUST be confirmed by
-opening one sidecar in Lightroom during the Task 1 smoke before trusting output.
+ponytail: shadow recovery used to be a local luminance-range mask
+(MaskGroupBasedCorrections) but that was never confirmed to render in real
+Lightroom and, on visual verification against real underexposed frames
+(2026-09-16), had no visible effect despite large computed values. Replaced
+with the plain global Shadows2012 slider, which is a basic, universally-
+supported PV2012 control.
 """
 
 from pathlib import Path
@@ -58,12 +61,13 @@ def compose(correction: CorrectionSettings, look: LookProfile) -> str:
         f'crs:Exposure2012="{correction.exposure:.2f}"',
         f'crs:Contrast2012="{_clamp(look.contrast, -100, 100)}"',
         f'crs:Highlights2012="{highlights}"',
+        f'crs:Shadows2012="{_clamp(correction.shadows, -100, 100)}"',
         f'crs:Whites2012="{_clamp(look.whites, -100, 100)}"',
         f'crs:Blacks2012="{blacks}"',
         f'crs:Clarity2012="{_clamp(look.clarity, -100, 100)}"',
         f'crs:Dehaze="{_clamp(look.dehaze, -100, 100)}"',
         f'crs:Texture="{_clamp(look.texture, -100, 100)}"',
-        f'crs:Vibrance="{_clamp(look.vibrance, -100, 100)}"',
+        f'crs:Vibrance="{_clamp(correction.vibrance_boost + look.vibrance, -100, 100)}"',
         f'crs:Saturation="{_clamp(look.saturation, -100, 100)}"',
         f'crs:LuminanceSmoothing="{correction.luminance_nr}"',
         f'crs:ColorNoiseReduction="{correction.color_nr}"',
@@ -90,8 +94,6 @@ def compose(correction: CorrectionSettings, look: LookProfile) -> str:
     children: list[str] = []
     if look.tone_curve:
         children.append(_tone_curve(look.tone_curve))
-    if correction.shadow_lift > 0:
-        children.append(_shadow_mask(correction))
 
     attr_block = "\n    ".join(attrs)
     child_block = "\n".join(children)
@@ -114,30 +116,6 @@ def _tone_curve(points: list[list[int]]) -> str:
     )
     return (
         f"   <crs:ToneCurvePV2012>\n    <rdf:Seq>\n{lis}    </rdf:Seq>\n   </crs:ToneCurvePV2012>"
-    )
-
-
-def _shadow_mask(correction: CorrectionSettings) -> str:
-    lo = _clamp(correction.shadow_range_low, 0, 100)
-    hi = _clamp(correction.shadow_range_high, 0, 100)
-    return (
-        "   <crs:MaskGroupBasedCorrections>\n"
-        "    <rdf:Seq>\n"
-        "     <rdf:li>\n"
-        "      <rdf:Description\n"
-        f'       crs:LocalExposure2012="{correction.shadow_lift:.2f}"\n'
-        '       crs:CorrectionActive="true">\n'
-        "       <crs:CorrectionMasks>\n        <rdf:Seq>\n"
-        "         <rdf:li>\n"
-        '          <rdf:Description crs:What="Mask/RangeMask" crs:MaskActive="true"\n'
-        '           crs:MaskName="Shadows" crs:MaskBlendMode="0" crs:RangeType="Luminance"\n'
-        f'           crs:LumRangeLower="{lo / 100:.3f}" crs:LumRangeUpper="{hi / 100:.3f}"/>\n'
-        "         </rdf:li>\n"
-        "        </rdf:Seq>\n       </crs:CorrectionMasks>\n"
-        "      </rdf:Description>\n"
-        "     </rdf:li>\n"
-        "    </rdf:Seq>\n"
-        "   </crs:MaskGroupBasedCorrections>"
     )
 
 

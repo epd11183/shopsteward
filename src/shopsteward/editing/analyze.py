@@ -23,7 +23,14 @@ def analyze_raw(decoded: DecodedImage, knobs: dict) -> CorrectionSettings:
     luma = _luma(rgb)
 
     exposure = _exposure(luma, knobs)
-    shadow_lift, lo, hi = _shadow(luma, knobs)
+    shadows = _shadow(luma, knobs)
+    # Lifting Shadows2012 without deepening Blacks2012 reads as flat/hazy/milky
+    # (visually verified 2026-09-16); a shadow push earns a proportional black
+    # deepening to keep contrast/punch. Vibrance gets a matching nudge since a
+    # shadow lift also visually desaturates the recovered region.
+    shadow_black_bonus = int(round(shadows * float(knobs.get("shadow_black_ratio", 0.35))))
+    black_point = max(-80, _black_point(luma, knobs) - shadow_black_bonus)
+    vibrance_boost = int(round(shadows * float(knobs.get("shadow_vibrance_ratio", 0.25))))
 
     temperature = tint = None
     if knobs.get("auto_white_balance"):
@@ -34,10 +41,9 @@ def analyze_raw(decoded: DecodedImage, knobs: dict) -> CorrectionSettings:
     return CorrectionSettings(
         exposure=exposure,
         highlight_recovery=_highlight_recovery(luma, knobs),
-        black_point=_black_point(luma, knobs),
-        shadow_lift=shadow_lift,
-        shadow_range_low=lo,
-        shadow_range_high=hi,
+        black_point=black_point,
+        shadows=shadows,
+        vibrance_boost=vibrance_boost,
         temperature=temperature,
         tint=tint,
         lens_profile=bool(knobs.get("lens_profile_corrections", False)),
@@ -94,20 +100,28 @@ def _black_point(luma: np.ndarray, knobs: dict) -> int:
     return -int(round(max_deepen * strength))
 
 
-def _shadow(luma: np.ndarray, knobs: dict) -> tuple[float, int, int]:
+def _shadow(luma: np.ndarray, knobs: dict) -> int:
+    """Global Shadows2012 push, scaled to how deficient the dark quartile is.
+    ponytail: previously a local luminance-range-masked exposure boost
+    (MaskGroupBasedCorrections); dropped because that mask was never confirmed
+    to render in real Lightroom (visually verified against real underexposed
+    frames, 2026-09-16) and Shadows2012 is a plain, universally-supported
+    PV2012 slider that does the same job."""
     trigger = float(knobs["shadow_trigger_luma"])
-    lift_max = float(knobs["shadow_lift_max"])
-    lo = int(knobs["shadow_range_low"])
-    hi = int(knobs["shadow_range_high"])
+    push_max = float(knobs["shadow_lift_max"])
     # Mean luma of the darkest quartile as the shadow proxy.
     dark = luma[luma <= np.quantile(luma, 0.25)]
     dark_mean = float(dark.mean()) if dark.size else float(luma.mean())
     if dark_mean >= trigger:
-        return 0.0, lo, hi
-    # Deeper shadows -> more lift, scaled to the cap.
+        return 0
+    # Deeper shadows -> more push, scaled to the cap. A <1 exponent front-loads
+    # the curve so moderately-deficient frames still get a meaningful push
+    # instead of only the most extreme frames reaching useful strength
+    # (visually verified against real underexposed frames, 2026-09-16: a
+    # linear deficit left subjects still visibly dark).
     deficit = (trigger - dark_mean) / trigger
-    lift = round(min(lift_max, lift_max * deficit), 2)
-    return lift, lo, hi
+    curved = deficit**0.6
+    return int(round(min(push_max, push_max * curved)))
 
 
 def _denoise(exif: dict, knobs: dict) -> tuple[int, int]:
@@ -140,9 +154,8 @@ def average_corrections(items: list[CorrectionSettings]) -> CorrectionSettings:
         exposure=round(sum(c.exposure for c in items) / n, 2),
         highlight_recovery=int(round(sum(c.highlight_recovery for c in items) / n)),
         black_point=int(round(sum(c.black_point for c in items) / n)),
-        shadow_lift=round(sum(c.shadow_lift for c in items) / n, 2),
-        shadow_range_low=items[0].shadow_range_low,
-        shadow_range_high=items[0].shadow_range_high,
+        shadows=int(round(sum(c.shadows for c in items) / n)),
+        vibrance_boost=int(round(sum(c.vibrance_boost for c in items) / n)),
         temperature=int(round(sum(c.temperature for c in items) / n)) if all_wb else None,
         tint=int(round(sum(c.tint for c in items) / n)) if all_wb else None,
         lens_profile=items[0].lens_profile,
