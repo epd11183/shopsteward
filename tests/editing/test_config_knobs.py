@@ -4,7 +4,7 @@ from shopsteward.editing import config
 def test_correction_knobs_present_and_typed():
     knobs = config.load_correction_knobs()
     assert knobs["exposure_max_stops"] == 1.5
-    assert knobs["shadow_range_high"] == 35
+    assert knobs["shadow_lift_max"] == 100
     # As-Shot WB is the default: the colorimetric temp/tint estimate (Custom WB)
     # diverges from ACR's proprietary model and casts color, so it stays opt-in.
     assert knobs["auto_white_balance"] is False

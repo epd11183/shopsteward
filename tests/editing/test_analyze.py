@@ -7,9 +7,7 @@ KNOBS = {
     "exposure_target_luma": 0.45,
     "exposure_max_stops": 1.5,
     "shadow_trigger_luma": 0.12,
-    "shadow_lift_max": 1.0,
-    "shadow_range_low": 0,
-    "shadow_range_high": 45,
+    "shadow_lift_max": 100,
     "nr_iso_floor": 800,
     "nr_iso_ceiling": 12800,
     "nr_luminance_max": 30,
@@ -90,13 +88,12 @@ def test_black_point_deepens_hazy_frames_only():
 
 def test_very_dark_triggers_shadow_lift():
     cs = analyze_raw(_flat(0.05), KNOBS)
-    assert cs.shadow_lift > 0
-    assert cs.shadow_range_high == 45
+    assert cs.shadows > 0
 
 
 def test_midtone_image_no_shadow_lift():
     cs = analyze_raw(_flat(0.5), KNOBS)
-    assert cs.shadow_lift == 0.0
+    assert cs.shadows == 0
 
 
 def test_auto_wb_off_leaves_temperature_and_tint_none():

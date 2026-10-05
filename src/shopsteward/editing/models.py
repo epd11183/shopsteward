@@ -58,9 +58,8 @@ class CorrectionSettings(BaseModel):
     exposure: float = 0.0  # stops, global Exposure2012
     highlight_recovery: int = 0  # adaptive Highlights2012 (<=0), scaled to this frame's clipping
     black_point: int = 0  # adaptive Blacks2012 (<=0), deepens hazy/flat frames only
-    shadow_lift: float = 0.0  # local exposure boost in the shadow mask, stops
-    shadow_range_low: int = 0  # luminance range mask lower bound, 0-100
-    shadow_range_high: int = 45  # upper bound, 0-100
+    shadows: int = 0  # global Shadows2012 slider, 0-100 (lift only, never darkens)
+    vibrance_boost: int = 0  # added to the look's Vibrance; offsets shadow-lift desaturation
     lens_profile: bool = False  # enable Lightroom auto lens-profile corrections
     remove_ca: bool = False  # enable auto lateral chromatic-aberration removal
     luminance_nr: int = 0  # adaptive luminance noise reduction, scaled from ISO

@@ -42,15 +42,16 @@ def test_look_owns_contrast_not_correction():
     assert desc.get(f"{{{CRS}}}Vibrance") == "14"
 
 
-def test_shadow_lift_emits_local_range_mask():
-    xmp = compose(CorrectionSettings(shadow_lift=0.8, shadow_range_high=45), LookProfile(name="x"))
-    assert "MaskGroupBasedCorrections" in xmp
-    assert "RangeMask" in xmp or "Luminance" in xmp
+def test_shadows_emits_global_slider():
+    xmp = compose(CorrectionSettings(shadows=70), LookProfile(name="x"))
+    desc = _parse(xmp).find(".//{http://www.w3.org/1999/02/22-rdf-syntax-ns#}Description")
+    assert desc.get(f"{{{CRS}}}Shadows2012") == "70"
 
 
-def test_no_shadow_lift_omits_mask():
-    xmp = compose(CorrectionSettings(shadow_lift=0.0), LookProfile(name="x"))
-    assert "MaskGroupBasedCorrections" not in xmp
+def test_no_shadows_emits_zero():
+    xmp = compose(CorrectionSettings(shadows=0), LookProfile(name="x"))
+    desc = _parse(xmp).find(".//{http://www.w3.org/1999/02/22-rdf-syntax-ns#}Description")
+    assert desc.get(f"{{{CRS}}}Shadows2012") == "0"
 
 
 def test_contrast_is_clamped():
