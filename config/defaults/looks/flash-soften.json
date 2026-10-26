@@ -1,0 +1,14 @@
+{
+  "name": "flash-soften",
+  "description": "Tames harsh on-camera flash for indoor event shots: lower contrast, pulled highlights and whites, gentle highlight roll-off, slightly softened skin texture.",
+  "contrast": -10,
+  "highlights": -25,
+  "whites": -15,
+  "blacks": 0,
+  "clarity": -8,
+  "dehaze": 0,
+  "texture": -10,
+  "tone_curve": [[0, 0], [64, 64], [128, 128], [200, 194], [255, 248]],
+  "vibrance": 8,
+  "saturation": -4
+}
