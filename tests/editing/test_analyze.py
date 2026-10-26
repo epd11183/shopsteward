@@ -67,7 +67,9 @@ def test_small_light_sources_do_not_pin_exposure():
     knobs = {
         **KNOBS,
         "exposure_highlight_ceiling": 0.92,
-        "exposure_clip_tolerance": 0.03,
+        "exposure_clip_tolerance": 0.01,
+        "exposure_clip_tolerance_dark": 0.03,
+        "exposure_dark_median": 0.10,
         "exposure_point_light_max": 0.05,
     }
     img = np.full((100, 100, 3), 0.08, dtype=np.float32)
@@ -91,6 +93,24 @@ def test_shadow_lift_accounts_for_exposure_push():
     pushed = analyze_raw(_flat(0.06), KNOBS)
     assert pushed.exposure > 0
     assert pushed.shadows < pinned.shadows
+
+
+def test_dark_clip_tolerance_only_for_dark_frames():
+    # Same 2% near-ceiling area: a dark frame may push into it, a
+    # well-exposed frame keeps the strict tolerance (pale walls, 2026-10-26).
+    knobs = {
+        **KNOBS,
+        "exposure_highlight_ceiling": 0.92,
+        "exposure_clip_tolerance": 0.01,
+        "exposure_clip_tolerance_dark": 0.03,
+        "exposure_dark_median": 0.10,
+    }
+    dark = np.full((100, 100, 3), 0.08, dtype=np.float32)
+    dark[:2, :, :] = 0.95
+    lit = np.full((100, 100, 3), 0.20, dtype=np.float32)
+    lit[:2, :, :] = 0.95
+    assert analyze_raw(DecodedImage(rgb=dark), knobs).exposure > 1.0
+    assert analyze_raw(DecodedImage(rgb=lit), knobs).exposure == 0.0
 
 
 def test_exposure_bias_shifts_uniformly():

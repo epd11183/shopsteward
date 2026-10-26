@@ -70,7 +70,11 @@ def _exposure(luma: np.ndarray, knobs: dict) -> float:
         # already clipped (bulbs, signage, fire) are lost either way, so
         # up to `exposure_point_light_max` of them are skipped; otherwise a few
         # lamps pin every night frame at 0 (Western Stock wedding, 2026-10-26).
+        # Extra clipping tolerance only for genuinely dark frames; well-exposed
+        # frames that got it too came out pale and washed out.
         tolerance = float(knobs.get("exposure_clip_tolerance", 0.01))
+        if median < float(knobs.get("exposure_dark_median", 0.0)):
+            tolerance = float(knobs.get("exposure_clip_tolerance_dark", tolerance))
         hot = min(
             float(np.mean(luma >= float(knobs.get("exposure_point_light_luma", 0.99)))),
             float(knobs.get("exposure_point_light_max", 0.0)),
