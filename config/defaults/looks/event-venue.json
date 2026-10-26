@@ -2,11 +2,11 @@
   "name": "event-venue",
   "description": "Event-space promotional brochure: clean bright whites, rich true-to-life wood and stone, real contrast and deep blacks, controlled window/lamp highlights, crisp texture, natural skin. No midtone lift and no desaturation of warm materials (those read pale/washed out).",
   "contrast": 18,
-  "highlights": -15,
+  "highlights": -54,
   "whites": 5,
   "blacks": -10,
   "clarity": 8,
-  "dehaze": 5,
+  "dehaze": 12,
   "texture": 8,
   "tone_curve": [[0, 0], [64, 58], [128, 128], [192, 198], [255, 255]],
   "hsl": {
@@ -16,5 +16,5 @@
   },
   "split_toning": {},
   "vibrance": 15,
-  "saturation": 0
+  "saturation": 9
 }
