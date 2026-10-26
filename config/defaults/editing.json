@@ -24,7 +24,7 @@
     "auto_white_balance": false,
     "grayworld_blend": 0.0,
     "wb_temp_offset_k": -30,
-    "wb_tint_offset": -15,
+    "wb_tint_offset": 8,
     "nr_iso_floor": 800,
     "nr_iso_ceiling": 12800,
     "nr_luminance_max": 30,
