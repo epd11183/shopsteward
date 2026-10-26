@@ -119,7 +119,8 @@ def estimate_wb(decoded, knobs: dict) -> tuple[int | None, int | None]:
     """Estimate absolute ACR-style (temperature_k, tint).
 
     `decoded` needs `.wb_multipliers` (R,G,B,G2), `.xyz_matrix` (3x3), and
-    `.rgb` (HxWx3 float) for the optional gray-world blend. `knobs` may carry
+    optionally `.camera_mean` (camera-native linear RGB scene mean) for the
+    gray-world blend; without it the blend is skipped. `knobs` may carry
     `grayworld_blend` (0..1), `wb_temp_offset_k`, `wb_tint_offset`.
 
     Falls back to "as shot" (`(None, None)`) if `xyz_matrix` is missing or
@@ -135,17 +136,20 @@ def estimate_wb(decoded, knobs: dict) -> tuple[int | None, int | None]:
     except (TypeError, ValueError, np.linalg.LinAlgError):
         return None, None
 
-    blend = float(knobs.get("grayworld_blend", 0.0))
-    if blend > 0.0:
-        # Gray-world: mean image RGB stands in for a neutral. ponytail: rgb is
-        # post-WB output, not camera-native, so this is a coarse heuristic blend
-        # only; default 0 keeps the pure as-shot-illuminant estimate.
-        mean = np.asarray(decoded.rgb, dtype=float).reshape(-1, 3).mean(axis=0)
-        mean = np.where(mean <= 0, 1e-6, mean)
-        gw_cct, gw_tint = _cct_tint(mean, xyz_matrix)
-        b = min(blend, 1.0)
-        cct = (1.0 - b) * cct + b * gw_cct
-        tint = (1.0 - b) * tint + b * gw_tint
+    blend = min(float(knobs.get("grayworld_blend", 0.0)), 1.0)
+    camera_mean = getattr(decoded, "camera_mean", None)
+    if blend > 0.0 and camera_mean is not None:
+        # Gray-world in camera-native linear RGB: the scene mean stands in for
+        # the neutral, so it feeds _cct_tint exactly like the as-shot neutral.
+        # Blend in mired (perceptually even); partial blends keep ambient warmth.
+        try:
+            gw_cct, gw_tint = _cct_tint(np.asarray(camera_mean, dtype=float), xyz_matrix)
+        except (TypeError, ValueError, np.linalg.LinAlgError):
+            gw_cct = gw_tint = float("nan")
+        # A near-black frame (lens cap) yields a 0/0 neutral -> NaN; keep as-shot.
+        if np.isfinite(gw_cct) and np.isfinite(gw_tint) and gw_cct > 0:
+            cct = 1e6 / ((1.0 - blend) * 1e6 / cct + blend * 1e6 / gw_cct)
+            tint = (1.0 - blend) * tint + blend * gw_tint
 
     cct += float(knobs.get("wb_temp_offset_k", 0))
     tint += float(knobs.get("wb_tint_offset", 0))

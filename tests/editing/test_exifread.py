@@ -2,7 +2,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from shopsteward.editing.exifread import read_jpeg_exif, sibling_jpeg
+from shopsteward.editing.exifread import read_cr3_exif, read_jpeg_exif, sibling_jpeg
 
 
 def _make_jpeg(path: Path) -> None:
@@ -62,3 +62,37 @@ def test_read_jpeg_exif_reads_tags_from_exif_sub_ifd(tmp_path: Path):
     assert fields["LensModel"] == "RF24-70mm F2.8 L IS USM"
     assert fields["ISOSpeedRatings"] == 10000
     assert isinstance(fields["ISOSpeedRatings"], int)
+
+
+def _box(name: bytes, tags: dict) -> bytes:
+    exif = Image.Exif()
+    for k, v in tags.items():
+        exif[k] = v
+    blob = exif.tobytes()[6:]  # drop the "Exif\0\0" APP1 prefix; CR3 boxes hold bare TIFF
+    return (len(blob) + 8).to_bytes(4, "big") + name + blob
+
+
+def test_read_cr3_exif_reads_cmt_boxes(tmp_path: Path):
+    raw = tmp_path / "_PD_1.CR3"
+    raw.write_bytes(
+        b"\x00\x00\x00\x18ftypcrx "
+        + b"\x00" * 12
+        + _box(b"CMT1", {272: "Canon EOS R6"})
+        + _box(b"CMT2", {34855: 6400, 36867: "2026:10:24 19:46:27"})
+    )
+
+    assert read_cr3_exif(raw) == {
+        "DateTimeOriginal": "2026:10:24 19:46:27",
+        "Model": "Canon EOS R6",
+        "ISOSpeedRatings": 6400,
+    }
+
+
+def test_read_cr3_exif_non_cr3_or_garbage_is_empty(tmp_path: Path):
+    junk = tmp_path / "x.CR3"
+    junk.write_bytes(b"not a cr3")
+    other = tmp_path / "x.NEF"
+    other.write_bytes(b"CMT2whatever")
+
+    assert read_cr3_exif(junk) == {}
+    assert read_cr3_exif(other) == {}

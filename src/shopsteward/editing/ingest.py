@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 
 from shopsteward.core.events import Event, append
-from shopsteward.editing.exifread import JPEG_SUFFIXES, read_jpeg_exif
+from shopsteward.editing.exifread import JPEG_SUFFIXES, read_cr3_exif, read_jpeg_exif
 from shopsteward.editing.models import IngestReport
 
 RAW_SUFFIXES = {".cr3"}
@@ -136,7 +136,7 @@ def ingest_folder(
             continue
 
         photo_id = raw_sha256
-        exif = read_jpeg_exif(jpeg_path) if jpeg_path is not None else {}
+        exif = read_jpeg_exif(jpeg_path) if jpeg_path is not None else read_cr3_exif(raw_path)
         append(
             conn,
             Event(

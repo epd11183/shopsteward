@@ -154,8 +154,19 @@ def run(
     live_look: Annotated[
         bool, typer.Option(help="Generate a described look via the live LLM (gated)")
     ] = False,
+    auto_wb: Annotated[
+        float | None,
+        typer.Option(
+            min=0.0,
+            max=1.0,
+            help="Per-frame gray-world WB strength 0..1 (e.g. mixed flash/tungsten)",
+        ),
+    ] = None,
 ) -> None:
     """Decode each RAW, compute correction + look, write an XMP sidecar."""
+    knobs = load_correction_knobs()
+    if auto_wb is not None:
+        knobs |= {"auto_white_balance": True, "grayworld_blend": auto_wb}
     conn = connect(db_path())
     try:
         migrate(conn)
@@ -171,7 +182,7 @@ def run(
                 decoder=_default_decoder(),
                 look_adapter=adapter,
                 model=llm.get("model", model),
-                knobs=load_correction_knobs(),
+                knobs=knobs,
                 regenerate=regenerate,
                 overwrite=overwrite,
                 batch_lock=batch_lock,

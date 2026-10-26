@@ -83,10 +83,29 @@ def test_clamps_stay_in_range():
     assert tint2 == -150
 
 
-def test_grayworld_blend_runs_and_is_bounded():
-    temp, tint = estimate_wb(_decoded(DAYLIGHT), {"grayworld_blend": 0.5})
-    assert 2000 <= temp <= 50000
-    assert -150 <= tint <= 150
+def _neutral(mult):
+    r, g, b, g2 = mult
+    return (1.0 / r, 2.0 / (g + g2), 1.0 / b)
+
+
+def test_grayworld_pulls_daylight_wb_toward_warm_scene_in_mired():
+    # Flash-WB frame lit mostly by tungsten: scene mean reads like the WARM neutral.
+    decoded = _decoded(DAYLIGHT)
+    decoded.camera_mean = _neutral(WARM)
+    asshot, _ = estimate_wb(_decoded(DAYLIGHT), {})
+    warm, _ = estimate_wb(_decoded(WARM), {})
+    full, _ = estimate_wb(decoded, {"grayworld_blend": 1.0})
+    half, _ = estimate_wb(decoded, {"grayworld_blend": 0.5})
+
+    assert abs(full - warm) <= 1
+    assert warm < half < asshot
+    assert abs(1e6 / half - (1e6 / asshot + 1e6 / warm) / 2) < 2  # mired midpoint
+
+
+def test_grayworld_skipped_without_camera_mean():
+    assert estimate_wb(_decoded(DAYLIGHT), {"grayworld_blend": 1.0}) == estimate_wb(
+        _decoded(DAYLIGHT), {}
+    )
 
 
 def test_missing_xyz_matrix_falls_back_to_as_shot():
@@ -105,3 +124,10 @@ def test_singular_xyz_matrix_falls_back_to_as_shot():
         rgb=np.full((4, 4, 3), 0.4, dtype=np.float32),
     )
     assert estimate_wb(decoded, {}) == (None, None)
+
+
+def test_grayworld_degenerate_camera_mean_keeps_as_shot():
+    decoded = _decoded(DAYLIGHT)
+    decoded.camera_mean = (0.0, 0.0, 0.0)  # lens-cap frame
+
+    assert estimate_wb(decoded, {"grayworld_blend": 1.0}) == estimate_wb(_decoded(DAYLIGHT), {})
