@@ -1,21 +1,20 @@
 {
   "name": "event-venue",
-  "description": "Event-space promotional brochure: bright airy midtones, clean whites, controlled window/lamp highlights, crisp wood and stone texture, warm-but-not-orange tungsten, natural skin.",
-  "contrast": 10,
-  "highlights": -20,
-  "whites": 10,
-  "blacks": -4,
-  "clarity": 6,
-  "dehaze": 4,
+  "description": "Event-space promotional brochure: clean bright whites, rich true-to-life wood and stone, real contrast and deep blacks, controlled window/lamp highlights, crisp texture, natural skin. No midtone lift and no desaturation of warm materials (those read pale/washed out).",
+  "contrast": 18,
+  "highlights": -15,
+  "whites": 5,
+  "blacks": -10,
+  "clarity": 8,
+  "dehaze": 5,
   "texture": 8,
-  "tone_curve": [[0, 0], [64, 62], [128, 136], [192, 204], [255, 255]],
+  "tone_curve": [[0, 0], [64, 58], [128, 128], [192, 198], [255, 255]],
   "hsl": {
-    "SaturationAdjustmentOrange": -8,
-    "LuminanceAdjustmentOrange": 6,
-    "SaturationAdjustmentYellow": -10,
+    "LuminanceAdjustmentOrange": 4,
+    "SaturationAdjustmentYellow": -4,
     "SaturationAdjustmentGreen": -10
   },
   "split_toning": {},
-  "vibrance": 12,
-  "saturation": -2
+  "vibrance": 15,
+  "saturation": 0
 }
