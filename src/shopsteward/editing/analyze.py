@@ -23,7 +23,10 @@ def analyze_raw(decoded: DecodedImage, knobs: dict) -> CorrectionSettings:
     luma = _luma(rgb)
 
     exposure = _exposure(luma, knobs)
-    shadows = _shadow(luma, knobs)
+    # Size the shadow lift on the frame as it looks AFTER the exposure push;
+    # sizing it on the raw decode stacked a full lift on top of +1 EV and read
+    # flat/washed out (Western Stock wedding skin tones, 2026-10-26).
+    shadows = _shadow(np.clip(luma * 2.0**exposure, 0.0, 1.0), knobs)
     # Lifting Shadows2012 without deepening Blacks2012 reads as flat/hazy/milky
     # (visually verified 2026-09-16); a shadow push earns a proportional black
     # deepening to keep contrast/punch. Vibrance gets a matching nudge since a
@@ -61,12 +64,20 @@ def _exposure(luma: np.ndarray, knobs: dict) -> float:
     median = float(np.median(luma))
     stops = cap if median <= 1e-4 else math.log2(target / median)
     if stops > 0:
-        # Protect highlights: never brighten past the point the bright end (p99)
+        # Protect highlights: never brighten past the point the bright end
         # would clip. A blown sky caps the positive push at ~0; the subject is
-        # recovered by the local shadow lift + the look's Highlights slider.
-        p_high = float(np.quantile(luma, 0.99))
+        # recovered by the shadow lift + the look's Highlights slider. Pixels
+        # already clipped (bulbs, signage, fire) are lost either way, so
+        # up to `exposure_point_light_max` of them are skipped; otherwise a few
+        # lamps pin every night frame at 0 (Western Stock wedding, 2026-10-26).
+        tolerance = float(knobs.get("exposure_clip_tolerance", 0.01))
+        hot = min(
+            float(np.mean(luma >= float(knobs.get("exposure_point_light_luma", 0.99)))),
+            float(knobs.get("exposure_point_light_max", 0.0)),
+        )
+        p_high = float(np.quantile(luma, max(0.5, 1.0 - hot - tolerance)))
         if p_high > 1e-4:
-            max_up = math.log2(ceiling / p_high)  # stops until p99 reaches the ceiling
+            max_up = math.log2(ceiling / p_high)  # stops until the bright end reaches the ceiling
             stops = min(stops, max(0.0, max_up))
     # Global operator calibration for the rawpy-vs-Lightroom render offset:
     # a uniform stop shift applied to every frame. Negative = darker overall.
