@@ -48,8 +48,9 @@ day one, built first to drive sales for PhotosByEricD.
 - **AI authorization is explicit.** Vision models are authorized for hero
   identification / commercial scoring, Instagram caption + hashtag
   generation, Etsy title / tag / description generation, and empty-room scene
-  generation for the template library. AI never touches the photograph
-  itself. Provider selection per use case is a discussion, not an assumption.
+  generation for the template library. AI never adds to the photograph
+  itself: operator-directed generative removal of distractions is allowed,
+  generating new elements never is (operator clarification 2026-11-21). Provider selection per use case is a discussion, not an assumption.
 - **Development workflow formalized.** All non-trivial implementation runs in
   Claude Code sub-agents with a reviewer sub-agent gating output before it
   reaches the operator. Every major decision goes through explicit operator

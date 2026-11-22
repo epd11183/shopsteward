@@ -69,9 +69,14 @@ disagree, the PRD wins; flag the discrepancy.
   create the product and push the Etsy draft; we then *enrich* the draft
   (title, tags, description, images, price) via the Etsy API. Never modify
   provider-set SKU values or variation structure.
-- **AI never touches the photograph.** Vision models score and generate
+- **AI never adds to the photograph.** Vision models score and generate
   empty-room templates; the print is composited deterministically with
-  Pillow/OpenCV. No generative edit, upscale, or fill on a photograph, ever.
+  Pillow/OpenCV. **Generative removal of distractions is allowed** (stray
+  people, power lines, signs, litter, sensor dust) when the operator
+  directs it during finishing. **Never generate new elements:** no fill
+  that adds content, no sky replacement, no added or altered subjects, no
+  generative upscale or invented detail. (Operator clarification
+  2026-11-21; supersedes the earlier "no generative edit or fill, ever".)
 - **user_id foreign key on every major table** — multi-tenant readiness,
   even though v1 is single-operator.
 
