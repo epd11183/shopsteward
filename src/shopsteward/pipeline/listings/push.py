@@ -29,6 +29,7 @@ from shopsteward.adapters.etsy.interface import EtsyWriteAdapter, EtsyWriteError
 from shopsteward.adapters.etsy.live import LiveEtsyWriteAdapter
 from shopsteward.adapters.etsy.models import EtsyDraftSpec, EtsyListingUpdate
 from shopsteward.core.events import Event, append
+from shopsteward.pipeline.listings.copy import copy_sizes_problem
 from shopsteward.pipeline.listings.digital_files import (
     FileEntry,
     FilePlan,
@@ -36,6 +37,7 @@ from shopsteward.pipeline.listings.digital_files import (
     encode_file,
     photo_dims,
     plan_files,
+    plan_sizes,
 )
 from shopsteward.pipeline.listings.images import sellable_file_bytes
 from shopsteward.pipeline.listings.models import BuildReport, ListingConfig
@@ -79,7 +81,8 @@ def photo_has_digital_listing(
 def _eligible_drafts(conn: sqlite3.Connection, user_id: int) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT draft_id, landing_file_id, title, tags_json, description, price, currency, "
-        "images_json, files_plan_json, file_source FROM proj_listing_drafts WHERE user_id=? "
+        "images_json, files_plan_json, file_source, set_key "
+        "FROM proj_listing_drafts WHERE user_id=? "
         "AND title IS NOT NULL "
         "AND price IS NOT NULL AND etsy_listing_id IS NULL AND state != 'published' "
         # Newest first per photo so the current-config draft is the one that
@@ -189,6 +192,49 @@ def _images_stage(
 class FilePlanDriftError(RuntimeError):
     """The re-planned files differ from the plan recorded at build time (or the
     plan can't be honoured safely)."""
+
+
+def panel_mismatch(
+    conn: sqlite3.Connection, user_id: int, set_key: str | None, plan: FilePlan
+) -> str | None:
+    """Design §4/§7: the "what you get" panel must show exactly the sizes the
+    file plan delivers. "legacy" = the panel never recorded its sizes,
+    "mismatch" = it recorded different ones, None = fine (or no panel)."""
+    for row in conn.execute(
+        "SELECT params_json FROM proj_mockups WHERE user_id=? AND set_key=? "
+        "AND intent='digital_whatyougot' ORDER BY path",
+        (user_id, set_key),
+    ):
+        recorded = json.loads(row["params_json"] or "{}").get("sizes")
+        if recorded is None:
+            return "legacy"
+        if recorded != plan_sizes(plan):
+            return "mismatch"
+    return None
+
+
+def check_sizes_fresh(
+    conn: sqlite3.Connection, user_id: int, cfg: ListingConfig, row: sqlite3.Row
+) -> None:
+    """Before anything is created on Etsy: stored copy must not name a size the
+    recorded plan does not deliver (the appended Files-included block passes by
+    construction) and the panel must match the plan. Drafts built before slice
+    3b can fail this; the fix is `--force` + re-rendered mockups. No-op without
+    digital_files or a recorded plan; a malformed plan is left to
+    _checked_plan's own drift error."""
+    if cfg.digital_files is None or row["files_plan_json"] is None:
+        return
+    try:
+        plan = FilePlan.model_validate(
+            {k: json.loads(row["files_plan_json"])[k] for k in ("source_dims", "focus", "files")}
+        )
+    except (ValueError, KeyError, TypeError):
+        return
+    bad = copy_sizes_problem(
+        cfg, plan, row["title"], row["description"] or "", json.loads(row["tags_json"] or "[]")
+    )
+    if bad or panel_mismatch(conn, user_id, row["set_key"], plan) is not None:
+        raise FilePlanDriftError("copy/panel sizes stale: rebuild with --force")
 
 
 # (entry, upload name, bytes, sha256). ponytail: all entries are held in memory
@@ -417,6 +463,7 @@ def _push_one(
     try:
         # Drift check + encode of every file BEFORE creating anything on Etsy,
         # so a local failure never strands a half-built listing.
+        check_sizes_fresh(conn, user_id, cfg, row)
         stage = "file"
         prepared = _prepare_files(cfg, row["files_plan_json"], landing_path)
         stage = "create"

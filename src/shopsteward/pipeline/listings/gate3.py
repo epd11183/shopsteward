@@ -52,6 +52,7 @@ from shopsteward.pipeline.listings.push import (
     _prepare_files,
     _reconcile_files,
     _update_stage,
+    check_sizes_fresh,
     photo_has_digital_listing,
 )
 
@@ -112,7 +113,7 @@ def _fetch_row(conn: sqlite3.Connection, user_id: int, draft_id: str) -> sqlite3
     return conn.execute(
         "SELECT draft_id, etsy_listing_id, title, tags_json, description, price, currency, "
         "margin_floor, images_json, file_source, landing_file_id, state, pod_status, format, "
-        "files_plan_json "
+        "files_plan_json, set_key "
         "FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
         (user_id, draft_id),
     ).fetchone()
@@ -335,6 +336,8 @@ def retry_push(
     stage = resume_stage
     try:
         prepared = None
+        if listing_id is None:
+            check_sizes_fresh(conn, user_id, cfg, row)
         if listing_id is None or resume_stage in ("create", "image", "file"):
             # Encode every not-yet-attached file before touching Etsy. A failure
             # here keeps stage = resume_stage so the next retry still re-runs

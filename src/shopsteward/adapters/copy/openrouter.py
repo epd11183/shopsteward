@@ -53,8 +53,10 @@ class OpenRouterCopyAdapter:
         pricing: dict[str, dict[str, float]] | None = None,
         temperature: float = 0.4,
         timeout: float = 60.0,
+        sizes_wording: dict[str, str] | None = None,
     ):
         self._prompt_template = prompt_template
+        self._sizes_wording = sizes_wording or {}
         self._pricing = pricing
         self._temperature = temperature
         self._client = httpx.Client(
@@ -107,6 +109,8 @@ class OpenRouterCopyAdapter:
         return CopyResult(verdict=verdict, usage=usage)
 
     def _render_prompt(self, inputs: CopyInputs) -> str:
+        w = self._sizes_wording
+        sizes = ", ".join(inputs.sizes)
         return self._prompt_template.format(
             house_style=inputs.house_style,
             subject=inputs.subject or "unspecified",
@@ -115,7 +119,14 @@ class OpenRouterCopyAdapter:
             rationale=inputs.rationale or "unspecified",
             orientation=inputs.orientation,
             format=inputs.format,
-            sizes=", ".join(inputs.sizes),
+            sizes=sizes,
+            # Wording comes from config (prompts/digital_copy_wording.json). No sizes
+            # => the shop appends the exact file list itself; the model must not
+            # invent any (design 2026-11-21 §7).
+            sizes_clause=w.get("sizes_clause", "").format(sizes=sizes) if sizes else "",
+            sizes_rule=w.get("sizes_rule_listed" if sizes else "sizes_rule_none", "").format(
+                sizes=sizes
+            ),
             formats=", ".join(inputs.formats),
         )
 

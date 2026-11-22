@@ -182,15 +182,23 @@ def expand_one(
     )
 
     run_mockups(conn, user_id, photo_id=photo_id)
-    build_drafts(conn, user_id, photo_id=photo_id, live_copy=live_copy, etsy_adapter=adapter)
+    report = build_drafts(
+        conn, user_id, photo_id=photo_id, live_copy=live_copy, etsy_adapter=adapter
+    )
 
     row = conn.execute(
-        "SELECT draft_id FROM proj_listing_drafts WHERE user_id=? AND landing_file_id=?",
+        "SELECT draft_id, title FROM proj_listing_drafts WHERE user_id=? AND landing_file_id=?",
         (user_id, file_id),
     ).fetchone()
-    if row is None:  # pragma: no cover - defensive, the chain above always builds one
+    # A skipped draft (stale "what you get" panel) or one whose generated copy
+    # was refused (undelivered size / refusal cap) says WHY instead of a bare
+    # "no draft was built" -- these are fixed by re-rendering / operator review,
+    # not by retrying blindly.
+    if row is None or (row["title"] is None and report.copy_refused):
+        reasons = "; ".join(report.skip_reasons) or "no reason reported"
         raise RuntimeError(
-            f"{path}: catalog-expand chain completed but no draft was built (file_id={file_id!r})"
+            f"{path}: catalog-expand chain completed but no usable draft was built "
+            f"(file_id={file_id!r}): {reasons}"
         )
     return row["draft_id"]
 

@@ -1,5 +1,5 @@
 You are writing an Etsy listing (title, tags, description) for a wall-art
-photograph sold as a {format} — {sizes}, delivered as {formats}. Follow the
+photograph sold as a {format}{sizes_clause}, delivered as {formats}. Follow the
 house style guide below exactly; it is the shop's voice, not a suggestion.
 
 Write for the exact product type above ({format}). If it is a physical print
@@ -25,8 +25,8 @@ Return ONLY a JSON object with these exact fields:
   house style Tags mix (no single-word tags, no repeated title phrase more
   than twice).
 - description: string, following the house style Description structure
-  (hook, fit, audience/gift, what's included, available sizes, and — for a
-  digital download only — printing options). Match every claim to the
+  (hook, fit, audience/gift, what's included, and — for a digital download
+  only — printing options). {sizes_rule} Match every claim to the
   product type above. Do not include the mockup-disclosure line — it is
   appended automatically.
 - materials: for a physical print, the material(s) (e.g. ["canvas"]); for a

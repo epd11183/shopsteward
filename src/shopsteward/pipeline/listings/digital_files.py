@@ -84,6 +84,12 @@ class FilePlan(BaseModel):
     files: list[FileEntry]
 
 
+def plan_sizes(plan: FilePlan) -> list[str]:
+    """Every size the plan delivers, rank order, de-duplicated. The single
+    source for copy, the "what you get" panel and the build-time panel check."""
+    return list(dict.fromkeys(s for e in plan.files for s in e.sizes))
+
+
 def photo_dims(path: str | Path) -> tuple[int, int]:
     """(width, height) after EXIF orientation is applied."""
     with Image.open(path) as img:

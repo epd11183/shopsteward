@@ -188,6 +188,13 @@ class BuildReport(BaseModel):
     # Landing file already has a pushed draft under an earlier config hash.
     skipped_already_pushed: int = 0
     push_failed: int = 0
+    # Design 2026-11-21 §4: "what you get" panel sizes != the file plan's sizes
+    # (legacy_panels = the subset whose panel never recorded sizes). Not built.
+    skipped_panel_stale: int = 0
+    legacy_panels: int = 0
+    # Generated copy refused by a guard (undelivered size / medium) or the 3x cap.
+    copy_refused: int = 0
+    skip_reasons: list[str] = Field(default_factory=list)
 
 
 class Economics(BaseModel):
