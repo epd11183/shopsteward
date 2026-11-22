@@ -7,6 +7,7 @@ recompute it on demand."""
 import hashlib
 import io
 from pathlib import Path
+from typing import Any
 
 from PIL import Image
 
@@ -32,6 +33,31 @@ class SellableFileTooLargeError(OSError):
     batch. ponytail: the ceiling is quality 50 with no resize; only a
     genuinely huge image resolution (well beyond typical camera output)
     should ever hit it -- if it does in practice, add a resize step."""
+
+
+def encode_jpeg_under_cap(
+    img: Image.Image,
+    max_bytes: int,
+    *,
+    label: str = "image",
+    cap_name: str = "sellable_max_bytes",
+    **save_kw: Any,
+) -> bytes:
+    """Encode ``img`` as JPEG, stepping quality down _QUALITY_STEPS until the
+    result is <= max_bytes. Extra ``save_kw`` (icc_profile, dpi, exif, ...) pass
+    through to Pillow. Raises SellableFileTooLargeError if even the lowest
+    step doesn't fit. Shared by images.py and digital_files.py."""
+    last = b""
+    for quality in _QUALITY_STEPS:
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=quality, **save_kw)
+        last = buf.getvalue()
+        if len(last) <= max_bytes:
+            return last
+    raise SellableFileTooLargeError(
+        f"{label}: even quality={_QUALITY_STEPS[-1]} JPEG ({len(last)} bytes) exceeds "
+        f"{cap_name}={max_bytes}; resolution is too high to fit without a resize"
+    )
 
 
 def order_listing_images(mockups: list[dict], config: ListingConfig) -> list[ListingImage]:
@@ -62,22 +88,9 @@ def _load_sellable(path: str, sellable_max_bytes: int) -> tuple[bytes, SellableF
         )
 
     with Image.open(path) as img:
-        rgb = img.convert("RGB")
-        last_derived = b""
-        for quality in _QUALITY_STEPS:
-            buf = io.BytesIO()
-            rgb.save(buf, "JPEG", quality=quality)
-            last_derived = buf.getvalue()
-            if len(last_derived) <= sellable_max_bytes:
-                return last_derived, SellableFile(
-                    source="derived_jpeg",
-                    sha256=hashlib.sha256(last_derived).hexdigest(),
-                    bytes=len(last_derived),
-                )
-
-    raise SellableFileTooLargeError(
-        f"{path}: even quality={_QUALITY_STEPS[-1]} JPEG ({len(last_derived)} bytes) exceeds "
-        f"sellable_max_bytes={sellable_max_bytes}; resolution is too high to fit without a resize"
+        derived = encode_jpeg_under_cap(img.convert("RGB"), sellable_max_bytes, label=path)
+    return derived, SellableFile(
+        source="derived_jpeg", sha256=hashlib.sha256(derived).hexdigest(), bytes=len(derived)
     )
 
 
