@@ -4,11 +4,12 @@ input + config always yields the same plan and the same bytes."""
 
 import hashlib
 import io
+import json
 from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageCms, ImageOps
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from shopsteward.pipeline.listings._jpeg import encode_jpeg_under_cap
 
@@ -17,6 +18,11 @@ _EXIF_COPYRIGHT = 0x8298
 _EXIF_IFD = 0x8769
 _EXIF_DATETIME_ORIGINAL = 0x9003
 _FULL_KEY = "full"
+
+
+class FileEncodeError(OSError, ValueError):
+    """A source can't be encoded (bad ICC profile). OSError so push/gate3's
+    existing handlers turn it into push_failed; ValueError for old callers."""
 
 
 class SizeSpec(BaseModel):
@@ -54,9 +60,15 @@ class DigitalFilesConfig(BaseModel):
     ppi: int = 300
     min_retained_fraction: float = 0.6
     full_ratio_tolerance: float = 0.01
-    max_files: int = 5
-    max_bytes: int = 20_000_000
+    max_files: int = Field(default=5, ge=1, le=5)
+    max_bytes: int = Field(default=20_000_000, ge=1, le=20_000_000)
     copyright_holder: str | None = None
+
+
+def digital_files_hash(cfg: DigitalFilesConfig) -> str:
+    """Own hash: digital_files is excluded from listings config_hash."""
+    canonical = json.dumps(cfg.model_dump(), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 class FileEntry(BaseModel):
@@ -174,7 +186,7 @@ def encode_file(path: str | Path, entry: FileEntry, cfg: DigitalFilesConfig) -> 
                 profile = ImageCms.ImageCmsProfile(io.BytesIO(icc))
                 needs_convert = not _is_srgb(profile)
             except (ImageCms.PyCMSError, OSError) as exc:
-                raise ValueError(f"{path}: unreadable embedded ICC profile") from exc
+                raise FileEncodeError(f"{path}: unreadable embedded ICC profile") from exc
         else:
             needs_convert = False
         if needs_convert:
@@ -182,7 +194,7 @@ def encode_file(path: str | Path, entry: FileEntry, cfg: DigitalFilesConfig) -> 
             try:
                 img = ImageCms.profileToProfile(img, profile, srgb, outputMode="RGB")
             except ImageCms.PyCMSError as exc:
-                raise ValueError(f"{path}: embedded ICC profile cannot be converted") from exc
+                raise FileEncodeError(f"{path}: embedded ICC profile cannot be converted") from exc
         else:
             img = img.convert("RGB")
         img = img.crop(entry.crop_box)

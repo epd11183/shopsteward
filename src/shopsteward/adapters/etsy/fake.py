@@ -21,8 +21,12 @@ from shopsteward.adapters.etsy.models import (
     EtsyShop,
     EtsyShopSection,
     EtsyTaxonomyNode,
+    ListingFile,
     Money,
 )
+
+_MAX_FILES = 5
+_MAX_FILE_BYTES = 20_000_000
 
 
 class FixtureEtsyAdapter:
@@ -192,9 +196,16 @@ class FakeEtsyWriteAdapter:
         self, listing_id: int, file: bytes, *, name: str, rank: int
     ) -> EtsyFileRef:
         row = self._require(listing_id)
+        # Etsy limits: 5 files per listing, 20 MB per file (design §2).
+        if len(row["files"]) >= _MAX_FILES:
+            raise EtsyWriteError(400, f"listing already has {_MAX_FILES} files")
+        if len(file) > _MAX_FILE_BYTES:
+            raise EtsyWriteError(413, f"file exceeds {_MAX_FILE_BYTES} bytes")
         file_id = self._next_file_id
         self._next_file_id += 1
-        row["files"].append({"listing_file_id": file_id, "rank": rank, "name": name})
+        row["files"].append(
+            {"listing_file_id": file_id, "rank": rank, "name": name, "size": len(file)}
+        )
         self.calls.append(
             (
                 "upload_listing_file",
@@ -202,6 +213,19 @@ class FakeEtsyWriteAdapter:
             )
         )
         return EtsyFileRef(listing_file_id=file_id, rank=rank)
+
+    def list_listing_files(self, listing_id: int) -> list[ListingFile]:
+        row = self._require(listing_id)
+        self.calls.append(("list_listing_files", {"listing_id": listing_id}))
+        return [
+            ListingFile(
+                listing_file_id=f["listing_file_id"],
+                name=f["name"],
+                rank=f["rank"],
+                size_bytes=f.get("size"),
+            )
+            for f in row["files"]
+        ]
 
     def update_listing(self, listing_id: int, fields: EtsyListingUpdate) -> EtsyListing:
         # Etsy's real updateListing has no price field -- price is fixed at

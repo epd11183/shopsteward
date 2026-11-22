@@ -31,6 +31,12 @@ from shopsteward.pipeline import tuning
 from shopsteward.pipeline.config import TUNING_PROFILE_PATH
 from shopsteward.pipeline.listings import config as listing_config
 from shopsteward.pipeline.listings.copy import build_copy_adapter, generate_copy
+from shopsteward.pipeline.listings.crop_focus import get_crop_focus
+from shopsteward.pipeline.listings.digital_files import (
+    digital_files_hash,
+    photo_dims,
+    plan_files,
+)
 from shopsteward.pipeline.listings.images import order_listing_images, resolve_sellable_file
 from shopsteward.pipeline.listings.models import BuildReport, ListingConfig, ListingImage
 from shopsteward.pipeline.listings.pricing import apply_price, enforce_floor
@@ -96,7 +102,7 @@ def _mockup_rows(conn: sqlite3.Connection, user_id: int, set_key: str) -> list[d
 
 def _existing_draft(conn: sqlite3.Connection, user_id: int, draft_id: str) -> sqlite3.Row | None:
     return conn.execute(
-        "SELECT landing_file_id, photo_id, images_json, title, price, state "
+        "SELECT landing_file_id, photo_id, images_json, title, price, state, etsy_listing_id "
         "FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
         (user_id, draft_id),
     ).fetchone()
@@ -248,6 +254,35 @@ def build_drafts(
                 },
             ),
         )
+
+        # Freeze the plan once files exist on Etsy: a --force rebuild must not
+        # record a second plan that mixes with the uploaded files.
+        frozen = existing is not None and (
+            existing["etsy_listing_id"] is not None
+            or conn.execute(
+                "SELECT 1 FROM proj_listing_files WHERE user_id=? AND draft_id=? LIMIT 1",
+                (user_id, draft_id),
+            ).fetchone()
+            is not None
+        )
+        if cfg.digital_files is not None and not frozen:
+            plan = plan_files(
+                photo_dims(row["path"]),
+                get_crop_focus(conn, user_id, landing_file_id) or (0.5, 0.5),
+                cfg.digital_files,
+            )
+            append(
+                conn,
+                Event(
+                    user_id=user_id,
+                    type="listingdraft.files_planned",
+                    payload={
+                        "draft_id": draft_id,
+                        **plan.model_dump(mode="json"),
+                        "digital_files_hash": digital_files_hash(cfg.digital_files),
+                    },
+                ),
+            )
 
         effective_photo_id = row["photo_id"] or f"file-{landing_file_id[:12]}"
         ran = generate_copy(

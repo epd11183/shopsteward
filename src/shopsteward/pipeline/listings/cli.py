@@ -429,6 +429,17 @@ def crop_focus_cmd(
                 "already-uploaded files are NOT replaced.",
                 fg="yellow",
             )
+        planned = conn.execute(
+            "SELECT 1 FROM proj_listing_drafts WHERE user_id=? AND landing_file_id=? "
+            "AND etsy_listing_id IS NULL AND files_plan_json IS NOT NULL LIMIT 1",
+            (DEFAULT_USER_ID, file_id),
+        ).fetchone()
+        if planned is not None:
+            typer.secho(
+                "warning: an unpushed draft for this photo already has a file plan "
+                "recorded with the old focus; run `listings build --force` to re-plan.",
+                fg="yellow",
+            )
     finally:
         conn.close()
 

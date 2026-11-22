@@ -19,6 +19,7 @@ re-running the whole thing.
 
 import json
 import os
+import re
 import sqlite3
 from pathlib import Path
 
@@ -28,6 +29,14 @@ from shopsteward.adapters.etsy.interface import EtsyWriteAdapter, EtsyWriteError
 from shopsteward.adapters.etsy.live import LiveEtsyWriteAdapter
 from shopsteward.adapters.etsy.models import EtsyDraftSpec, EtsyListingUpdate
 from shopsteward.core.events import Event, append
+from shopsteward.pipeline.listings.digital_files import (
+    FileEntry,
+    FilePlan,
+    digital_files_hash,
+    encode_file,
+    photo_dims,
+    plan_files,
+)
 from shopsteward.pipeline.listings.images import sellable_file_bytes
 from shopsteward.pipeline.listings.models import BuildReport, ListingConfig
 from shopsteward.pipeline.listings.projections import rebuild_listings
@@ -70,7 +79,8 @@ def photo_has_digital_listing(
 def _eligible_drafts(conn: sqlite3.Connection, user_id: int) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT draft_id, landing_file_id, title, tags_json, description, price, currency, "
-        "images_json FROM proj_listing_drafts WHERE user_id=? AND title IS NOT NULL "
+        "images_json, files_plan_json, file_source FROM proj_listing_drafts WHERE user_id=? "
+        "AND title IS NOT NULL "
         "AND price IS NOT NULL AND etsy_listing_id IS NULL AND state != 'published' "
         # Newest first per photo so the current-config draft is the one that
         # pushes (rowid breaks created_at ties: the projection inserts in
@@ -176,6 +186,123 @@ def _images_stage(
         )
 
 
+class FilePlanDriftError(RuntimeError):
+    """The re-planned files differ from the plan recorded at build time (or the
+    plan can't be honoured safely)."""
+
+
+# (entry, upload name, bytes, sha256). ponytail: all entries are held in memory
+# (<= 5 x 20 MB); stream from disk if that ever matters.
+PreparedFile = tuple[FileEntry, str, bytes, str]
+
+
+def _slug(landing_path: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", Path(landing_path).stem.lower()).strip("-")[:40] or "photo"
+
+
+def _checked_plan(
+    cfg: ListingConfig, files_plan_json: str | None, landing_path: str
+) -> FilePlan | None:
+    """The recorded plan if a re-plan still yields it; None when the draft has
+    no plan or digital_files is off (legacy single-file path)."""
+    if files_plan_json is None or cfg.digital_files is None:
+        return None
+    try:
+        recorded = json.loads(files_plan_json)
+        expected = FilePlan.model_validate(
+            {k: recorded[k] for k in ("source_dims", "focus", "files")}
+        )
+        recorded_hash = recorded["digital_files_hash"]
+    except (ValueError, KeyError, TypeError) as exc:  # JSONDecodeError/ValidationError
+        raise FilePlanDriftError("file plan drift: malformed recorded plan") from exc
+    replanned = plan_files(photo_dims(landing_path), expected.focus, cfg.digital_files)
+    if replanned.files != expected.files or recorded_hash != digital_files_hash(cfg.digital_files):
+        raise FilePlanDriftError("file plan drift")
+    return replanned
+
+
+def _prepare_files(
+    cfg: ListingConfig,
+    files_plan_json: str | None,
+    landing_path: str,
+    skip_keys: set[str] | frozenset[str] = frozenset(),
+) -> list[PreparedFile] | None:
+    """Everything that can fail locally, BEFORE anything is created/uploaded:
+    drift check + encode of every entry not already attached. None = legacy
+    single-file path. Rolling digital_files back to None after files were
+    already attached is drift (the legacy path would duplicate `full`)."""
+    if files_plan_json is not None and cfg.digital_files is None and skip_keys:
+        raise FilePlanDriftError("file plan drift: digital_files disabled after partial push")
+    plan = _checked_plan(cfg, files_plan_json, landing_path)
+    if plan is None:
+        return None
+    assert cfg.digital_files is not None
+    slug = _slug(landing_path)
+    out: list[PreparedFile] = []
+    for entry in sorted(plan.files, key=lambda f: f.rank):
+        if entry.key in skip_keys:
+            continue
+        data, sha = encode_file(landing_path, entry, cfg.digital_files)
+        out.append((entry, _file_name(slug, entry), data, sha))
+    return out
+
+
+def _reconcile_files(
+    conn: sqlite3.Connection,
+    user_id: int,
+    adapter: EtsyWriteAdapter,
+    draft_id: str,
+    listing_id: int,
+    cfg: ListingConfig,
+    files_plan_json: str | None,
+    landing_path: str,
+    skip_keys: set[str],
+) -> None:
+    """A timed-out upload may have been accepted by Etsy. Before a retry
+    uploads anything, ask Etsy which planned filenames already exist and record
+    a reconciled file_attached for each (adding its key to skip_keys, in place).
+    list_listing_files failing propagates: better a failed retry than duplicates."""
+    plan = _checked_plan(cfg, files_plan_json, landing_path)
+    if plan is None:
+        return
+    slug = _slug(landing_path)
+    etsy_files = adapter.list_listing_files(listing_id)
+    on_etsy = {(f.name or "").lower(): f for f in etsy_files}
+    for entry in sorted(plan.files, key=lambda f: f.rank):
+        name = _file_name(slug, entry)
+        found = on_etsy.get(name.lower())
+        if entry.key in skip_keys or found is None:
+            continue
+        append(
+            conn,
+            Event(
+                user_id=user_id,
+                type="listingdraft.file_attached",
+                payload={
+                    "draft_id": draft_id,
+                    "etsy_listing_id": listing_id,
+                    "etsy_file_id": found.listing_file_id,
+                    "source": "digital_files",
+                    "sha256": None,
+                    "key": entry.key,
+                    "rank": entry.rank,
+                    "name": name,
+                    "sizes": entry.sizes,
+                    "reconciled": True,
+                },
+            ),
+        )
+        skip_keys.add(entry.key)
+    # Fail closed: a file on the listing we can't account for (renamed after a
+    # lost response?) would be duplicated by the retry.
+    if len(etsy_files) > len(skip_keys):
+        raise FilePlanDriftError("unreconciled files on listing")
+
+
+def _file_name(slug: str, entry: FileEntry) -> str:
+    return "_".join([slug, entry.key, *(["-".join(entry.sizes)] if entry.sizes else [])]) + ".jpg"
+
+
 def _file_stage(
     conn: sqlite3.Connection,
     user_id: int,
@@ -184,25 +311,57 @@ def _file_stage(
     listing_id: int,
     landing_path: str,
     sellable_max_bytes: int,
+    *,
+    prepared: list[PreparedFile] | None = None,
+    file_source: str | None = None,
+    skip_keys: set[str] | frozenset[str] = frozenset(),
 ) -> None:
-    file_bytes, sellable = sellable_file_bytes(landing_path, sellable_max_bytes)
-    file_ref = adapter.upload_listing_file(
-        listing_id, file_bytes, name=Path(landing_path).name, rank=1
-    )
-    append(
-        conn,
-        Event(
-            user_id=user_id,
-            type="listingdraft.file_attached",
-            payload={
-                "draft_id": draft_id,
-                "etsy_listing_id": listing_id,
-                "etsy_file_id": file_ref.listing_file_id,
-                "source": sellable.source,
-                "sha256": sellable.sha256,
-            },
-        ),
-    )
+    """prepared (from _prepare_files): upload each entry in rank order, one
+    file_attached event per upload (already-attached keys were excluded at
+    prepare time). None: the legacy single file, skipped if already attached."""
+    if prepared is None:
+        if "full" in skip_keys:
+            return
+        file_bytes, sellable = sellable_file_bytes(landing_path, sellable_max_bytes)
+        file_ref = adapter.upload_listing_file(
+            listing_id, file_bytes, name=Path(landing_path).name, rank=1
+        )
+        append(
+            conn,
+            Event(
+                user_id=user_id,
+                type="listingdraft.file_attached",
+                payload={
+                    "draft_id": draft_id,
+                    "etsy_listing_id": listing_id,
+                    "etsy_file_id": file_ref.listing_file_id,
+                    "source": sellable.source,
+                    "sha256": sellable.sha256,
+                },
+            ),
+        )
+        return
+
+    for entry, name, data, sha in prepared:
+        file_ref = adapter.upload_listing_file(listing_id, data, name=name, rank=entry.rank)
+        append(
+            conn,
+            Event(
+                user_id=user_id,
+                type="listingdraft.file_attached",
+                payload={
+                    "draft_id": draft_id,
+                    "etsy_listing_id": listing_id,
+                    "etsy_file_id": file_ref.listing_file_id,
+                    "source": file_source or "digital_files",
+                    "sha256": sha,
+                    "key": entry.key,
+                    "rank": entry.rank,
+                    "name": name,
+                    "sizes": entry.sizes,
+                },
+            ),
+        )
 
 
 def _update_stage(
@@ -256,6 +415,11 @@ def _push_one(
     listing_id: int | None = None
     stage = "create"
     try:
+        # Drift check + encode of every file BEFORE creating anything on Etsy,
+        # so a local failure never strands a half-built listing.
+        stage = "file"
+        prepared = _prepare_files(cfg, row["files_plan_json"], landing_path)
+        stage = "create"
         listing_id = _create_stage(conn, user_id, adapter, cfg, draft_id, row, tags)
 
         stage = "image"
@@ -263,13 +427,21 @@ def _push_one(
 
         stage = "file"
         _file_stage(
-            conn, user_id, adapter, draft_id, listing_id, landing_path, cfg.etsy.sellable_max_bytes
+            conn,
+            user_id,
+            adapter,
+            draft_id,
+            listing_id,
+            landing_path,
+            cfg.etsy.sellable_max_bytes,
+            prepared=prepared,
+            file_source=row["file_source"],
         )
 
         stage = "update"
         _update_stage(adapter, listing_id, row, tags)
         return True
-    except (EtsyWriteError, OSError) as exc:
+    except (EtsyWriteError, OSError, FilePlanDriftError) as exc:
         _emit_push_failed(conn, user_id, draft_id, listing_id, stage, exc)
         return False
 

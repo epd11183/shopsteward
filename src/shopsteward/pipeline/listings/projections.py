@@ -114,8 +114,15 @@ CREATE TABLE proj_listing_drafts (
     state TEXT NOT NULL, created_at TEXT, published_at TEXT,
     pod_config_hash TEXT, provider_product_id TEXT, pod_status TEXT,
     variants_json TEXT NOT NULL DEFAULT '[]', unit_cost REAL,
-    print_file_sha256 TEXT, print_file_key TEXT,
+    print_file_sha256 TEXT, print_file_key TEXT, files_plan_json TEXT,
     PRIMARY KEY (user_id, draft_id)
+);
+DROP TABLE IF EXISTS proj_listing_files;
+CREATE TABLE proj_listing_files (
+    user_id INTEGER NOT NULL, etsy_listing_id TEXT NOT NULL, draft_id TEXT NOT NULL,
+    key TEXT NOT NULL, rank INTEGER, etsy_file_id INTEGER, sha256 TEXT,
+    sizes_json TEXT NOT NULL DEFAULT '[]',
+    PRIMARY KEY (user_id, etsy_listing_id, key)
 );
 DROP TABLE IF EXISTS proj_asset_store_config;
 CREATE TABLE proj_asset_store_config (
@@ -163,7 +170,7 @@ def rebuild_listings(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "INSERT INTO proj_listing_drafts VALUES "
                 "(?,?,?,?,?,?,?,?,?,?,NULL,NULL,'[]',NULL,NULL,NULL,NULL,'[]',NULL,'built',?,NULL,"
-                "?,NULL,NULL,'[]',NULL,NULL,NULL) "
+                "?,NULL,NULL,'[]',NULL,NULL,NULL,NULL) "
                 "ON CONFLICT(user_id, draft_id) DO UPDATE SET "
                 "landing_file_id=excluded.landing_file_id, photo_id=excluded.photo_id, "
                 "set_key=excluded.set_key, provider=excluded.provider, format=excluded.format, "
@@ -209,6 +216,38 @@ def rebuild_listings(conn: sqlite3.Connection) -> None:
                     "UPDATE proj_listing_drafts SET images_json=? WHERE user_id=? AND draft_id=?",
                     (json.dumps(p["images"]), e.user_id, p["draft_id"]),
                 )
+
+        elif e.type == "listingdraft.files_planned":
+            # Plan is frozen once any file is attached (belt and braces with build).
+            if conn.execute(
+                "SELECT 1 FROM proj_listing_files WHERE user_id=? AND draft_id=? LIMIT 1",
+                (e.user_id, p["draft_id"]),
+            ).fetchone():
+                continue
+            conn.execute(
+                "UPDATE proj_listing_drafts SET files_plan_json=? WHERE user_id=? AND draft_id=?",
+                (
+                    json.dumps({k: v for k, v in p.items() if k != "draft_id"}),
+                    e.user_id,
+                    p["draft_id"],
+                ),
+            )
+
+        elif e.type == "listingdraft.file_attached":
+            # Legacy single-file events carry no key/rank: read as key "full", rank 1.
+            conn.execute(
+                "INSERT OR REPLACE INTO proj_listing_files VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    e.user_id,
+                    str(p["etsy_listing_id"]),
+                    p["draft_id"],
+                    p.get("key", "full"),
+                    p.get("rank", 1),
+                    p.get("etsy_file_id"),
+                    p.get("sha256"),
+                    json.dumps(p.get("sizes", [])),
+                ),
+            )
 
         elif e.type == "listingdraft.copy_generated":
             conn.execute(
@@ -408,7 +447,7 @@ def rebuild_listings(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "INSERT INTO proj_listing_drafts VALUES "
                 "(?,?,?,?,NULL,'etsy_digital',NULL,'etsy',NULL,NULL,?,NULL,'[]',NULL,NULL,NULL,"
-                "NULL,'[]',NULL,'adopted',?,NULL,NULL,NULL,NULL,'[]',NULL,NULL,NULL) "
+                "NULL,'[]',NULL,'adopted',?,NULL,NULL,NULL,NULL,'[]',NULL,NULL,NULL,NULL) "
                 "ON CONFLICT(user_id, draft_id) DO UPDATE SET "
                 "landing_file_id=excluded.landing_file_id, photo_id=excluded.photo_id, "
                 "etsy_listing_id=excluded.etsy_listing_id, title=NULL, price=NULL, "
