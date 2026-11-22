@@ -101,8 +101,11 @@ class OpenRouterCopyAdapter:
             verdict = CopyVerdict.model_validate(verdict_json)
         except (KeyError, IndexError, json.JSONDecodeError, ValidationError) as exc:
             raw = payload if payload is not None else resp.text
+            # The provider answered (and billed) even though we can't use it.
+            billed = self._build_usage(payload, model)
             raise CopyParseError(
-                f"could not parse OpenRouter response: {raw!r:.{_MAX_ERROR_LEN}}"
+                f"could not parse OpenRouter response: {raw!r:.{_MAX_ERROR_LEN}}",
+                usage=billed,
             ) from exc
 
         usage = self._build_usage(payload, model)
@@ -130,14 +133,28 @@ class OpenRouterCopyAdapter:
             formats=", ".join(inputs.formats),
         )
 
-    def _build_usage(self, payload: dict, model: str) -> CopyUsage:
-        meta = payload.get("usage", {})
-        input_tokens = meta.get("prompt_tokens")
-        output_tokens = meta.get("completion_tokens")
+    def _build_usage(self, payload: object, model: str) -> CopyUsage | None:
+        """Usage from a provider payload of ANY shape; never raises (it runs
+        inside the parse-error path). None when no token counts are present,
+        so callers never record a null-token llm.call."""
+        meta = payload.get("usage") if isinstance(payload, dict) else None
+        meta = meta if isinstance(meta, dict) else {}
+
+        def count(key: str) -> int | None:
+            v = meta.get(key)
+            return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+        input_tokens, output_tokens = count("prompt_tokens"), count("completion_tokens")
+        if input_tokens is None and output_tokens is None:
+            return None
 
         est_cost_usd = None
-        have_tokens = input_tokens is not None and output_tokens is not None
-        if self._pricing and model in self._pricing and have_tokens:
+        if (
+            self._pricing
+            and model in self._pricing
+            and input_tokens is not None
+            and output_tokens is not None
+        ):
             rates = self._pricing[model]
             est_cost_usd = (input_tokens / 1e6) * rates["in"] + (output_tokens / 1e6) * rates["out"]
 

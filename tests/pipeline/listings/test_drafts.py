@@ -113,7 +113,9 @@ def test_one_drafts_parse_error_does_not_crash_the_batch(conn, tmp_path, monkeyp
 
     result = build_drafts(conn, USER_ID)
 
-    assert result.drafts_built == 2
+    # the unparseable draft now counts as a refusal (toward the 3x cap), not as built
+    assert result.drafts_built == 1
+    assert result.copy_refused == 1
     assert result.copy_calls == 1  # the parse-error draft is retried next run
     copy_events = {
         e.payload["draft_id"]

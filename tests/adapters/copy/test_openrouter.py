@@ -1,6 +1,7 @@
 import json
 
 import httpx
+import pytest
 import respx
 
 from shopsteward.adapters.copy.interface import CopyInputs, CopyParseError
@@ -152,16 +153,54 @@ def test_invalid_json_content_raises_copy_parse_error() -> None:
 
 
 @respx.mock
-def test_missing_usage_yields_none_tokens_and_cost() -> None:
+def test_missing_usage_yields_no_usage() -> None:
     respx.post(BASE).mock(return_value=_response(json.dumps(VALID_VERDICT)))
     adapter = OpenRouterCopyAdapter(api_key="k", prompt_template=TEMPLATE, pricing=PRICING)
 
     result = adapter.generate_copy(INPUTS, model=MODEL)
 
-    assert result.usage is not None
-    assert result.usage.input_tokens is None
-    assert result.usage.output_tokens is None
-    assert result.usage.est_cost_usd is None
+    assert result.usage is None  # no token counts -> no null-token llm.call downstream
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    "usage",
+    [None, "x", ["a"], {"prompt_tokens": "a", "completion_tokens": "b"}, {"prompt_tokens": True}],
+)
+def test_malformed_usage_on_unparseable_response_still_raises_copy_parse_error(usage) -> None:
+    respx.post(BASE).mock(return_value=httpx.Response(200, json={"usage": usage}))
+    adapter = OpenRouterCopyAdapter(api_key="k", prompt_template=TEMPLATE, pricing=PRICING)
+
+    with pytest.raises(CopyParseError) as exc:
+        adapter.generate_copy(INPUTS, model=MODEL)
+    assert exc.value.usage is None
+
+
+@respx.mock
+def test_unparseable_response_with_valid_usage_attaches_it() -> None:
+    respx.post(BASE).mock(
+        return_value=httpx.Response(
+            200, json={"usage": {"prompt_tokens": 800, "completion_tokens": 300}}
+        )
+    )
+    adapter = OpenRouterCopyAdapter(api_key="k", prompt_template=TEMPLATE, pricing=PRICING)
+
+    with pytest.raises(CopyParseError) as exc:
+        adapter.generate_copy(INPUTS, model=MODEL)
+    assert exc.value.usage is not None
+    assert (exc.value.usage.input_tokens, exc.value.usage.output_tokens) == (800, 300)
+    assert exc.value.usage.est_cost_usd == (800 / 1e6) * 2.00 + (300 / 1e6) * 10.00
+
+
+@respx.mock
+def test_string_token_counts_on_success_are_dropped() -> None:
+    respx.post(BASE).mock(
+        return_value=_response(
+            json.dumps(VALID_VERDICT), usage={"prompt_tokens": "a", "completion_tokens": "b"}
+        )
+    )
+    adapter = OpenRouterCopyAdapter(api_key="k", prompt_template=TEMPLATE, pricing=PRICING)
+    assert adapter.generate_copy(INPUTS, model=MODEL).usage is None
 
 
 @respx.mock

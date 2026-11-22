@@ -16,7 +16,7 @@ import sqlite3
 from pathlib import Path
 
 from shopsteward.adapters.copy.fake import FixtureCopyAdapter
-from shopsteward.adapters.copy.interface import CopyAdapter, CopyInputs, CopyParseError
+from shopsteward.adapters.copy.interface import CopyAdapter, CopyInputs, CopyParseError, CopyUsage
 from shopsteward.adapters.copy.openrouter import OpenRouterCopyAdapter
 from shopsteward.core.events import Event, append, read_all
 from shopsteward.pipeline.listings.digital_files import FilePlan, plan_sizes
@@ -151,6 +151,33 @@ def copy_refusals(conn: sqlite3.Connection, user_id: int, draft_id: str) -> int:
         if e.user_id == user_id
         and e.payload.get("draft_id") == draft_id
         and (e.id or 0) > last_created
+    )
+
+
+def _record_usage(
+    conn: sqlite3.Connection,
+    user_id: int,
+    draft_id: str,
+    cfg: ListingConfig,
+    usage: CopyUsage | None,
+) -> None:
+    if usage is None:
+        return
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="llm.call",
+            payload={
+                "provider": cfg.copy_.provider,
+                "model": cfg.copy_.model,
+                "purpose": "listing_copy",
+                "draft_id": draft_id,
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+                "est_cost_usd": usage.est_cost_usd,
+            },
+        ),
     )
 
 
@@ -299,7 +326,7 @@ def generate_copy(
     )
     try:
         result = adapter.generate_copy(inputs, model=cfg.copy_.model)
-    except CopyParseError:
+    except CopyParseError as exc:
         # A malformed/truncated provider response is a per-draft, retryable
         # failure -- not a reason to kill the whole run. Same "no event
         # appended, fill-forward picks it up next time" contract as the
@@ -309,27 +336,16 @@ def generate_copy(
             draft_id,
             exc_info=True,
         )
+        # Billed-but-unusable: record the spend and count it toward the
+        # refusal cap, or a live model that keeps returning junk is retried
+        # (and paid for) every run.
+        _record_usage(conn, user_id, draft_id, cfg, exc.usage)
+        _refuse(conn, user_id, draft_id, "unparseable", [])
         return False
 
     # Bill the call before any guard: a refused generation was still paid for,
     # and the monthly cap must see it or retries are unbounded.
-    if result.usage is not None:
-        append(
-            conn,
-            Event(
-                user_id=user_id,
-                type="llm.call",
-                payload={
-                    "provider": cfg.copy_.provider,
-                    "model": cfg.copy_.model,
-                    "purpose": "listing_copy",
-                    "draft_id": draft_id,
-                    "input_tokens": result.usage.input_tokens,
-                    "output_tokens": result.usage.output_tokens,
-                    "est_cost_usd": result.usage.est_cost_usd,
-                },
-            ),
-        )
+    _record_usage(conn, user_id, draft_id, cfg, result.usage)
 
     # Medium guard: a physical POD listing must never carry digital-download
     # copy. If the generated title/description reads as a digital download

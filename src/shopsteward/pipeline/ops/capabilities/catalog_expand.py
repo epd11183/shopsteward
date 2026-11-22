@@ -194,6 +194,15 @@ def expand_one(
     # was refused (undelivered size / refusal cap) says WHY instead of a bare
     # "no draft was built" -- these are fixed by re-rendering / operator review,
     # not by retrying blindly.
+    if row is not None and row["title"] is None:
+        from shopsteward.pipeline.listings.copy import MAX_COPY_REFUSALS, copy_refusals
+
+        if copy_refusals(conn, user_id, row["draft_id"]) >= MAX_COPY_REFUSALS:
+            # Terminal: the LLM is no longer called for this draft, so re-running
+            # archive/mockups/build every cycle cannot help.
+            raise StaleTargetError(
+                f"{path}: copy refused {MAX_COPY_REFUSALS}x: needs operator review"
+            )
     if row is None or (row["title"] is None and report.copy_refused):
         reasons = "; ".join(report.skip_reasons) or "no reason reported"
         raise RuntimeError(

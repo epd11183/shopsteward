@@ -511,3 +511,35 @@ def _observe(conn, path):
         ),
     )  # fmt: skip
     rebuild_pipeline(conn)
+
+
+class _Unparseable:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate_copy(self, inputs, *, model):
+        self.calls += 1
+        usage = CopyUsage(model=model, input_tokens=10, output_tokens=5, est_cost_usd=0.01)
+        raise CopyParseError("junk", usage=usage)
+
+
+def test_unparseable_billed_response_is_recorded_and_capped(conn, cfg):
+    plan = plan_files((6000, 4000), None, cfg.digital_files)
+    adapter = _Unparseable()
+    for _ in range(MAX_COPY_REFUSALS):
+        assert _generate(conn, cfg, adapter, plan) is False
+    assert len(read_all(conn, "llm.call")) == MAX_COPY_REFUSALS
+    refused = read_all(conn, "copy.refused")
+    assert [e.payload["reason"] for e in refused] == ["unparseable"] * MAX_COPY_REFUSALS
+    assert _generate(conn, cfg, adapter, plan) is False
+    assert adapter.calls == MAX_COPY_REFUSALS  # 4th run made no adapter call
+
+
+def test_unparseable_without_usage_records_no_llm_call(conn, cfg):
+    class NoUsage:
+        def generate_copy(self, inputs, *, model):
+            raise CopyParseError("junk")
+
+    assert _generate(conn, cfg, NoUsage(), None) is False
+    assert read_all(conn, "llm.call") == []
+    assert len(read_all(conn, "copy.refused")) == 1
