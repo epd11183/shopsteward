@@ -21,6 +21,7 @@ from shopsteward.adapters.copy.interface import CopyInputs
 from shopsteward.adapters.copy.tags import MAX_TAG_LEN as _MAX_TAG_LEN
 from shopsteward.adapters.copy.tags import MAX_TAGS as _MAX_TAGS
 from shopsteward.adapters.copy.tags import validate_tag
+from shopsteward.pipeline.listings.digital_files import DigitalFilesConfig
 from shopsteward.pipeline.models import LandingReport
 
 __all__ = [
@@ -94,6 +95,8 @@ class ListingConfig(BaseModel):
     image_order: list[str]
     image_cap: int
     etsy: _ListingConfigEtsy
+    # Slice 2: INERT -- nothing in build/copy/push reads this until slice 3.
+    digital_files: DigitalFilesConfig | None = None
 
 
 class MatchConfig(BaseModel):
@@ -182,6 +185,8 @@ class BuildReport(BaseModel):
     pushed: int = 0
     copy_calls: int = 0
     skipped_idempotent: int = 0
+    # Landing file already has a pushed draft under an earlier config hash.
+    skipped_already_pushed: int = 0
     push_failed: int = 0
 
 

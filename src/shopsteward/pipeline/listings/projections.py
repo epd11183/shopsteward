@@ -130,6 +130,12 @@ CREATE TABLE proj_asset_store (
     source_landing_file_id TEXT, archived_at TEXT,
     PRIMARY KEY (user_id, photo_id, format)
 );
+DROP TABLE IF EXISTS proj_crop_focus;
+CREATE TABLE proj_crop_focus (
+    user_id INTEGER NOT NULL, landing_file_id TEXT NOT NULL,
+    x REAL NOT NULL, y REAL NOT NULL, updated_at TEXT,
+    PRIMARY KEY (user_id, landing_file_id)
+);
 """
 
 
@@ -432,6 +438,18 @@ def rebuild_listings(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "DELETE FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
                 (e.user_id, p["draft_id"]),
+            )
+
+        elif e.type == "cropfocus.set":
+            conn.execute(
+                "INSERT OR REPLACE INTO proj_crop_focus VALUES (?,?,?,?,?)",
+                (e.user_id, p["landing_file_id"], p["x"], p["y"], e.created_at),
+            )
+
+        elif e.type == "cropfocus.cleared":
+            conn.execute(
+                "DELETE FROM proj_crop_focus WHERE user_id=? AND landing_file_id=?",
+                (e.user_id, p["landing_file_id"]),
             )
 
         elif e.type == "asset.archived":

@@ -10,7 +10,7 @@ from typing import Any
 from PIL import Image, ImageCms, ImageOps
 from pydantic import BaseModel, model_validator
 
-from shopsteward.pipeline.listings.images import encode_jpeg_under_cap
+from shopsteward.pipeline.listings._jpeg import encode_jpeg_under_cap
 
 _EXIF_ARTIST = 0x013B
 _EXIF_COPYRIGHT = 0x8298
@@ -179,7 +179,10 @@ def encode_file(path: str | Path, entry: FileEntry, cfg: DigitalFilesConfig) -> 
             needs_convert = False
         if needs_convert:
             srgb = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
-            img = ImageCms.profileToProfile(img, profile, srgb, outputMode="RGB")
+            try:
+                img = ImageCms.profileToProfile(img, profile, srgb, outputMode="RGB")
+            except ImageCms.PyCMSError as exc:
+                raise ValueError(f"{path}: embedded ICC profile cannot be converted") from exc
         else:
             img = img.convert("RGB")
         img = img.crop(entry.crop_box)

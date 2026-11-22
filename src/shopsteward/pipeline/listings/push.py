@@ -50,12 +50,32 @@ def build_etsy_write_adapter(*, live: bool) -> EtsyWriteAdapter:
     return LiveEtsyWriteAdapter(api_key=api_key, shop_id=tokens.shop_id, token_store=store)
 
 
+def photo_has_digital_listing(
+    conn: sqlite3.Connection, user_id: int, landing_file_id: str | None
+) -> str | None:
+    """draft_id of a DIGITAL draft (incl. adopted live listings) for this
+    photo that already has an Etsy listing, else None. POD rows share
+    landing_file_id but are a different product, so they never block. Needs
+    a fresh rebuild_listings()."""
+    if landing_file_id is None:
+        return None
+    row = conn.execute(
+        "SELECT draft_id FROM proj_listing_drafts WHERE user_id=? AND landing_file_id=? "
+        "AND provider='etsy_digital' AND etsy_listing_id IS NOT NULL LIMIT 1",
+        (user_id, landing_file_id),
+    ).fetchone()
+    return row["draft_id"] if row is not None else None
+
+
 def _eligible_drafts(conn: sqlite3.Connection, user_id: int) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT draft_id, landing_file_id, title, tags_json, description, price, currency, "
         "images_json FROM proj_listing_drafts WHERE user_id=? AND title IS NOT NULL "
         "AND price IS NOT NULL AND etsy_listing_id IS NULL AND state != 'published' "
-        "ORDER BY draft_id",
+        # Newest first per photo so the current-config draft is the one that
+        # pushes (rowid breaks created_at ties: the projection inserts in
+        # event order and ON CONFLICT updates keep the rowid).
+        "ORDER BY created_at DESC, rowid DESC, draft_id",
         (user_id,),
     ).fetchall()
 
@@ -261,7 +281,17 @@ def push_drafts(
     is isolated -- it never aborts the batch."""
     rebuild_listings(conn)
     report = BuildReport()
+    # One listing per photo: never push a second draft for a landing file that
+    # already has a listing (from before this run, or earlier in it). The
+    # projection is fresh from the rebuild above; `attempted` covers this run.
+    attempted: set[str] = set()
     for row in _eligible_drafts(conn, user_id):
+        landing_id = row["landing_file_id"]
+        if landing_id is not None:
+            if photo_has_digital_listing(conn, user_id, landing_id) or landing_id in attempted:
+                report.skipped_already_pushed += 1
+                continue
+            attempted.add(landing_id)
         if _push_one(conn, user_id, adapter, cfg, row):
             report.pushed += 1
         else:

@@ -176,12 +176,32 @@ def test_encode_golden_sha(tmp_path, cfg):
     )
 
 
+def _swapped_primaries_profile() -> bytes:
+    """A genuinely different RGB profile: sRGB with the red and green primary
+    tags (rXYZ/gXYZ) swapped and the description renamed."""
+    raw = bytearray(ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes())
+    count = int.from_bytes(raw[128:132], "big")
+    tags = {}
+    for i in range(count):
+        o = 132 + 12 * i
+        tags[bytes(raw[o : o + 4])] = (
+            int.from_bytes(raw[o + 4 : o + 8], "big"),
+            int.from_bytes(raw[o + 8 : o + 12], "big"),
+        )
+    (ro, rs), (go, gs) = tags[b"rXYZ"], tags[b"gXYZ"]
+    assert rs == gs
+    r, g = bytes(raw[ro : ro + rs]), bytes(raw[go : go + gs])
+    raw[ro : ro + rs], raw[go : go + gs] = g, r
+    return (
+        bytes(raw)
+        .replace(b"sRGB", b"xRGB")
+        .replace("sRGB".encode("utf-16-be"), "xRGB".encode("utf-16-be"))
+    )
+
+
 def test_non_srgb_source_converted_to_srgb(tmp_path, cfg):
     src = tmp_path / "s.jpg"
-    other = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
-    other = other.replace(b"sRGB", b"xRGB").replace(
-        "sRGB".encode("utf-16-be"), "xRGB".encode("utf-16-be")
-    )
+    other = _swapped_primaries_profile()
     assert not _is_srgb(ImageCms.ImageCmsProfile(io.BytesIO(other)))
     Image.new("RGB", (60, 40), (10, 200, 30)).save(src, icc_profile=other)
     tcfg = cfg.model_copy(update={"ppi": 30})
@@ -189,6 +209,10 @@ def test_non_srgb_source_converted_to_srgb(tmp_path, cfg):
     data, _ = encode_file(src, entry, tcfg)
     with _reopen(tmp_path, data) as im:
         assert im.info["icc_profile"] == _SRGB_ICC
+        r, g, b = im.getpixel((30, 20))
+    # Pixels really changed (the profile was applied), not just relabelled.
+    assert (r, g, b) != (10, 200, 30)
+    assert r > 100 > g
 
 
 def test_corrupt_icc_raises_value_error(tmp_path, cfg):
@@ -197,4 +221,18 @@ def test_corrupt_icc_raises_value_error(tmp_path, cfg):
     tcfg = cfg.model_copy(update={"ppi": 30})
     entry = _by_key(plan_files((60, 40), None, tcfg))["full"]
     with pytest.raises(ValueError, match="bad.jpg"):
+        encode_file(src, entry, tcfg)
+
+
+def test_icc_transform_failure_raises_value_error(tmp_path, cfg, monkeypatch):
+    src = tmp_path / "t.jpg"
+    Image.new("RGB", (60, 40)).save(src, icc_profile=_swapped_primaries_profile())
+
+    def boom(*a, **k):
+        raise ImageCms.PyCMSError("cannot build transform")
+
+    monkeypatch.setattr(ImageCms, "profileToProfile", boom)
+    tcfg = cfg.model_copy(update={"ppi": 30})
+    entry = _by_key(plan_files((60, 40), None, tcfg))["full"]
+    with pytest.raises(ValueError, match="t.jpg"):
         encode_file(src, entry, tcfg)

@@ -35,7 +35,11 @@ from shopsteward.pipeline.listings.images import order_listing_images, resolve_s
 from shopsteward.pipeline.listings.models import BuildReport, ListingConfig, ListingImage
 from shopsteward.pipeline.listings.pricing import apply_price, enforce_floor
 from shopsteward.pipeline.listings.projections import rebuild_listings
-from shopsteward.pipeline.listings.push import build_etsy_write_adapter, push_drafts
+from shopsteward.pipeline.listings.push import (
+    build_etsy_write_adapter,
+    photo_has_digital_listing,
+    push_drafts,
+)
 from shopsteward.pipeline.projections import rebuild_pipeline
 
 
@@ -162,6 +166,15 @@ def build_drafts(
 
         draft_id = hashlib.sha256(f"{landing_file_id}|{cfg_hash}|{set_key}".encode()).hexdigest()
         existing = _existing_draft(conn, user_id, draft_id)
+
+        # A config change re-keys draft_id; never re-draft a photo that already
+        # has a live Etsy listing under an earlier config (duplicate listing).
+        if (
+            existing is None
+            and photo_has_digital_listing(conn, user_id, landing_file_id) is not None
+        ):
+            result.skipped_already_pushed += 1
+            continue
 
         if existing is not None and existing["state"] == "published":
             result.skipped_idempotent += 1

@@ -49,6 +49,7 @@ from shopsteward.pipeline.listings.push import (
     _images_stage,
     _landing_path,
     _update_stage,
+    photo_has_digital_listing,
 )
 
 _QUEUE_STATES = ("pushed", "push_failed", "publish_failed")
@@ -312,6 +313,13 @@ def retry_push(
         if e.user_id == user_id and e.payload.get("draft_id") == draft_id
         for img in e.payload.get("images", [])
     }
+
+    if listing_id is None:
+        # A superseded draft must not create a second digital listing for a
+        # photo that already has one (config change re-keyed draft_id).
+        blocker = photo_has_digital_listing(conn, user_id, row["landing_file_id"])
+        if blocker is not None:
+            raise ValueError(f"photo already has a digital listing (draft {blocker})")
 
     stage = resume_stage
     try:
