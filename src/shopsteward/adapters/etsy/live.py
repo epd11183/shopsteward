@@ -483,3 +483,15 @@ class LiveEtsyWriteAdapter:
         resp = self._client.delete(f"{BASE}/shops/{self._shop_id}/listings/{listing_id}")
         if resp.status_code >= 400:
             raise EtsyWriteError(resp.status_code, _safe_error(resp))
+
+    def delete_listing_file(self, listing_id: int, listing_file_id: int) -> None:
+        # deleteListingFile returns 204 with no body, so _request (which ends in
+        # resp.json()) can't be used; transport errors are mapped the same way.
+        try:
+            resp = self._client.delete(
+                f"{BASE}/shops/{self._shop_id}/listings/{listing_id}/files/{listing_file_id}"
+            )
+        except httpx.HTTPError as exc:
+            raise EtsyWriteError(0, f"transport error: {type(exc).__name__}") from exc
+        if resp.status_code >= 400:
+            raise EtsyWriteError(resp.status_code, _safe_error(resp))

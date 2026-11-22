@@ -983,3 +983,23 @@ def test_transport_error_becomes_etsy_write_error(tmp_path) -> None:
     with pytest.raises(EtsyWriteError) as ei:
         _write_adapter(tmp_path).list_listing_files(555)
     assert ei.value.status_code == 0
+
+
+@respx.mock
+def test_delete_listing_file_204_and_errors(tmp_path) -> None:
+    url = f"{BASE}/shops/100001/listings/555/files/9001"
+    route = respx.delete(url).mock(return_value=httpx.Response(204))
+    adapter = _write_adapter(tmp_path)
+    assert adapter.delete_listing_file(555, 9001) is None
+    assert route.called
+
+    route.mock(return_value=httpx.Response(404, json={"error": "no such file"}))
+    with pytest.raises(EtsyWriteError) as ei:
+        adapter.delete_listing_file(555, 9001)
+    assert ei.value.status_code == 404
+
+    route.mock(side_effect=httpx.ConnectError("down"))
+    with pytest.raises(EtsyWriteError) as ei:
+        adapter.delete_listing_file(555, 9001)
+    assert ei.value.status_code == 0
+    assert "transport error" in str(ei.value)

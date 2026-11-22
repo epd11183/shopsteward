@@ -220,3 +220,24 @@ def test_fake_rejects_file_over_20mb() -> None:
     with pytest.raises(EtsyWriteError):
         adapter.upload_listing_file(lid, bytes(20_000_001), name="big.jpg", rank=1)
     adapter.upload_listing_file(lid, bytes(20_000_000), name="ok.jpg", rank=1)
+
+
+def test_fake_delete_listing_file_round_trip_frees_cap_and_404s() -> None:
+    adapter = FakeEtsyWriteAdapter()
+    lid = _ready_listing(adapter)
+    refs = [adapter.upload_listing_file(lid, b"x", name=f"f{r}.jpg", rank=r) for r in range(1, 6)]
+    adapter.delete_listing_file(lid, refs[1].listing_file_id)
+    assert [f.name for f in adapter.list_listing_files(lid)] == [
+        "f1.jpg",
+        "f3.jpg",
+        "f4.jpg",
+        "f5.jpg",
+    ]
+    adapter.upload_listing_file(lid, b"x", name="f6.jpg", rank=6)  # cap freed
+    assert (
+        "delete_listing_file",
+        {"listing_id": lid, "listing_file_id": refs[1].listing_file_id},
+    ) in adapter.calls
+    with pytest.raises(EtsyWriteError) as ei:
+        adapter.delete_listing_file(lid, 999_999)
+    assert ei.value.status_code == 404

@@ -227,6 +227,20 @@ class FakeEtsyWriteAdapter:
             for f in row["files"]
         ]
 
+    def delete_listing_file(self, listing_id: int, listing_file_id: int) -> None:
+        # Unopinionated like the live adapter: deleting the last file is allowed
+        # here (real Etsy would convert the listing to physical).
+        row = self._require(listing_id)
+        for i, f in enumerate(row["files"]):
+            if f["listing_file_id"] == listing_file_id:
+                del row["files"][i]
+                break
+        else:
+            raise EtsyWriteError(404, f"unknown listing_file_id {listing_file_id}")
+        self.calls.append(
+            ("delete_listing_file", {"listing_id": listing_id, "listing_file_id": listing_file_id})
+        )
+
     def update_listing(self, listing_id: int, fields: EtsyListingUpdate) -> EtsyListing:
         # Etsy's real updateListing has no price field -- price is fixed at
         # create_draft_listing time (EtsyListingUpdate doesn't carry one).

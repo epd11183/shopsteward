@@ -499,6 +499,95 @@ def crop_preview_cmd(
             typer.echo(f"{entry.key:<8} {entry.rank:>4}  {box:<28} {', '.join(entry.sizes)}")
 
 
+@listings_app.command("backfill-files")
+def backfill_files_cmd(
+    listing_id: Annotated[int | None, typer.Option("--listing-id")] = None,
+    live: Annotated[bool, typer.Option("--live", help="Upload (or --rollback) for real")] = False,
+    rollback: Annotated[
+        bool, typer.Option("--rollback", help="Delete files this backfill uploaded")
+    ] = False,
+) -> None:
+    """Add the multi-ratio crops (ranks 2..N) to live digital listings. Dry-run
+    by default (B0): reads Etsy (list files) but never uploads or deletes. Both
+    modes need the live Etsy write gate (the file list is only on the write
+    adapter). --live uploads; the existing rank-1 file is never touched.
+    --rollback --live --listing-id N deletes only files this backfill uploaded."""
+    from shopsteward.core import projections as core_projections
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.mockups.projections import rebuild_mockups
+    from shopsteward.pipeline.listings import backfill as bf
+    from shopsteward.pipeline.listings import config as listing_config
+    from shopsteward.pipeline.listings.projections import rebuild_listings
+    from shopsteward.pipeline.listings.push import build_etsy_write_adapter
+    from shopsteward.pipeline.live_gate import live_etsy_write_error, live_etsy_write_open
+    from shopsteward.pipeline.projections import rebuild_pipeline
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    if rollback and (not live or listing_id is None):
+        raise _fail("--rollback needs --live and --listing-id.")
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        listing_config.seed(conn, DEFAULT_USER_ID)
+        rebuild_listings(conn)
+        cfg = listing_config.get_config(conn, DEFAULT_USER_ID)
+        if not rollback:  # rollback must work with digital_files null (design section 12)
+            try:
+                bf.check_preconditions(cfg, live=live)
+            except bf.BackfillRefused as exc:
+                raise _fail(str(exc)) from exc
+        if not live_etsy_write_open():
+            raise _fail(live_etsy_write_error())
+        core_projections.rebuild(conn)
+        rebuild_pipeline(conn)
+        rebuild_mockups(conn)
+        rebuild_listings(conn)
+        adapter = build_etsy_write_adapter(live=True)
+
+        if rollback:
+            assert listing_id is not None
+            r = bf.rollback(conn, DEFAULT_USER_ID, adapter, listing_id)
+            typer.echo(f"{listing_id}: {r.status} {r.detail} (files removed: {r.changed})")
+            if r.status in ("refused", "failed", "etsy_error"):
+                raise typer.Exit(code=1)
+            return
+
+        if cfg.digital_files and not cfg.digital_files.copyright_holder:
+            typer.secho("warning: copyright_holder is null; --live would refuse.", fg="yellow")
+        report = bf.backfill(conn, DEFAULT_USER_ID, cfg, adapter, listing_id=listing_id, live=live)
+        for r in report.results:
+            typer.echo(f"{r.listing_id}: {r.status} {r.detail}".rstrip())
+            if r.existing:
+                typer.echo(f"    existing: {', '.join(r.existing)}")
+            if r.to_upload:
+                typer.echo(
+                    f"    {'uploaded' if r.status == 'uploaded' else 'would upload'}: "
+                    f"{', '.join(r.to_upload)}"
+                )
+            if r.undelivered:
+                typer.echo(f"    copy claims undelivered sizes: {', '.join(r.undelivered)}")
+            if r.panel:
+                typer.echo(f"    what-you-get panel: {r.panel}")
+        sources = {r.copy_source for r in report.results if r.copy_source}
+        if "draft" in sources:
+            typer.echo("note: description/tags from draft, may be stale (no synced snapshot).")
+        if "synced" in sources:
+            typer.echo("note: description/tags from the last `sync --live` snapshot; may be stale.")
+        typer.echo(
+            f"{len(report.results)} listings checked, {report.would_get} "
+            f"{'got' if live else 'would get'} files, {report.loses_size} lose a claimed size; "
+            f"other: {report.skip_counts()}"
+        )
+        if not live:
+            typer.echo("Dry-run: nothing written. Re-run with --live to upload.")
+        elif any(r.status in ("failed", "etsy_error", "refused") for r in report.results):
+            raise typer.Exit(code=1)
+    finally:
+        conn.close()
+
+
 def _build_live_etsy_read_adapter() -> "LiveEtsyAdapter":
     """Mirrors shopsteward.cli._build_live_etsy_adapter (that helper lives at
     the root CLI, which imports THIS module -- importing it back here would
