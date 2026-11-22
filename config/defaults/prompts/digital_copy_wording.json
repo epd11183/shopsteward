@@ -1,4 +1,5 @@
 {
+  "ai_disclosure_line": "Room scenes are AI-generated staging mockups. The photograph itself is the artist's original work: it is not AI-generated, and AI is never used to add anything to it.",
   "files_header": "Files included ({count} print-ready JPEG files):",
   "file_line_sized": "• {label} — prints {sizes} ({ppi} PPI)",
   "file_line_unsized": "• {label} — for screens and custom sizes",

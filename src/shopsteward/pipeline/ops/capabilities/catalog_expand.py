@@ -6,10 +6,12 @@ VERIFIED -- docs/policy/2026-08-11-autonomy-platform-policy.md entry E16
 (PERMITTED; listing our own original work is the core permitted seller act,
 mechanically identical to E5 gap-fill -- ends in an unpublished Etsy draft,
 Gate 3 is the publish authority), subject to E16's three accuracy
-conditions: (1) the photograph is ours and never AI-generated/AI-edited --
+conditions: (1) the photograph is ours, never AI-generated, and AI never adds to it
+(operator-directed distraction removal is allowed, amended 2026-11-22) --
 the only image transform anywhere in this chain is `images._load_sellable`'s
-deterministic max-quality sRGB JPEG re-encode: no resize, no upscale, no
-fill, no generative step, ever; (2) the advertised print sizes must be
+deterministic max-quality sRGB JPEG re-encode (plus deterministic ratio
+crops for multi-file digital listings): no upscale, no fill, no generative
+step, ever; (2) the advertised print sizes must be
 deliverable by the source file -- enforced by `min_long_edge_px` (design §6);
 (3) AI-assisted copy carries the existing disclosure line -- the copy stage
 (`copy.py`) is unchanged.

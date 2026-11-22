@@ -49,11 +49,19 @@ owned by the operator's Business.
 three conditions below hold. Each is an accuracy obligation under Seller
 Policy §1.c.4 — the same clause E3 (SEO edit) cites — not a new restriction.
 
-1. **The photograph is ours and is never AI-generated or AI-edited.** The
-   architecture guarantee ("AI never touches the photograph") is the control:
-   the only image transform in the path is a deterministic max-quality sRGB
-   JPEG re-encode. No generative upscale, fill, or edit, ever — including to
-   clear the resolution bar in condition 2.
+1. **The photograph is ours, is never AI-generated, and AI never adds to
+   it.** *(Amended 2026-11-22, operator decision.)* Operator-directed
+   generative *removal* of distractions during finishing (stray people,
+   power lines, signs, litter, sensor dust) is permitted; the operator has
+   determined it is editing, not "created with generative AI" under Etsy's
+   creativity standards / AI disclosure guidance (Seller Handbook articles
+   1522733284810 and 1275449912004). Still never: generative upscale, fill
+   that adds content, sky replacement, added or altered subjects, invented
+   detail — including to clear the resolution bar in condition 2. Within
+   the pipeline itself, the only image transforms are deterministic
+   (crop + max-quality sRGB JPEG re-encode). The listing disclosure line
+   says "not AI-generated, and AI is never used to add anything to it",
+   which stays true for removal-edited photos.
 2. **The advertised print sizes must be deliverable by the source file.**
    `whatyougot` copy advertising 16x20 at 300 DPI requires a 6000 px long
    edge; listing a smaller file against that copy is an inaccurate listing.

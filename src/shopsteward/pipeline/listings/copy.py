@@ -82,8 +82,10 @@ def _physical_format_label(product_format: str | None) -> str:
 
 
 def _disclosure_line() -> str:
-    cfg = json.loads(_MOCKUPS_CONFIG_PATH.read_text(encoding="utf-8"))
-    return cfg["listing_copy"]["ai_disclosure_line"]
+    # Read from the wording file, not mockups.json: mockups.json feeds the
+    # mockup config_hash -> set_key -> draft_id, so editing it there would
+    # re-key every draft (incl. photos already live). 2026-11-22.
+    return load_wording()["ai_disclosure_line"]
 
 
 def load_wording() -> dict:

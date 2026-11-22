@@ -108,7 +108,8 @@ def test_generate_copy_appends_event_and_disclosure_when_carrying_mockups(conn, 
     assert payload["disclosure_appended"] is True
     disclosure = (
         "Room scenes are AI-generated staging mockups. The photograph itself is the "
-        "artist's original work and is never AI-generated or AI-edited."
+        "artist's original work: it is not AI-generated, and AI is never used to add "
+        "anything to it."
     )
     assert disclosure in payload["description"]
     # fixture adapter -> usage None -> no llm.call event

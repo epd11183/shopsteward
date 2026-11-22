@@ -58,8 +58,8 @@ phrase verbatim more than twice.
 6. **🖨️ Printing Options** — one short paragraph: print at home, local
    print shop, or online lab; frame not included.
 7. **Mockup disclosure** — when room mockups appear in the images, append
-   the configured AI-disclosure line verbatim (mockups.json
-   listing_copy.ai_disclosure_line). Never omit.
+   the configured AI-disclosure line verbatim (prompts/digital_copy_wording.json
+   ai_disclosure_line). Never omit.
 
 ## Etsy search rules (distilled from Etsy's own search guide, Aug 2025)
 

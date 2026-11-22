@@ -87,7 +87,8 @@ that never touches Etsy.
 - Enforce an Instagram cadence of at least 4 posts per week with no more than
   one operator tap per post.
 - Generate AI-composited mockup scenes tuned to each image; the artwork
-  itself is never AI-generated or AI-altered.
+  itself is never AI-generated, and AI never adds to it (operator-directed
+  distraction removal is allowed; amended 2026-11-22, see policy E16).
 - Single source of truth for catalog, listings, fulfillment routing, and
   performance across Etsy, Printful, Gelato, and Instagram.
 - Close a measurable feedback loop: curation weights, edit preset families,
@@ -257,7 +258,7 @@ the release overhead.
 - **Compositing.** For each approved Variant, ShopSteward selects templates
   matching the image's palette / mood / orientation and composites the print
   into the marked region with Pillow/OpenCV (perspective and lighting
-  blends). The photograph itself is never AI-touched.
+  blends). The photograph itself is never AI-generated or added to.
 - **AI template expansion.** Post-launch, coverage gaps are filled the same
   way — new rooms generated offline, annotated, added to the library ahead
   of time, never per-listing at runtime. No runtime scene-generation
@@ -618,8 +619,8 @@ docs/designs/2026-07-14-m5a-digital-listings.md):
     publish path is the Gate 3 endpoint; live Etsy writes are triple-gated
     (--live-etsy-write + SHOPSTEWARD_LIVE_ETSY_WRITE=1 + tokens present, and
     live copy triple-gated on OPENROUTER_API_KEY); publishing shows computed
-    economics before the tap; the AI-disclosure line (mockups.json
-    listing_copy.ai_disclosure_line) is appended to every generated description
+    economics before the tap; the AI-disclosure line (prompts/digital_copy_wording.json
+    ai_disclosure_line; moved from mockups.json 2026-11-22) is appended to every generated description
     that includes room mockups; write re-consent adds ONLY the listings_w scope
     (operator re-runs etsy auth; auth.py DEFAULT_SCOPES widened for M5).
 

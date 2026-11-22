@@ -90,6 +90,8 @@ class _WhatYouGotConfig(BaseModel):
 
 
 class _ListingCopyConfig(BaseModel):
+    # Unused since 2026-11-22 (copy reads prompts/digital_copy_wording.json).
+    # Kept only because removing it would change the mockup config_hash.
     ai_disclosure_line: str
 
 
