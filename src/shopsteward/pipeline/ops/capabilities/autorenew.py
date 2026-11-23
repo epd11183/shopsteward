@@ -114,7 +114,10 @@ def _candidates(
 
 class ListingAutorenewOff:
     key = "listing.autorenew_off"
-    max_tier = Tier.NOTIFY  # T1 ceiling -- ships at T2 (PROPOSE) per the chassis default.
+    # 2026-11-22 operator decision: listing capabilities run without approval
+    # (was T1 ceiling, shipped at T2). Floored at AUTO via config
+    # `autonomy.tier_floor`; undo() below is the control (registry invariant 1).
+    max_tier = Tier.AUTO
     policy_verified = True
 
     def __init__(self, adapter: EtsyWriteAdapter) -> None:

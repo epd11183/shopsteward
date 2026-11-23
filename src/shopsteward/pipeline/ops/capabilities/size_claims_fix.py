@@ -2,8 +2,11 @@
 live digital listings that already received the multi-ratio backfill crops but
 whose description still names print sizes the file plan cannot deliver (design
 2026-11-21-multi-ratio-digital-files section 8, slice 5a). The operator approves
-each edit; `max_tier = Tier.PROPOSE` is pinned here in Python (seo_edit precedent:
-a description edit can move Etsy search ranking and is not cleanly reversible).
+each edit -- until 2026-11-22, when the operator decided (explicitly) that listing
+edits of every kind need no approval: `max_tier = Tier.AUTO`, started at AUTO by
+config `autonomy.tier_floor`. Controls now: event log, undo (restores the prior
+description), live gates, spend cap. A description edit can still move Etsy search
+ranking (not restorable via API) -- accepted by the operator.
 
 A sibling of `listing.seo_edit`, not a branch of it: seo_edit.propose() is
 planner-only by contract and returns []. The runner keys pending/duplicate/
@@ -196,8 +199,8 @@ def _candidates(
 
 class ListingSizeClaimsFix:
     key = KEY
-    # Pinned in Python, never promotable (module docstring; registry invariant 2).
-    max_tier = Tier.PROPOSE
+    # 2026-11-22 operator decision: no approval (module docstring).
+    max_tier = Tier.AUTO
     policy_verified = True  # same updateListing/listings_w description edit as seo_edit (E3).
 
     def __init__(self, adapter: EtsyWriteAdapter) -> None:

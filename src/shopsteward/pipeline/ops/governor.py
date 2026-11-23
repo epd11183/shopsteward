@@ -40,7 +40,13 @@ proposed in the same `run()` call) is instead resolved upstream, at
 PROPOSE time, in `runner.run()`: a pin proposal for a target that also has
 a same-run seo_edit/renew proposal is dropped before either ever reaches
 `govern()`, so the priority is deterministic regardless of capability
-registration order and never depends on this same-day exception."""
+registration order and never depends on this same-day exception.
+
+2026-11-22: `listing.seo_edit` (and every other `listing.*` capability with an
+undo) now runs at AUTO with no operator approval (operator decision), so the
+"approved LATER THE SAME DAY by the operator" scenario above no longer
+occurs -- the symmetric holdout, the cooldown and the budget/cap checks here
+are unchanged and are what still gate those executions."""
 
 import sqlite3
 from datetime import date

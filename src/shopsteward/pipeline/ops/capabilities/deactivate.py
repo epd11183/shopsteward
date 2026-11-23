@@ -1,12 +1,12 @@
 """`listing.deactivate` -- retire a dead listing (M8b slice 4b, design
 §4/§8 slice 4, draft #7). Policy: Etsy E4 PERMITTED via `updateListing`
-(state)/`listings_w`. Draft #7: R=1/A=1/M=1 -> **T1 ceiling**
-(`max_tier = Tier.NOTIFY`), ships/lands at T2 per the chassis default (a
-fresh capability never auto-executes on first use) -- immediately
-customer-visible (the shop looks smaller) but reversible in one call, so it
-is promotable to T1 on the ladder, UNLIKE `listing.reprice`/`listing.
-seo_edit` (both capped at T2 forever). It HAS a working undo() (reactivate),
-satisfying the registry invariant for a max_tier < PROPOSE.
+(state)/`listings_w`. Draft #7 said T1 ceiling (`Tier.NOTIFY`) shipping at
+T2; **2026-11-22 operator decision (explicit): listing edits of every kind
+need no operator approval**, so `max_tier = Tier.AUTO` and config
+`autonomy.tier_floor` starts it at AUTO. Customer-visible (the shop looks
+smaller) but reversible in one call. It HAS a working undo() (reactivate),
+satisfying the registry invariant for a max_tier < PROPOSE. The portfolio
+cap below remains the real control.
 
 **Only listing STATE (active<->inactive) is ever changed -- never title/
 tags/price/SKU.** This capability calls a DEDICATED adapter method,
@@ -125,10 +125,9 @@ def _candidates(
 
 class ListingDeactivate:
     key = "listing.deactivate"
-    # T1 ceiling -- ships/lands at T2 (PROPOSE) per the chassis default; a
-    # fresh capability never auto-executes on first use. Promotable to T1
-    # on the ladder (draft #7) -- unlike reprice/seo_edit, which cap at T2.
-    max_tier = Tier.NOTIFY
+    # 2026-11-22 operator decision: no approval for listing edits (was a T1
+    # ceiling landing at T2). Starts at AUTO via config `autonomy.tier_floor`.
+    max_tier = Tier.AUTO
     policy_verified = True  # Etsy E4 permitted.
 
     def __init__(self, adapter: EtsyWriteAdapter) -> None:

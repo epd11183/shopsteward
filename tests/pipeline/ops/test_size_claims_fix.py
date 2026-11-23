@@ -112,9 +112,9 @@ def test_full_sizes_count_when_rank1_is_the_source_file(conn, tmp_path):
     assert "4x6 · 8x10 · 11x14 · A3" in a.params["new_description"]
 
 
-def test_tier_is_pinned_and_gated():
+def test_tier_is_auto_since_2026_11_22_and_live_gated():
     cap = ListingSizeClaimsFix(FakeEtsyWriteAdapter())
-    assert cap.max_tier == Tier.PROPOSE
+    assert cap.max_tier == Tier.AUTO  # operator decision 2026-11-22: no approval
     assert cap.key in LIVE_GATED_CAPABILITIES
 
 
@@ -150,7 +150,7 @@ def test_execute_sends_description_only_and_undo_restores(conn, tmp_path):
     run(conn, USER_ID, cfg, [cap])
     [proposed] = read_all(conn, "action.proposed")
     action_id = proposed.payload["action_id"]
-    assert proposed.payload["tier"] == int(Tier.PROPOSE)
+    assert proposed.payload["tier"] == int(Tier.AUTO)
 
     report = approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, live_autonomy=True)
     assert report.executed == 1

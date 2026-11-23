@@ -221,13 +221,13 @@ def test_healthy_listing_is_not_eligible(conn):
 # --- 3. registration ---------------------------------------------------------
 
 
-def test_register_succeeds_capability_has_undo_and_t1_ceiling():
+def test_register_succeeds_capability_has_undo_and_auto_ceiling():
     cap = ListingDeactivate(FakeEtsyWriteAdapter())
 
     register(cap)
 
     assert REGISTRY["listing.deactivate"] is cap
-    assert cap.max_tier == Tier.NOTIFY
+    assert cap.max_tier == Tier.AUTO  # 2026-11-22: listing edits need no approval
     assert callable(cap.undo)
 
 
@@ -244,7 +244,7 @@ def test_e2e_approve_flips_state_and_undo_reactivates(conn):
 
     report = run(conn, USER_ID, cfg, [cap], today=TODAY)
     assert report.proposed == 2
-    assert report.executed == 0  # fresh capability starts at T2/PROPOSE -- waits on the operator
+    assert report.executed == 0  # AUTO tier, but no --live-autonomy: live-gate-blocked
 
     proposed = {
         e.payload["target_id"]: e.payload["action_id"] for e in read_all(conn, "action.proposed")
@@ -293,7 +293,9 @@ def test_e2e_rerun_same_day_is_idempotent(conn):
     second = run(conn, USER_ID, cfg, [cap], today=TODAY)
 
     assert second.proposed == 0
-    assert second.skipped_idempotent == 2
+    # 2026-11-22: starts at AUTO, so a still-pending action is re-governed (and
+    # live-gate-blocked here), not skipped as "waiting on the operator".
+    assert second.live_gate_blocked
     assert len(read_all(conn, "action.proposed")) == 2
 
 
