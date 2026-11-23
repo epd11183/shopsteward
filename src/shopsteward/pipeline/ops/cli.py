@@ -292,6 +292,14 @@ def run_cmd(
     live_autonomy: Annotated[
         bool, typer.Option("--live-autonomy", help="Permit real (non-fake) capability writes")
     ] = False,
+    capability: Annotated[
+        str | None,
+        typer.Option(
+            "--capability",
+            help="Run ONLY this capability's propose() (e.g. listing.size_claims_fix); "
+            "the planner LLM is skipped",
+        ),
+    ] = None,
 ) -> None:
     """Run the autonomy chassis once: propose -> govern -> execute for every
     registered capability. Defaults to --dry-run for safety. Registers
@@ -320,6 +328,7 @@ def run_cmd(
     from shopsteward.pipeline.ops.capabilities.renew import ListingRenew
     from shopsteward.pipeline.ops.capabilities.reprice import ListingReprice
     from shopsteward.pipeline.ops.capabilities.seo_edit import ListingSeoEdit
+    from shopsteward.pipeline.ops.capabilities.size_claims_fix import ListingSizeClaimsFix
     from shopsteward.pipeline.ops.capabilities.tune_threshold import OpsTuneThreshold
     from shopsteward.pipeline.ops.models import ProposedAction
     from shopsteward.pipeline.ops.projections import rebuild_ops
@@ -338,6 +347,7 @@ def run_cmd(
     register(ListingAutorenewOn(adapter))
     register(ListingReprice(adapter))
     register(ListingSeoEdit(adapter))
+    register(ListingSizeClaimsFix(adapter))
     register(ListingDeactivate(adapter))
     register(ListingRenew(adapter))
     register(OpsTuneThreshold())  # no adapter -- registers regardless of --live-autonomy
@@ -372,7 +382,14 @@ def run_cmd(
             return
 
         proposals: list[ProposedAction] | None = None
-        if cfg.autonomy.planner_enabled and live_planner_open():
+        capabilities = list(REGISTRY.values())
+        if capability is not None:
+            capabilities = [c for c in capabilities if c.key == capability]
+            if not capabilities:
+                typer.secho(f"unknown capability: {capability}", fg="red")
+                raise typer.Exit(code=1)
+            typer.echo(f"only {capability}: planner skipped")
+        elif cfg.autonomy.planner_enabled and live_planner_open():
             # Default-off + gated (M8b slice 2, design §7): only here is a
             # planner adapter ever built/called -- the default path above
             # never imports OpenRouter or touches the network.
@@ -402,7 +419,7 @@ def run_cmd(
             conn,
             DEFAULT_USER_ID,
             cfg,
-            list(REGISTRY.values()),
+            capabilities,
             dry_run=dry_run,
             proposals=proposals,
             live_autonomy=live_autonomy,
@@ -532,6 +549,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
     from shopsteward.pipeline.ops.capabilities.renew import ListingRenew
     from shopsteward.pipeline.ops.capabilities.reprice import ListingReprice
     from shopsteward.pipeline.ops.capabilities.seo_edit import ListingSeoEdit
+    from shopsteward.pipeline.ops.capabilities.size_claims_fix import ListingSizeClaimsFix
     from shopsteward.pipeline.ops.capabilities.tune_threshold import OpsTuneThreshold
     from shopsteward.pipeline.ops.registry import register
 
@@ -542,6 +560,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
     register(ListingAutorenewOn(adapter))
     register(ListingReprice(adapter))
     register(ListingSeoEdit(adapter))
+    register(ListingSizeClaimsFix(adapter))
     register(ListingDeactivate(adapter))
     register(ListingRenew(adapter))
     register(OpsTuneThreshold())
