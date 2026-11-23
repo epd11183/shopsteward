@@ -80,6 +80,9 @@ forbidden_modules = ["shopsteward.mockups"]
 # (ops/cli.py registers ListingCatalogExpand; the backfill command is a pipeline
 # Typer command), and the only layer above them that may import mockups is
 # shopsteward.cli/shop.py, which would need the whole ops/listings CLI re-plumbed.
+# This is debt, not design: catalog_expand's top-level import also forms a real
+# pipeline <-> mockups cycle (mockups/jobs.py imports pipeline.listings).
+# TODO: move both call sites to the shop.py composition root, then drop these.
 ignore_imports = [
   "shopsteward.pipeline.listings.cli -> shopsteward.mockups.projections",
   "shopsteward.pipeline.ops.capabilities.catalog_expand -> shopsteward.mockups.jobs",
