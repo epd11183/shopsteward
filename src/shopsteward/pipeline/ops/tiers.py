@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from datetime import date
 
 from shopsteward.pipeline.ops.models import CapabilityState, Tier
-from shopsteward.pipeline.ops.registry import Capability
+from shopsteward.pipeline.ops.registry import REGISTRY, Capability
 
 
 def effective_tier(
@@ -33,6 +33,16 @@ def effective_tier(
     current = state.tier if state is not None else Tier(floor)
     lo, hi = sorted((floor, int(cap.max_tier)))
     return Tier(min(max(int(current), lo), hi))
+
+
+def effective_tier_for(
+    cap_key: str, state: CapabilityState, tier_floor: Mapping[str, int] | None
+) -> Tier:
+    """effective_tier() by key, for display (`ops status`/`ops brief`): the
+    ladder tier alone hides the `autonomy.tier_floor` clamp. Falls back to the
+    ladder tier when the capability isn't registered (no max_tier to clamp to)."""
+    cap = REGISTRY.get(cap_key)
+    return state.tier if cap is None else effective_tier(cap, state, tier_floor)
 
 
 def _days_since(tier_since: str, today: date) -> int:

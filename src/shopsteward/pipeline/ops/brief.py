@@ -30,6 +30,7 @@ from shopsteward.pipeline.ops.projections import (
     action_rows,
     capability_states,
 )
+from shopsteward.pipeline.ops.tiers import effective_tier_for
 
 # ponytail: fixed 7-day lookback for DONE/REFUSED, not a config knob -- add
 # one under cfg.windows if the operator ever wants a longer/shorter Brief
@@ -229,7 +230,7 @@ def _autonomy_section(
     ladder = [
         BriefLadderRow(
             capability=cap_key,
-            tier=st.tier,
+            tier=effective_tier_for(cap_key, st, cfg.autonomy.tier_floor),
             approvals=st.approvals,
             rejections=st.rejections,
             executions=st.executions,
