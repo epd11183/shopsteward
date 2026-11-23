@@ -6,8 +6,9 @@ approval); undo is real, so it is allowed.
 
 How the panel is identified (never guessed): the pipeline's push recorded, in
 `proj_listing_drafts.images_json`, exactly one `digital_whatyougot` entry with
-an `etsy_image_id` and a rank. Zero or several such entries (adopted drafts have
-none), or several drafts for the listing, mean no proposal. The sizes that panel
+an `etsy_image_id` and a rank, counted across ALL of the listing's pushed/published
+drafts. Zero or several such entries (adopted drafts have none) mean no proposal.
+The sizes that panel
 was rendered with are the entry's `panel_sizes` (set by a previous swap) or else
 the `mockup.generated` params of the entry's path; no recorded render, no proposal.
 
@@ -17,8 +18,13 @@ when its recorded sizes differ from that plan's sizes.
 
 execute: render with `render_digital_whatyougot` (the mockup job's renderer),
 upload at the old rank, delete the old image (Etsy keeps it server-side), append
-`listingdraft.panel_replaced` so the projection carries the new id. undo: delete
-the new image, re-attach the old id at its rank, append the same event reversed.
+`listingdraft.panel_replaced` so the projection carries the new id. If deleting
+the old image fails and removing the new one also fails, both panels are live:
+`listingdraft.panel_orphaned` is recorded and the listing is never proposed again
+(no re-upload over an unknown state) until reconciled by hand.
+undo: re-attach the old id at its rank FIRST, then delete the new image (a 404 there
+means already gone), so the listing never lacks a panel; then append the event
+reversed. A listing with an undone action of this capability is not re-proposed.
 """
 
 import hashlib
@@ -36,11 +42,13 @@ from shopsteward.pipeline.listings.source_assets import resolve_source
 from shopsteward.pipeline.ops.capabilities.size_claims_fix import _delivered_plan, _refresh
 from shopsteward.pipeline.ops.config import ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
+from shopsteward.pipeline.ops.projections import action_rows
 from shopsteward.pipeline.ops.registry import StaleTargetError, compute_action_id
 
 KEY = "listing.panel_replace"
 INTENT = "digital_whatyougot"
 EVENT = "listingdraft.panel_replaced"
+ORPHANED = "listingdraft.panel_orphaned"
 
 
 def _recorded_sizes(conn: sqlite3.Connection, user_id: int, img: dict) -> list[str] | None:
@@ -82,6 +90,13 @@ def _candidates(
         rows.setdefault(int(r["etsy_listing_id"]), []).append(r)
 
     snaps = _snapshots(conn, user_id)
+    skip = {  # operator-undone, or both panels live after a failed cleanup
+        int(r["target_id"])
+        for r in action_rows(conn)
+        if r["user_id"] == user_id and r["capability"] == KEY and r["state"] == "undone"
+    } | {
+        int(e.payload["etsy_listing_id"]) for e in read_all(conn, ORPHANED) if e.user_id == user_id
+    }
     today = datetime.now(UTC).date()
     cfg_hash = ops_config_hash(cfg)
     expires_at = (today + timedelta(days=cfg.autonomy.proposal_ttl_days)).isoformat()
@@ -94,7 +109,7 @@ def _candidates(
             for i in json.loads(r["images_json"] or "[]")
             if i.get("intent") == INTENT
         ]
-        if snap is None or snap.state != "active" or len(panels) != 1:
+        if lid in skip or snap is None or snap.state != "active" or len(panels) != 1:
             continue  # several/no panel entries: cannot be certain which image it is
         row, img = panels[0]
         if not img.get("etsy_image_id") or not isinstance(img.get("rank"), int):
@@ -203,7 +218,27 @@ class ListingPanelReplace:
         try:
             self._adapter.delete_listing_image(lid, old_id)
         except EtsyWriteError as exc:
-            self._adapter.delete_listing_image(lid, new.listing_image_id)  # leave no duplicate
+            try:
+                self._adapter.delete_listing_image(lid, new.listing_image_id)  # no duplicate
+            except EtsyWriteError:
+                append(
+                    conn,
+                    Event(
+                        user_id=user_id,
+                        type=ORPHANED,
+                        payload={
+                            "draft_id": p["draft_id"],
+                            "etsy_listing_id": lid,
+                            "rank": rank,
+                            "old_image_id": old_id,
+                            "new_image_id": new.listing_image_id,
+                        },
+                    ),
+                )
+                raise StaleTargetError(
+                    f"listing {lid}: old panel {old_id} and new panel {new.listing_image_id} "
+                    "are BOTH live; reconcile by hand"
+                ) from exc
             if exc.status_code == 404:
                 raise StaleTargetError(f"listing {lid}: image {old_id} is gone on Etsy") from exc
             raise
@@ -223,15 +258,19 @@ class ListingPanelReplace:
         if done is None:
             return
         lid, old, new = int(action.target_id), done["before"], done["after"]
-        try:
-            self._adapter.delete_listing_image(lid, new["image_id"])
+        try:  # old first: a failure here leaves the new panel in place, never none
             self._adapter.attach_listing_image(lid, old["image_id"], rank=old["rank"])
         except EtsyWriteError as exc:
             if exc.status_code == 404:
                 raise StaleTargetError(
-                    f"listing {lid}: panel image gone on Etsy -- no undo"
+                    f"listing {lid}: old panel image gone on Etsy -- no undo"
                 ) from exc
             raise
+        try:
+            self._adapter.delete_listing_image(lid, new["image_id"])
+        except EtsyWriteError as exc:
+            if exc.status_code != 404:  # 404 = already gone: a retried undo completes
+                raise
         _swap_event(conn, user_id, action.params, old["image_id"], old["sizes"])
 
     def estimate_cost_usd(self, action: ProposedAction) -> float:

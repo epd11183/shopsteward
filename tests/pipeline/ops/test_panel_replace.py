@@ -15,7 +15,7 @@ from shopsteward.pipeline.ops.capabilities.panel_replace import ListingPanelRepl
 from shopsteward.pipeline.ops.capabilities.size_claims_fix import _delivered_plan
 from shopsteward.pipeline.ops.models import Tier
 from shopsteward.pipeline.ops.projections import rebuild_ops
-from shopsteward.pipeline.ops.registry import REGISTRY, register
+from shopsteward.pipeline.ops.registry import REGISTRY, StaleTargetError, register
 from shopsteward.pipeline.ops.runner import approve_action, run, undo_action
 from tests.pipeline.listings.test_slice4_backfill import LID, _refresh, _run, _world
 from tests.pipeline.ops.helpers import USER_ID
@@ -54,10 +54,25 @@ def _mockup(path, sizes):
     }
 
 
-def _setup(conn, tmp_path, *, panels=1):
+class Flaky(FakeEtsyWriteAdapter):
+    delete_fail: dict[int, int] = {}  # image id -> HTTP status
+    attach_fail: int | None = None
+
+    def delete_listing_image(self, listing_id, listing_image_id):
+        if listing_image_id in self.delete_fail:
+            raise EtsyWriteError(self.delete_fail[listing_image_id], "boom")
+        super().delete_listing_image(listing_id, listing_image_id)
+
+    def attach_listing_image(self, listing_id, listing_image_id, *, rank):
+        if self.attach_fail:
+            raise EtsyWriteError(self.attach_fail, "boom")
+        return super().attach_listing_image(listing_id, listing_image_id, rank=rank)
+
+
+def _setup(conn, tmp_path, *, panels=1, adapter=None):
     """Backfilled listing whose pipeline-pushed draft carries `panels` panel
     entries (ranks 7, 8, ...), each with a recorded old render."""
-    adapter = _world(conn, tmp_path)
+    adapter = _world(conn, tmp_path, adapter=adapter)
     assert _run(conn, adapter).results[0].status == "uploaded"
     draft = f"adopted-{LID}"
     images = [
@@ -133,6 +148,7 @@ def test_round_trip_restores_original_image_at_original_rank(conn, tmp_path):
     assert _gallery(adapter) == {old_id: RANK}
     _refresh(conn)
     assert _panel(conn)["etsy_image_id"] == old_id
+    assert cap.propose(conn, USER_ID, cfg) == []  # undone: tomorrow must not redo the swap
 
 
 def test_current_panel_yields_no_proposal(conn, tmp_path):
@@ -173,3 +189,101 @@ def test_fake_reattach_of_deleted_image_and_unknown_id():
         fake.attach_listing_image(5, 999, rank=1)
     with pytest.raises(EtsyWriteError):
         fake.delete_listing_image(5, 999)
+
+
+def _action(conn, cap, cfg):
+    [a] = cap.propose(conn, USER_ID, cfg)
+    return a
+
+
+def test_old_delete_failure_cleans_up_the_new_image_and_stays_retryable(conn, tmp_path):
+    adapter, cfg = _setup(conn, tmp_path, adapter=Flaky())
+    old_id = _panel(conn)["etsy_image_id"]
+    cap = ListingPanelReplace(adapter)
+    a = _action(conn, cap, cfg)
+    adapter.delete_fail = {old_id: 500}
+    with pytest.raises(EtsyWriteError):
+        cap.execute(conn, USER_ID, a)
+    assert _gallery(adapter) == {old_id: RANK}
+    assert not read_all(conn, "listingdraft.panel_replaced")
+    assert cap.propose(conn, USER_ID, cfg)  # nothing unknown: may retry
+
+
+def test_old_and_cleanup_delete_both_failing_records_orphan_and_refuses(conn, tmp_path):
+    adapter, cfg = _setup(conn, tmp_path, adapter=Flaky())
+    old_id = _panel(conn)["etsy_image_id"]
+    cap = ListingPanelReplace(adapter)
+    a = _action(conn, cap, cfg)
+    new_id = adapter._next_image_id
+    adapter.delete_fail = {old_id: 500, new_id: 500}
+    with pytest.raises(StaleTargetError, match="BOTH live"):
+        cap.execute(conn, USER_ID, a)
+    assert set(_gallery(adapter)) == {old_id, new_id}
+    [orphan] = read_all(conn, "listingdraft.panel_orphaned")
+    assert orphan.payload["new_image_id"] == new_id
+    uploads = len([c for c in adapter.calls if c[0] == "upload_listing_image"])
+    assert cap.propose(conn, USER_ID, cfg) == []  # never uploads a third over unknown state
+    assert len([c for c in adapter.calls if c[0] == "upload_listing_image"]) == uploads
+
+
+def test_old_image_404_is_stale_and_removes_the_new_one(conn, tmp_path):
+    adapter, cfg = _setup(conn, tmp_path, adapter=Flaky())
+    old_id = _panel(conn)["etsy_image_id"]
+    cap = ListingPanelReplace(adapter)
+    a = _action(conn, cap, cfg)
+    adapter.delete_fail = {old_id: 404}
+    with pytest.raises(StaleTargetError):
+        cap.execute(conn, USER_ID, a)
+    assert _gallery(adapter) == {old_id: RANK}
+
+
+def test_execute_refuses_when_projection_changed_since_proposal(conn, tmp_path):
+    adapter, cfg = _setup(conn, tmp_path)
+    cap = ListingPanelReplace(adapter)
+    a = _action(conn, cap, cfg)
+    other = adapter.upload_listing_image(LID, b"hand-made", rank=RANK)
+    _ev(
+        conn,
+        "listingdraft.images_attached",
+        {
+            "draft_id": f"adopted-{LID}",
+            "etsy_listing_id": LID,
+            "images": [{"etsy_image_id": other.listing_image_id, "rank": RANK}],
+        },
+    )
+    adapter.calls.clear()
+    with pytest.raises(StaleTargetError):
+        cap.execute(conn, USER_ID, a)
+    assert not [
+        c for c in adapter.calls if c[0] in ("upload_listing_image", "delete_listing_image")
+    ]
+
+
+def _executed(conn, cap, cfg):
+    register(cap)
+    run(conn, USER_ID, cfg, [cap])
+    action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
+    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, live_autonomy=True)
+    return action_id
+
+
+def test_undo_reattach_failure_leaves_the_new_panel_in_place(conn, tmp_path):
+    adapter, cfg = _setup(conn, tmp_path, adapter=Flaky())
+    cap = ListingPanelReplace(adapter)
+    action_id = _executed(conn, cap, cfg)
+    [(new_id, _)] = _gallery(adapter).items()
+    adapter.attach_fail = 500
+    with pytest.raises(EtsyWriteError):
+        undo_action(conn, USER_ID, action_id, [cap], live_autonomy=True)
+    assert _gallery(adapter) == {new_id: RANK}  # never left without a panel
+
+
+def test_undo_completes_when_new_image_already_gone(conn, tmp_path):
+    adapter, cfg = _setup(conn, tmp_path, adapter=Flaky())
+    old_id = _panel(conn)["etsy_image_id"]
+    cap = ListingPanelReplace(adapter)
+    action_id = _executed(conn, cap, cfg)
+    [(new_id, _)] = _gallery(adapter).items()
+    adapter.delete_fail = {new_id: 404}  # a prior undo already removed it
+    undo_action(conn, USER_ID, action_id, [cap], live_autonomy=True)
+    assert old_id in _gallery(adapter)
