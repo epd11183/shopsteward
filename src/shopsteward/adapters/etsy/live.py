@@ -315,6 +315,27 @@ class LiveEtsyWriteAdapter:
         )
         return EtsyImageRef(listing_image_id=body["listing_image_id"], rank=body.get("rank", rank))
 
+    def attach_listing_image(
+        self, listing_id: int, listing_image_id: int, *, rank: int
+    ) -> EtsyImageRef:
+        body = self._request(
+            "POST",
+            f"/shops/{self._shop_id}/listings/{listing_id}/images",
+            data={"listing_image_id": listing_image_id, "rank": rank},
+        )
+        return EtsyImageRef(listing_image_id=body["listing_image_id"], rank=body.get("rank", rank))
+
+    def delete_listing_image(self, listing_id: int, listing_image_id: int) -> None:
+        # 204, no body: same shape as delete_listing_file below.
+        try:
+            resp = self._client.delete(
+                f"{BASE}/shops/{self._shop_id}/listings/{listing_id}/images/{listing_image_id}"
+            )
+        except httpx.HTTPError as exc:
+            raise EtsyWriteError(0, f"transport error: {type(exc).__name__}") from exc
+        if resp.status_code >= 400:
+            raise EtsyWriteError(resp.status_code, _safe_error(resp))
+
     def upload_listing_file(
         self, listing_id: int, file: bytes, *, name: str, rank: int
     ) -> EtsyFileRef:

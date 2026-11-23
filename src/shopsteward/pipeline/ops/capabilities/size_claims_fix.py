@@ -110,6 +110,33 @@ def _rank1_is_source(
         return False
 
 
+def _delivered_plan(
+    conn: sqlite3.Connection, user_id: int, lid: int, adapter: EtsyWriteAdapter
+) -> FilePlan | None:
+    """The recorded backfill plan, clipped to what Etsy really delivers; None when
+    there is no plan, no readable file list, or the backfill is incomplete."""
+    events = _events(conn, user_id, lid)
+    last = next((e.payload for e in reversed(events) if e.type == PLANNED), None)
+    plan = _recorded_plan(last)
+    if plan is None:
+        return None
+    try:
+        files = adapter.list_listing_files(lid)
+    except EtsyWriteError:
+        return None  # no file list -> no rank-1 evidence -> never guess
+    if not _complete(events, files, plan):
+        return None
+    if not _rank1_is_source(conn, user_id, lid, events, files):
+        plan = plan.model_copy(
+            update={
+                "files": [
+                    e.model_copy(update={"sizes": []}) if e.key == "full" else e for e in plan.files
+                ]
+            }
+        )
+    return plan
+
+
 def _already_fixed(conn: sqlite3.Connection, user_id: int, lid: int, old: str) -> bool:
     """An executed (not undone) fix for this exact baseline: the snapshot is simply
     not refreshed yet."""
@@ -148,26 +175,9 @@ def _candidates(
         snap = snaps.get(lid)
         if snap is None or snap.state != "active" or not snap.description:
             continue
-        events = _events(conn, user_id, lid)
-        last = next((e.payload for e in reversed(events) if e.type == PLANNED), None)
-        plan = _recorded_plan(last)
+        plan = _delivered_plan(conn, user_id, lid, adapter)
         if plan is None:
             continue
-        try:
-            files = adapter.list_listing_files(lid)
-        except EtsyWriteError:
-            continue  # no file list -> no rank-1 evidence -> never guess
-        if not _complete(events, files, plan):
-            continue
-        if not _rank1_is_source(conn, user_id, lid, events, files):
-            plan = plan.model_copy(
-                update={
-                    "files": [
-                        e.model_copy(update={"sizes": []}) if e.key == "full" else e
-                        for e in plan.files
-                    ]
-                }
-            )
         # Etsy returns descriptions HTML-escaped ("&#39;"); work on, preview and send
         # plain text so buyers never see a literal entity.
         old = html.unescape(snap.description)
