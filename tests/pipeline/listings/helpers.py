@@ -29,6 +29,45 @@ def _plan_panel_params(conn: sqlite3.Connection, user_id: int, path: str) -> dic
     return {"sizes": plan_sizes(plan)}
 
 
+def seed_score(conn: sqlite3.Connection, photo_id: str, user_id: int = USER_ID) -> None:
+    """A photo.scored event so digital copy has a vision signal (copy is
+    refused without one). Caller rebuilds the pipeline projection."""
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="photo.scored",
+            payload={
+                "photo_id": photo_id,
+                "composite": 0.0,
+                "vision": {
+                    "triage": {
+                        "verdict": {
+                            "commercial_score": 70,
+                            "subject": "osprey",
+                            "strongest_room_style": "coastal",
+                            "one_risk": "glare",
+                            "rationale": "well composed",
+                            "scene": "An osprey perched on a bare branch against a clear sky.",
+                        }
+                    }
+                },
+            },
+        ),
+    )
+
+
+def seed_scores_for_landing(conn: sqlite3.Connection, user_id: int = USER_ID) -> None:
+    """Score every landing photo (flows that scan files rather than seed them)."""
+    rebuild_pipeline(conn)
+    for row in conn.execute(
+        "SELECT file_id, photo_id FROM proj_landing_files WHERE user_id=?", (user_id,)
+    ).fetchall():
+        # drafts name a photo without a photo_id `file-<sha[:12]>`
+        seed_score(conn, row["photo_id"] or f"file-{row['file_id'][:12]}", user_id)
+    rebuild_pipeline(conn)
+
+
 def seed_landing_file_with_mockup_set(
     conn: sqlite3.Connection,
     *,
@@ -105,6 +144,7 @@ def seed_landing_file_with_mockup_set(
             },
         ),
     )
+    seed_score(conn, photo_id, user_id)
     rebuild_pipeline(conn)
     rebuild_mockups(conn)
 

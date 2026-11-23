@@ -30,6 +30,8 @@ class CopyInputs(BaseModel):
     strongest_room_style: str | None = None
     one_risk: str | None = None
     rationale: str | None = None
+    # Factual description of what is visible (vision `scene`); grounds the copy.
+    scene: str | None = None
     orientation: str
     format: str = "digital_download"
     sizes: list[str]

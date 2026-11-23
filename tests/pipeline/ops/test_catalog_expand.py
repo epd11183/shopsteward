@@ -24,6 +24,9 @@ from shopsteward.pipeline.ops.models import RefusalReason, Tier
 from shopsteward.pipeline.ops.projections import rebuild_ops
 from shopsteward.pipeline.ops.registry import REGISTRY, register
 from shopsteward.pipeline.ops.runner import approve_action, reject_action, run
+from shopsteward.pipeline.projections import rebuild_pipeline
+
+from ..listings.helpers import seed_score
 
 USER_ID = 1
 TODAY = datetime.now(UTC).date()
@@ -132,6 +135,10 @@ def test_propose_approve_pushes_a_gate3_card_then_stops_reproposing(conn, tmp_pa
     assert report.executed == 0  # T2 ceiling -- never auto-executed
 
     action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
+
+    # Digital copy needs a vision signal; adopt names the photo from the file hash.
+    seed_score(conn, f"file-{hashlib.sha256(photo_path.read_bytes()).hexdigest()[:12]}")
+    rebuild_pipeline(conn)
 
     # 2. approve_action() against a FakeEtsyWriteAdapter -> one pushed Gate-3
     # card with real title/price/etsy_listing_id.

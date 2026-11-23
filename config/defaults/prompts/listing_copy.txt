@@ -14,10 +14,15 @@ describe it as a physical item that ships.
 
 Photograph signals (from vision scoring):
 - Subject: {subject}
+- What is in the photo (factual, from vision): {scene}
 - Strongest room/style fit: {strongest_room_style}
 - Biggest risk to a sale: {one_risk}
 - Scoring rationale: {rationale}
 - Orientation: {orientation}
+
+HARD RULE: describe only what Subject and the photo description above state.
+Never invent animal counts, actions, weather, mist, season, time of day,
+light, water, or location that they do not state. When unsure, stay general.
 
 Return ONLY a JSON object with these exact fields:
 - title: string, <=140 characters, following the house style Title pattern.

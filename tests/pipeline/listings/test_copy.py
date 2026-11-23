@@ -2,10 +2,16 @@ import pytest
 
 from shopsteward.adapters.copy.fake import FakeCopyAdapter, FixtureCopyAdapter
 from shopsteward.adapters.copy.interface import CopyParseError, CopyResult, CopyUsage, CopyVerdict
+from shopsteward.adapters.copy.openrouter import OpenRouterCopyAdapter
 from shopsteward.core.db import connect, migrate
 from shopsteward.core.events import Event, append, read_all
 from shopsteward.pipeline.listings import config as listing_config
-from shopsteward.pipeline.listings.copy import build_copy_adapter, generate_copy
+from shopsteward.pipeline.listings.copy import (
+    _CONFIG_DEFAULTS_DIR,
+    _build_inputs,
+    build_copy_adapter,
+    generate_copy,
+)
 from shopsteward.pipeline.listings.models import ListingImage
 from shopsteward.pipeline.listings.projections import rebuild_listings
 from shopsteward.pipeline.projections import rebuild_pipeline
@@ -53,7 +59,9 @@ def _seed_landscape_landing_file(conn):
     rebuild_pipeline(conn)
 
 
-def _seed_score(conn, *, subject="osprey", strongest_room_style="coastal", one_risk="glare"):
+def _seed_score(
+    conn, *, subject="osprey", strongest_room_style="coastal", one_risk="glare", scene=None
+):
     append(
         conn,
         Event(
@@ -74,6 +82,7 @@ def _seed_score(conn, *, subject="osprey", strongest_room_style="coastal", one_r
                             "strongest_room_style": strongest_room_style,
                             "one_risk": one_risk,
                             "rationale": "well composed",
+                            **({"scene": scene} if scene else {}),
                         },
                     }
                 },
@@ -185,6 +194,7 @@ def test_generate_copy_without_a_score_row_leaves_signals_none(conn, cfg):
         cfg,
         live=False,
         soft_cap_usd=10.0,
+        medium="physical",  # digital copy without a score is refused instead
     )
 
     inputs, _ = adapter.calls[0]
@@ -439,3 +449,44 @@ def test_build_copy_adapter_live_reads_prompt_template_and_config(cfg, monkeypat
     adapter = build_copy_adapter(cfg, live=True)
     assert adapter._prompt_template  # loaded from listing.json copy.prompt_path
     assert adapter._temperature == cfg.copy_.temperature
+
+
+def test_scene_round_trips_into_proj_scores_and_legacy_is_null(conn):
+    def scene():
+        return conn.execute("SELECT scene FROM proj_scores").fetchone()["scene"]
+
+    _seed_score(conn, scene="Three grizzlies on snow.")
+    assert scene() == "Three grizzlies on snow."
+    _seed_score(conn)  # legacy verdict without a scene key; later event replaces
+    assert scene() is None
+
+
+def test_scene_reaches_the_rendered_prompt(conn, cfg):
+    _seed_landscape_landing_file(conn)
+    _seed_score(conn, scene="Three grizzlies on snow.")
+    inputs = _build_inputs(conn, USER_ID, LANDING_FILE_ID, PHOTO_ID, cfg)
+    assert inputs.scene == "Three grizzlies on snow."
+    template = (_CONFIG_DEFAULTS_DIR / cfg.copy_.prompt_path).read_text(encoding="utf-8")
+    prompt = OpenRouterCopyAdapter(api_key="k", prompt_template=template)._render_prompt(inputs)
+    assert "Three grizzlies on snow." in prompt
+
+
+def test_digital_copy_without_score_is_refused_retryably(conn, cfg):
+    _seed_landscape_landing_file(conn)  # no photo.scored event
+    adapter = FakeCopyAdapter([])
+    ok = generate_copy(
+        conn,
+        USER_ID,
+        DRAFT_ID,
+        LANDING_FILE_ID,
+        PHOTO_ID,
+        [IMAGE],
+        adapter,
+        cfg,
+        live=False,
+        soft_cap_usd=10.0,
+    )
+    assert ok is False
+    assert adapter.calls == []
+    assert read_all(conn, "listingdraft.copy_generated") == []
+    assert read_all(conn, "copy.refused") == []  # not counted toward the terminal cap

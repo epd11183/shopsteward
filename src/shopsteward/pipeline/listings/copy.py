@@ -230,7 +230,7 @@ def _build_inputs(
     score_row = None
     if photo_id is not None:
         score_row = conn.execute(
-            "SELECT subject, strongest_room_style, one_risk, rationale FROM proj_scores "
+            "SELECT subject, strongest_room_style, one_risk, rationale, scene FROM proj_scores "
             "WHERE user_id=? AND photo_id=?",
             (user_id, photo_id),
         ).fetchone()
@@ -253,6 +253,7 @@ def _build_inputs(
         strongest_room_style=score_row["strongest_room_style"] if score_row else None,
         one_risk=score_row["one_risk"] if score_row else None,
         rationale=score_row["rationale"] if score_row else None,
+        scene=score_row["scene"] if score_row else None,
         orientation=orientation,
         format=format_label,
         # A file plan replaces the global size list: the prompt must not claim
@@ -326,6 +327,18 @@ def generate_copy(
         product_format=product_format,
         plan=plan,
     )
+    if not inputs.is_physical and inputs.subject is None:
+        # No vision signal (vision failed / not scored): the model would invent
+        # the whole scene. Retryable like the soft cap: no event, so it is
+        # picked up once the photo is scored; deliberately NOT a copy.refused
+        # event, which counts toward the terminal refusal cap.
+        logger.warning(
+            "no vision score for draft %s; not generating digital copy "
+            "(will retry next run once the photo is scored)",
+            draft_id,
+        )
+        return False
+
     try:
         result = adapter.generate_copy(inputs, model=cfg.copy_.model)
     except CopyParseError as exc:
