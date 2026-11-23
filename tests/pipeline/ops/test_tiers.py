@@ -37,6 +37,49 @@ def test_effective_tier_passes_through_a_tier_within_range():
     assert effective_tier(cap, state) == Tier.NOTIFY
 
 
+def test_tier_floor_starts_a_fresh_capability_at_auto_and_holds_after_demotion():
+    cap = StubCapability(max_tier=Tier.AUTO)
+    floor = {cap.key: int(Tier.AUTO)}
+    assert effective_tier(cap, None, floor) == Tier.AUTO
+    # a demotion folds a PROPOSE state (and the fold's default is PROPOSE) --
+    # the floor still clamps the effective tier to AUTO.
+    demoted = CapabilityState(capability=cap.key, tier=Tier.PROPOSE, tier_since="2026-01-01")
+    assert effective_tier(cap, demoted, floor) == Tier.AUTO
+
+
+def test_tier_floor_can_never_raise_past_the_python_max_tier():
+    # gapfill/catalog_expand-style PROPOSE ceiling: config asking for AUTO is clamped.
+    cap = StubCapability(max_tier=Tier.PROPOSE)
+    floor = {cap.key: int(Tier.AUTO)}
+    assert effective_tier(cap, None, floor) == Tier.PROPOSE
+    assert (
+        effective_tier(
+            cap, CapabilityState(capability=cap.key, tier=Tier.AUTO, tier_since="2026-01-01"), floor
+        )
+        == Tier.PROPOSE
+    )
+
+
+def test_shipped_tier_floor_covers_exactly_the_undoable_listing_capabilities():
+    floor = ops_config.load_ops_config().autonomy.tier_floor
+    assert set(floor) == {
+        "listing.seo_edit",
+        "listing.size_claims_fix",
+        "listing.reprice",
+        "listing.deactivate",
+        "listing.renew",
+        "listing.autorenew_off",
+    }
+    assert set(floor.values()) == {int(Tier.AUTO)}
+    # no-undo / non-listing capabilities are deliberately absent (stay PROPOSE);
+    # autorenew_on starts recurring renewal fees the $20 cap can't see (reviewer)
+    assert not {
+        "listing.gapfill_reprint",
+        "listing.catalog_expand",
+        "listing.autorenew_on",
+    } & set(floor)
+
+
 def test_promote_t2_t1_needs_both_the_count_and_the_clock():
     today = date(2026, 3, 1)
     enough_approvals_not_enough_days = CapabilityState(

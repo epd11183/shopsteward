@@ -221,6 +221,23 @@ that make broad delegated authority safe, not a substitute for it.
   justify one — that recommendation itself crosses the budget-expansion
   boundary, so it's a proposal to the operator, not a unilateral spend.
 
+**Amended 2026-11-22, explicit operator authorization: total control of
+listings.** Listing edits of every kind (title, tags, description, price,
+images, files, renew, deactivate, auto-renew toggles) no longer require
+operator approval: every `listing.*` capability with a working undo has
+`max_tier = Tier.AUTO` and starts at AUTO via config `autonomy.tier_floor`.
+Never hand a listing fix back to the operator; do it. Act-then-show. Remaining
+controls: the event log plus undo where Etsy allows (registry invariant 1: no
+AUTO/NOTIFY without a working undo), the live gates (`--live-autonomy` and env
+gates), the governor including the $20/month cap, and the digital-only /
+`provider_linked` guards for POD listings. `listing.gapfill_reprint` and
+`listing.catalog_expand` have no undo and stay at `Tier.PROPOSE`;
+`listing.autorenew_on` starts at PROPOSE because it creates recurring renewal
+fees the cap cannot see. `ops edit-listing` is the direct entry point for agent-authored edits.
+New-listing fees ($0.20 each) are an authorized expense inside the $20/month
+cap (operator, 2026-11-22): create new listings in batches (first batch 10),
+checking each batch live before the next.
+
 **Objective — optimize for contribution profit and long-term portfolio
 value, not gross sales or activity.** Trailing-window contribution profit
 (revenue minus Etsy fees, fulfillment cost, and attributed ad spend) is the
@@ -291,3 +308,11 @@ Destructive-data/Truly-irreversible boundaries in that section, not a
 standalone rule. The $20/month ceiling statement is superseded by the
 Financial governance subsection above (same number, now with the explicit
 Etsy-Ads carve-out and reallocation authority spelled out).
+
+**Superseded for listing capabilities, 2026-11-22.** The `Tier.PROPOSE`
+hard-pin statements above (e.g. `seo_edit` "stays operator-approved ... does
+not lift") no longer hold for `listing.*` capabilities that have an undo; see
+"Governance & decision authority", 2026-11-22. They still hold for
+capabilities without an undo (`gapfill_reprint`, `catalog_expand`) and for
+non-listing ones (`social.*`, `ops.tune_threshold`). The $20/month ceiling
+and the live gates are unchanged.

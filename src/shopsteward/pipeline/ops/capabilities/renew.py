@@ -15,16 +15,13 @@ capability's concern). This capability therefore needs no new adapter
 method: it is `update_listing_state(listing_id, "active")` called against
 an `expired` listing instead of an `inactive` one.
 
-**`max_tier = Tier.NOTIFY`** -- T1 ceiling, ships at T2 (PROPOSE) per the
-chassis default (autorenew.py precedent), same as `listing.deactivate`
-(T1-promotable, its own docstring): the ladder CAN eventually trust this
-capability to auto-execute unattended within `_AUTO_EXECUTE_TIERS`
-(runner.py), because it is a simple, mechanical state transition, unlike
-`listing.seo_edit`'s permanent human-approval requirement. The real
-blast-radius control once it gets there is the numeric
-`autonomy.monthly_spend_cap_usd`, not the tier: every execution spends real,
-non-refundable money, so it should always at minimum notify the operator
-regardless of how much the ladder ever trusts it.
+**`max_tier = Tier.AUTO`** -- 2026-11-22 operator decision (explicit): listing
+edits of every kind execute without approval (was a T1 ceiling shipping at
+T2), started at AUTO by config `autonomy.tier_floor`. The real blast-radius
+control is the numeric `autonomy.monthly_spend_cap_usd`, not the tier: every
+execution spends real, non-refundable money (`estimated_cost_usd` carries the
+listing fee, so the governor's BUDGET check sees it BEFORE execute), and the
+operator is shown results afterwards (act-then-show).
 
 **Eligibility** (`_candidates()`, the ONE grounding function shared by
 propose()/materialize()/execute() -- the M8b slice-2 planner-safety
@@ -161,10 +158,9 @@ def _candidates(
 
 class ListingRenew:
     key = "listing.renew"
-    # T1 ceiling -- ships at T2 (PROPOSE) per the chassis default; the real
-    # blast-radius control is the numeric monthly spend cap, not the tier
-    # (module docstring).
-    max_tier = Tier.NOTIFY
+    # 2026-11-22 operator decision: no approval; the real blast-radius control
+    # is the numeric monthly spend cap, not the tier (module docstring).
+    max_tier = Tier.AUTO
     policy_verified = True  # docs/policy/2026-08-11-autonomy-platform-policy.md E15.
 
     def __init__(self, adapter: EtsyWriteAdapter) -> None:

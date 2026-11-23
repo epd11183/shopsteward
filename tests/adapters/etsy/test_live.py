@@ -1003,3 +1003,38 @@ def test_delete_listing_file_204_and_errors(tmp_path) -> None:
         adapter.delete_listing_file(555, 9001)
     assert ei.value.status_code == 0
     assert "transport error" in str(ei.value)
+
+
+@respx.mock
+def test_write_adapter_retries_429_on_get_only(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("shopsteward.adapters.etsy.live.time.sleep", lambda s: None)
+    adapter = _write_adapter(tmp_path)
+    get = respx.get(f"{BASE}/shops/100001/listings/555/files").mock(
+        side_effect=[
+            httpx.Response(429, headers={"Retry-After": "1"}),
+            httpx.Response(200, json={"results": []}),
+        ]
+    )
+    assert adapter.list_listing_files(555) == []
+    assert get.call_count == 2
+
+    post = respx.post(f"{BASE}/shops/100001/listings/555/files").mock(
+        return_value=httpx.Response(429, json={"error": "slow down"})
+    )
+    with pytest.raises(EtsyWriteError) as ei:
+        adapter.upload_listing_file(555, b"x", name="a.jpg", rank=2)
+    assert ei.value.status_code == 429
+    assert post.call_count == 1  # writes are never retried
+
+
+def test_retry_delay_handles_http_date_negative_and_huge() -> None:
+    from shopsteward.adapters.etsy.live import _retry_delay
+
+    def r(value: str | None) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": value} if value else {})
+
+    assert _retry_delay(r("Wed, 21 Oct 2026 07:28:00 GMT"), 1) == 4.0
+    assert _retry_delay(r(None), 0) == 2.0
+    assert _retry_delay(r("-1"), 0) == 0.0
+    assert _retry_delay(r("9999"), 0) == 60.0
+    assert _retry_delay(r("3"), 0) == 3.0

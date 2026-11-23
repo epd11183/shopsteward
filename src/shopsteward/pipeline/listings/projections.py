@@ -474,10 +474,14 @@ def rebuild_listings(conn: sqlite3.Connection) -> None:
             )
 
         elif e.type == "listingdraft.reset":
-            conn.execute(
-                "DELETE FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
-                (e.user_id, p["draft_id"]),
-            )
+            # Files attached before the reset belong to the old (often fake)
+            # listing; left in place they freeze the next files_planned and the
+            # re-push silently falls back to the single legacy file.
+            for table in ("proj_listing_drafts", "proj_listing_files"):
+                conn.execute(
+                    f"DELETE FROM {table} WHERE user_id=? AND draft_id=?",
+                    (e.user_id, p["draft_id"]),
+                )
 
         elif e.type == "cropfocus.set":
             conn.execute(

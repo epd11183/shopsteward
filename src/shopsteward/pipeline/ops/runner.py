@@ -73,6 +73,7 @@ LIVE_GATED_CAPABILITIES = frozenset(
         "listing.autorenew_on",
         "listing.reprice",
         "listing.seo_edit",
+        "listing.size_claims_fix",
         "listing.deactivate",
         "listing.renew",
         "listing.catalog_expand",
@@ -326,7 +327,7 @@ def run(
             ]
 
     for cap in capabilities:
-        eff_tier = effective_tier(cap, states.get(cap.key))
+        eff_tier = effective_tier(cap, states.get(cap.key), cfg.autonomy.tier_floor)
         for action in cap_proposals_by_key.get(cap.key, []):
             action = action.model_copy(update={"tier": eff_tier})
             status = _action_status(conn, user_id, action.action_id)

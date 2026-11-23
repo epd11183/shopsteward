@@ -280,6 +280,18 @@ def publish(
     return _card_for(conn, user_id, draft_id, cfg)
 
 
+def _attached_here(e: Event, user_id: int, draft_id: str, listing_id: int | None) -> bool:
+    """An attach event for THIS draft on THIS Etsy listing. A reset re-keys the
+    same draft_id onto a new listing; attachments to the old (often fake) one
+    must not count as done on the new one."""
+    return (
+        e.user_id == user_id
+        and e.payload.get("draft_id") == draft_id
+        and listing_id is not None
+        and int(e.payload.get("etsy_listing_id", -1)) == listing_id
+    )
+
+
 def retry_push(
     conn: sqlite3.Connection, user_id: int, draft_id: str, adapter: EtsyWriteAdapter
 ) -> Gate3Card:
@@ -315,7 +327,7 @@ def retry_push(
     already_attached_ranks = {
         img["rank"]
         for e in read_all(conn, "listingdraft.images_attached")
-        if e.user_id == user_id and e.payload.get("draft_id") == draft_id
+        if _attached_here(e, user_id, draft_id, listing_id)
         for img in e.payload.get("images", [])
     }
 
@@ -323,7 +335,7 @@ def retry_push(
     skip_keys = {
         e.payload.get("key", "full")
         for e in read_all(conn, "listingdraft.file_attached")
-        if e.user_id == user_id and e.payload.get("draft_id") == draft_id
+        if _attached_here(e, user_id, draft_id, listing_id)
     }
 
     if listing_id is None:

@@ -1,13 +1,28 @@
-"""`listing.seo_edit` -- Claude rewrites a listing's title/tags/description,
-the operator approves each edit (M8b slice 4a, design §4/§8 slice 4; widened
-to cover description and expired-with-sales listings, see below). Policy:
-Etsy E3 PERMITTED via `updateListing`/`listings_w`. Draft #10: title/tag edit
-is a **T2 ceiling, NEVER higher** (the formula would say T1, but overridden --
-§0 P3 policy surface + a bad edit resets a listing's Etsy search-ranking
-history, which is not cleanly reversible even though the fields themselves
-are; PRD §5.5 "wait at Gate 3"). `max_tier = Tier.PROPOSE` and this
-capability is never promoted regardless of the ladder (registry.py's
-invariant 2 -- max_tier is a Python attribute, not config).
+"""`listing.seo_edit` -- Claude rewrites a listing's title/tags/description
+(M8b slice 4a, design §4/§8 slice 4; widened to cover description and
+expired-with-sales listings, see below). Policy: Etsy E3 PERMITTED via
+`updateListing`/`listings_w`. Draft #10 pinned title/tag edits at a T2
+ceiling, never higher (a bad edit resets a listing's Etsy search-ranking
+history, which is not restorable via API even though the fields are).
+**Superseded 2026-11-22 by an explicit operator decision: listing edits of
+every kind need NO operator approval** -- `max_tier = Tier.AUTO` and config
+`autonomy.tier_floor` starts it at AUTO (config still cannot exceed the Python
+`max_tier`; registry.py's invariant 2). The remaining controls: the event
+log, undo() (restores the exact prior fields), the live gates, the governor
+(spend cap, per-listing cooldown, pin holdout, portfolio cap), act-then-show.
+
+**Plain text only.** Etsy returns title/tags/description HTML-escaped
+(`&#39;`); `_Target.__post_init__` and `_validate_params` normalize everything
+to plain text so the diff, `before`, the sent payload and undo never carry
+entities.
+
+**Direct edits (`ops edit-listing`)**: `build_direct_action()` builds an action
+for ANY listing with a recorded snapshot, bypassing ONLY `_eligible()` (an
+operator/agent-directed edit needs no "worth editing" signal). The bypass is a
+`direct` flag carried on the action's params, which `materialize()` can never
+emit (it builds params from validated fields only). Every other check -- field
+lengths, tag rules, differs-from-current, the undo-honesty baseline, the
+governor -- still applies.
 
 **`description` editing is now implemented** (`EtsyListing.description`,
 adapters/etsy/models.py, added purely additively/optionally -- every
@@ -103,10 +118,11 @@ contract -- autorenew.py precedent). This module never imports or
 constructs an adapter itself."""
 
 import hashlib
+import html
 import json
 import sqlite3
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime, timedelta
 
 import pydantic
 
@@ -150,6 +166,17 @@ class _Target:
     # leaves this None; `misaligned_candidates()` uses its presence, never a
     # string-parse of `reason`, to identify branch-3 targets.
     ranker_tag_overlap: int | None = None
+
+    def __post_init__(self) -> None:
+        # Etsy returns title/tags/description HTML-escaped ("&#39;", "&amp;").
+        # The ONE place every _Target is normalized to plain text (all
+        # construction sites, incl. the direct edit-listing path), so the diff,
+        # preview, `before` and undo all work on -- and send -- plain text,
+        # never entities (size_claims_fix precedent).
+        object.__setattr__(self, "current_title", html.unescape(self.current_title))
+        object.__setattr__(self, "current_tags", [html.unescape(t) for t in self.current_tags])
+        if self.current_description is not None:
+            object.__setattr__(self, "current_description", html.unescape(self.current_description))
 
 
 def _latest_observed(conn: sqlite3.Connection, user_id: int, listing_id: int) -> EtsyListing | None:
@@ -427,17 +454,19 @@ def _validate_params(
     already rejects the entire update on ANY single invalid tag (comma/
     length) rather than repairing the list item-by-item -- reusing that same
     shape means one validation semantics for the whole field, not two. More
-    importantly, `tags` is exactly what the operator reviews and approves
-    (T2/PROPOSE ceiling, module docstring); silently publishing a
-    LLM-authored list with one entry quietly removed is a different tag set
-    than what was proposed and approved, without the operator ever being
-    told. Title/description are untouched and may still proceed on the same
-    intent independently, same as every other per-field independence rule
-    here."""
+    importantly, silently publishing a LLM-authored list with one entry quietly
+    removed is a different tag set than what was proposed (no operator
+    approval gate since 2026-11-22, so nothing downstream would catch it).
+    Title/description are untouched and may still proceed on the same intent
+    independently, same as every other per-field independence rule here."""
+    # Proposed text is normalized to plain text too (never send entities).
     title = params.get("title")
     new_title: str | None = None
     if title is not None:
-        if not isinstance(title, str) or not (1 <= len(title) <= _MAX_TITLE_LEN):
+        if not isinstance(title, str):
+            return None
+        title = html.unescape(title)
+        if not (1 <= len(title) <= _MAX_TITLE_LEN):
             return None
         new_title = title
 
@@ -448,6 +477,7 @@ def _validate_params(
             return None
         if not all(isinstance(t, str) for t in tags):
             return None
+        tags = [html.unescape(t) for t in tags]
         try:
             for t in tags:
                 validate_tag(t, max_len=_MAX_TAG_LEN)
@@ -459,12 +489,10 @@ def _validate_params(
 
     description = params.get("description")
     new_description: str | None = None
-    if (
-        description is not None
-        and isinstance(description, str)
-        and 1 <= len(description) <= _MAX_DESCRIPTION_LEN
-    ):
-        new_description = description
+    if isinstance(description, str):
+        description = html.unescape(description)
+        if 1 <= len(description) <= _MAX_DESCRIPTION_LEN:
+            new_description = description
     # else: structurally invalid -- silently dropped, never clamped.
 
     changed: dict[str, str | list[str]] = {}
@@ -487,8 +515,13 @@ def _build_action(
     cfg_hash: str,
     today: str,
     expires_at: str,
+    *,
+    direct: bool = False,
 ) -> ProposedAction:
-    raw = "|".join((str(target.listing_id), json.dumps(changed, sort_keys=True)))
+    params: dict[str, str | int | float | bool | list[str]] = dict(changed)
+    if direct:
+        params[DIRECT_PARAM] = True  # execute() skips ONLY _eligible() for this action
+    raw = "|".join((str(target.listing_id), json.dumps(params, sort_keys=True)))
     inputs_hash = hashlib.sha256(raw.encode()).hexdigest()
     action_id = compute_action_id(
         "listing.seo_edit", str(target.listing_id), inputs_hash, cfg_hash, today
@@ -504,17 +537,101 @@ def _build_action(
         estimated_cost_usd=0.0,
         undo_available=True,
         expires_at=expires_at,
-        params=changed,
+        params=params,
     )
+
+
+# Params key marking an operator/agent-directed edit (`ops edit-listing`):
+# execute() then skips ONLY `_eligible()`. materialize() never emits it.
+DIRECT_PARAM = "direct"
+
+
+def _direct_target(conn: sqlite3.Connection, user_id: int, listing_id: int) -> _Target | None:
+    """Any listing with a recorded snapshot, regardless of eligibility/state --
+    the snapshot is the undo-honesty baseline (current title/tags/description)."""
+    listing = _latest_observed(conn, user_id, listing_id)
+    if listing is None:
+        return None
+    return _Target(
+        listing_id=listing_id,
+        current_title=listing.title,
+        current_tags=listing.tags,
+        current_description=listing.description,
+        lifetime_views=listing.views,
+        reason="operator-directed edit",
+    )
+
+
+def build_direct_action(
+    conn: sqlite3.Connection,
+    user_id: int,
+    cfg: OpsConfig,
+    listing_id: int,
+    *,
+    title: str | None = None,
+    tags: list[str] | None = None,
+    description: str | None = None,
+    reason: str | None = None,
+    today: date | None = None,
+) -> tuple[ProposedAction, dict[str, tuple[object, object]]]:
+    """A `listing.seo_edit` ProposedAction for an explicitly requested edit,
+    plus {field: (old, new)} for the fields that actually change. Raises
+    ValueError (nothing built) when the listing has no snapshot, a requested
+    field is invalid/dropped by `_validate_params` (too long, bad tag, no
+    description baseline...), or nothing would change. A requested field equal
+    to the current value is simply omitted, not an error."""
+    target = _direct_target(conn, user_id, listing_id)
+    if target is None:
+        raise ValueError(f"listing {listing_id}: no recorded snapshot -- run a sync first")
+    if reason:
+        target = replace(target, reason=reason)
+    requested: dict[str, str | list[str]] = {}
+    if title is not None:
+        requested["title"] = title
+    if tags is not None:
+        requested["tags"] = tags
+    if description is not None:
+        requested["description"] = description
+    if not requested:
+        raise ValueError("nothing to edit: pass at least one of title/tags/description")
+
+    changed = _validate_params(requested, target, cfg)
+    current: dict[str, str | list[str] | None] = {
+        "title": target.current_title,
+        "tags": target.current_tags,
+        "description": target.current_description,
+    }
+    for field, value in requested.items():
+        if field in (changed or {}):
+            continue
+        if isinstance(value, list):
+            plain: str | list[str] = [html.unescape(t) for t in value]
+        else:
+            plain = html.unescape(value)
+        if plain != current[field]:
+            raise ValueError(
+                f"{field} rejected: invalid (length/tag rules) or no baseline to undo to"
+            )
+    if not changed:
+        raise ValueError("no-op: every requested field already matches the listing")
+
+    today_date = today or datetime.now(UTC).date()
+    action = _build_action(
+        target,
+        changed,
+        ops_config_hash(cfg),
+        today_date.isoformat(),
+        (today_date + timedelta(days=cfg.autonomy.proposal_ttl_days)).isoformat(),
+        direct=True,
+    )
+    return action, {f: (current[f], new) for f, new in changed.items()}
 
 
 class ListingSeoEdit:
     key = "listing.seo_edit"
-    # T2 ceiling -- NEVER promotable (draft #10: a bad SEO edit resets Etsy's
-    # search-ranking history, which isn't cleanly reversible even though the
-    # fields are). registry.py's invariant 2 enforces there is no config path
-    # that can raise this.
-    max_tier = Tier.PROPOSE
+    # 2026-11-22 operator decision (explicit): no approval for listing edits.
+    # Was a T2 pin (draft #10). Started at AUTO by config `autonomy.tier_floor`.
+    max_tier = Tier.AUTO
     policy_verified = True  # Etsy E3 permitted.
 
     def __init__(self, adapter: EtsyWriteAdapter) -> None:
@@ -547,8 +664,13 @@ class ListingSeoEdit:
     ) -> ExecutionResult:
         listing_id = int(action.target_id)
         cfg = get_ops_config(conn, user_id)
-        target = _eligible(conn, user_id, cfg).get(action.target_id)
-        if target is None:
+        if action.params.get(DIRECT_PARAM) is True:
+            # operator/agent-directed edit: skip ONLY eligibility; the snapshot
+            # baseline, _validate_params and the governor still apply.
+            target = _direct_target(conn, user_id, listing_id)
+        else:
+            target = _eligible(conn, user_id, cfg).get(action.target_id)
+        if target is None and action.params.get(DIRECT_PARAM) is not True:
             # Branch-3 (misalignment) fallback: retry with the probe's
             # staleness window widened before ever declaring this target
             # genuinely gone -- a probe merely aging out between propose and
@@ -609,12 +731,19 @@ class ListingSeoEdit:
             return  # nothing was actually executed -- runner already guards this, but be safe
 
         listing_id = int(action.target_id)
+        # `before` values recorded by executions that predate the unescape fix
+        # still hold entities -- normalize again so undo never sends them.
+        prior_title = prior.get("title")
+        prior_tags = prior.get("tags")
+        prior_description = prior.get("description")
         self._adapter.update_listing(
             listing_id,
             EtsyListingUpdate(
-                title=prior.get("title"),
-                tags=prior.get("tags"),
-                description=prior.get("description"),
+                title=html.unescape(prior_title) if prior_title is not None else None,
+                tags=[html.unescape(t) for t in prior_tags] if prior_tags is not None else None,
+                description=(
+                    html.unescape(prior_description) if prior_description is not None else None
+                ),
             ),
         )
 

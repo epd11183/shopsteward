@@ -143,6 +143,14 @@
     "proposal_ttl_days": 14,
     "planner_enabled": true,
     "planner_max_per_capability_per_run": 1,
+    "tier_floor": {
+      "listing.seo_edit": 0,
+      "listing.size_claims_fix": 0,
+      "listing.reprice": 0,
+      "listing.deactivate": 0,
+      "listing.renew": 0,
+      "listing.autorenew_off": 0
+    },
     "ladder": {
       "promote_approvals": 20,
       "promote_min_days": 14,

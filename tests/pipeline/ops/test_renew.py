@@ -254,13 +254,13 @@ def test_undo_event_restored_to_is_honest_not_a_false_expired_claim(conn, monkey
 # --- 4. registration: no undo -> can't register above T2 (sanity) -----------
 
 
-def test_register_succeeds_capability_has_undo_and_t2_ceiling():
+def test_register_succeeds_capability_has_undo_and_auto_ceiling():
     cap = ListingRenew(FakeEtsyWriteAdapter())
 
     register(cap)
 
     assert REGISTRY["listing.renew"] is cap
-    assert cap.max_tier == Tier.NOTIFY
+    assert cap.max_tier == Tier.AUTO  # 2026-11-22: listing edits need no approval
     assert callable(cap.undo)
 
 

@@ -148,14 +148,14 @@ def test_propose_skips_a_malformed_observed_event_instead_of_crashing(conn):
     assert target_ids == {str(LISTING_DEAD_A), str(LISTING_DEAD_B)}
 
 
-def test_register_succeeds_capability_has_undo_and_t1_ceiling():
+def test_register_succeeds_capability_has_undo_and_auto_ceiling():
     fake = FakeEtsyWriteAdapter()
     cap = ListingAutorenewOff(fake)
 
     register(cap)
 
     assert REGISTRY["listing.autorenew_off"] is cap
-    assert cap.max_tier == Tier.NOTIFY
+    assert cap.max_tier == Tier.AUTO  # 2026-11-22: listing edits need no approval
     assert callable(cap.undo)
 
 
@@ -248,7 +248,9 @@ def test_e2e_rerun_same_day_is_idempotent(conn):
     second = run(conn, USER_ID, cfg, [cap], today=TODAY)
 
     assert second.proposed == 0
-    assert second.skipped_idempotent == 2
+    # 2026-11-22: starts at AUTO, so a still-pending action is re-governed (and
+    # live-gate-blocked here), not skipped as "waiting on the operator".
+    assert second.live_gate_blocked
     assert len(read_all(conn, "action.proposed")) == 2
 
 

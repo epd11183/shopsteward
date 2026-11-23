@@ -50,7 +50,12 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 if TYPE_CHECKING:
+    import sqlite3
+    from datetime import date
+
     from shopsteward.adapters.etsy.live import LiveEtsyAdapter
+    from shopsteward.pipeline.ops.models import OpsConfig
+    from shopsteward.pipeline.ops.registry import Capability
 
 ops_app = typer.Typer(no_args_is_help=True, help="Shop operations brief (M8a).")
 config_app = typer.Typer(no_args_is_help=True, help="ops.json config.")
@@ -292,6 +297,14 @@ def run_cmd(
     live_autonomy: Annotated[
         bool, typer.Option("--live-autonomy", help="Permit real (non-fake) capability writes")
     ] = False,
+    capability: Annotated[
+        str | None,
+        typer.Option(
+            "--capability",
+            help="Run ONLY this capability's propose() (e.g. listing.size_claims_fix); "
+            "the planner LLM is skipped",
+        ),
+    ] = None,
 ) -> None:
     """Run the autonomy chassis once: propose -> govern -> execute for every
     registered capability. Defaults to --dry-run for safety. Registers
@@ -320,6 +333,7 @@ def run_cmd(
     from shopsteward.pipeline.ops.capabilities.renew import ListingRenew
     from shopsteward.pipeline.ops.capabilities.reprice import ListingReprice
     from shopsteward.pipeline.ops.capabilities.seo_edit import ListingSeoEdit
+    from shopsteward.pipeline.ops.capabilities.size_claims_fix import ListingSizeClaimsFix
     from shopsteward.pipeline.ops.capabilities.tune_threshold import OpsTuneThreshold
     from shopsteward.pipeline.ops.models import ProposedAction
     from shopsteward.pipeline.ops.projections import rebuild_ops
@@ -338,6 +352,7 @@ def run_cmd(
     register(ListingAutorenewOn(adapter))
     register(ListingReprice(adapter))
     register(ListingSeoEdit(adapter))
+    register(ListingSizeClaimsFix(adapter))
     register(ListingDeactivate(adapter))
     register(ListingRenew(adapter))
     register(OpsTuneThreshold())  # no adapter -- registers regardless of --live-autonomy
@@ -372,7 +387,14 @@ def run_cmd(
             return
 
         proposals: list[ProposedAction] | None = None
-        if cfg.autonomy.planner_enabled and live_planner_open():
+        capabilities = list(REGISTRY.values())
+        if capability is not None:
+            capabilities = [c for c in capabilities if c.key == capability]
+            if not capabilities:
+                typer.secho(f"unknown capability: {capability}", fg="red")
+                raise typer.Exit(code=1)
+            typer.echo(f"only {capability}: planner skipped")
+        elif cfg.autonomy.planner_enabled and live_planner_open():
             # Default-off + gated (M8b slice 2, design §7): only here is a
             # planner adapter ever built/called -- the default path above
             # never imports OpenRouter or touches the network.
@@ -402,7 +424,7 @@ def run_cmd(
             conn,
             DEFAULT_USER_ID,
             cfg,
-            list(REGISTRY.values()),
+            capabilities,
             dry_run=dry_run,
             proposals=proposals,
             live_autonomy=live_autonomy,
@@ -532,6 +554,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
     from shopsteward.pipeline.ops.capabilities.renew import ListingRenew
     from shopsteward.pipeline.ops.capabilities.reprice import ListingReprice
     from shopsteward.pipeline.ops.capabilities.seo_edit import ListingSeoEdit
+    from shopsteward.pipeline.ops.capabilities.size_claims_fix import ListingSizeClaimsFix
     from shopsteward.pipeline.ops.capabilities.tune_threshold import OpsTuneThreshold
     from shopsteward.pipeline.ops.registry import register
 
@@ -542,6 +565,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
     register(ListingAutorenewOn(adapter))
     register(ListingReprice(adapter))
     register(ListingSeoEdit(adapter))
+    register(ListingSizeClaimsFix(adapter))
     register(ListingDeactivate(adapter))
     register(ListingRenew(adapter))
     register(OpsTuneThreshold())
@@ -716,6 +740,161 @@ def mark_posted_cmd(
             typer.echo(f"marked posted: {action_id}")
         else:
             typer.echo(f"already marked posted: {action_id}")
+    finally:
+        conn.close()
+
+
+class EditListingError(Exception):
+    """A direct edit that was refused or did not execute; the message is
+    operator/agent-facing (cleanly printed by `ops edit-listing`)."""
+
+
+def run_direct_edit(
+    conn: "sqlite3.Connection",
+    user_id: int,
+    cfg: "OpsConfig",
+    seo_cap: "Capability",
+    listing_id: int,
+    *,
+    title: str | None = None,
+    tags: list[str] | None = None,
+    description: str | None = None,
+    reason: str | None = None,
+    live_autonomy: bool = False,
+    today: "date | None" = None,
+) -> tuple[str, dict[str, tuple[object, object]]]:
+    """`ops edit-listing`'s core, separated from typer so it can be tested
+    against a seeded fake adapter. Builds a `listing.seo_edit` action that
+    bypasses ONLY `_eligible()` (seo_edit.build_direct_action) and runs it
+    through the normal `runner.run()` path, so the governor, tiers, events and
+    undo all apply. Returns (action_id, {field: (old, new)}); raises
+    EditListingError (appending nothing where possible) otherwise.
+
+    Without `live_autonomy` this refuses BEFORE any event is appended
+    (runner.LIVE_GATED_CAPABILITIES: a fresh fake has no listing state), so
+    no orphan pending proposal is left behind."""
+    from shopsteward.core.events import read_all
+    from shopsteward.pipeline.ops.capabilities.seo_edit import build_direct_action
+    from shopsteward.pipeline.ops.runner import _action_status, _live_gate_blocks, run
+
+    if _live_gate_blocks(seo_cap.key, live_autonomy):
+        raise EditListingError(
+            "live autonomy gate not set -- refusing to edit against the fake adapter "
+            "(retry with --live-autonomy once ready)"
+        )
+    try:
+        action, changes = build_direct_action(
+            conn,
+            user_id,
+            cfg,
+            listing_id,
+            title=title,
+            tags=tags,
+            description=description,
+            reason=reason,
+            today=today,
+        )
+    except ValueError as exc:
+        raise EditListingError(str(exc)) from exc
+
+    run(
+        conn,
+        user_id,
+        cfg,
+        [seo_cap],
+        dry_run=False,
+        today=today,
+        proposals=[action],
+        live_autonomy=live_autonomy,
+    )
+    status = _action_status(conn, user_id, action.action_id)
+    if status == "executed":
+        return action.action_id, changes
+    if not cfg.autonomy.enabled:
+        why = "autonomy.enabled is false"
+    elif status == "refused":
+        refusals = [
+            e.payload.get("reason")
+            for e in read_all(conn, "action.refused")
+            if e.user_id == user_id and e.payload.get("action_id") == action.action_id
+        ]
+        why = f"refused: {refusals[-1] if refusals else 'unknown'}"
+    elif status == "proposed":
+        why = "left pending -- effective tier is not AUTO (run `ops config apply`?)"
+    else:
+        why = f"not executed (state: {status or 'never proposed'})"
+    raise EditListingError(f"edit not executed ({action.action_id}): {why}")
+
+
+@ops_app.command("edit-listing")
+def edit_listing_cmd(
+    listing_id: Annotated[int, typer.Argument(help="Etsy listing_id to edit")],
+    title: Annotated[str | None, typer.Option("--title", help="New title")] = None,
+    tags: Annotated[
+        str | None, typer.Option("--tags", help="New tags, comma-separated: 'a,b,c'")
+    ] = None,
+    description_file: Annotated[
+        Path | None, typer.Option("--description-file", help="File holding the new description")
+    ] = None,
+    reason: Annotated[str | None, typer.Option("--reason", help="Why (kept in the event)")] = None,
+    live_autonomy: Annotated[
+        bool,
+        typer.Option(
+            "--live-autonomy/--no-live-autonomy", help="Permit real (non-fake) capability writes"
+        ),
+    ] = False,
+) -> None:
+    """Directly edit a listing's title/tags/description as a `listing.seo_edit`
+    action. No approval (operator decision 2026-11-22), but the whole chassis
+    still applies: governor (cooldown, caps), events, undo (`ops undo
+    <action_id>`). Bypasses only seo_edit's eligibility signal. EXECUTES ->
+    adapter-gated exactly like `ops approve`."""
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.core.projections import rebuild as rebuild_core
+    from shopsteward.pipeline.live_gate import live_autonomy_error, live_autonomy_open
+    from shopsteward.pipeline.ops import config as ops_config
+    from shopsteward.pipeline.ops.projections import rebuild_ops
+    from shopsteward.pipeline.ops.registry import REGISTRY
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    if live_autonomy and not live_autonomy_open():
+        typer.secho(live_autonomy_error(), fg="red")
+        raise typer.Exit(code=1)
+
+    tag_list = [t.strip() for t in tags.split(",")] if tags is not None else None
+    description = description_file.read_text(encoding="utf-8") if description_file else None
+
+    _register_autorenew(live_autonomy)
+
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        ops_config.seed(conn, DEFAULT_USER_ID)
+        rebuild_core(conn)
+        rebuild_ops(conn)
+        cfg = ops_config.get_ops_config(conn, DEFAULT_USER_ID)
+        try:
+            action_id, changes = run_direct_edit(
+                conn,
+                DEFAULT_USER_ID,
+                cfg,
+                REGISTRY["listing.seo_edit"],
+                listing_id,
+                title=title,
+                tags=tag_list,
+                description=description,
+                reason=reason,
+                live_autonomy=live_autonomy,
+            )
+        except EditListingError as exc:
+            typer.secho(f"edit-listing failed: {exc}", fg="red")
+            raise typer.Exit(code=1) from exc
+        typer.echo(f"edited listing {listing_id}: action_id={action_id}")
+        for field, (old, new) in changes.items():
+            typer.echo(f"  {field}: {old!r} -> {new!r}")
+        typer.echo(f"undo with: shopsteward ops undo {action_id} --live-autonomy")
     finally:
         conn.close()
 

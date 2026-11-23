@@ -3,24 +3,35 @@ spec §3). Ladder *state* (CapabilityState) is folded from the event log
 elsewhere (projections.capability_states()); this module only does the
 clamp/threshold/date math over values handed to it."""
 
+from collections.abc import Mapping
 from datetime import date
 
 from shopsteward.pipeline.ops.models import CapabilityState, Tier
 from shopsteward.pipeline.ops.registry import Capability
 
 
-def effective_tier(cap: Capability, state: CapabilityState | None) -> Tier:
-    """A capability's ladder state moves within [max_tier, PROPOSE] only
-    (draft §2.4) -- PROPOSE is the least-autonomous rung the ladder ever
-    starts or ends at (T3/OPERATOR is never part of the ladder). A fresh
-    capability (no state yet) starts at PROPOSE. Clamp is unordered because
-    max_tier may sit on either side of PROPOSE numerically.
-
-    No config parameter: there is no per-capability config-lowering knob
-    yet (YAGNI -- add one when the first real capability needs it); the
-    only ceiling that exists today is the Python `max_tier` enforced here."""
-    current = state.tier if state is not None else Tier.PROPOSE
-    lo, hi = sorted((int(Tier.PROPOSE), int(cap.max_tier)))
+def effective_tier(
+    cap: Capability,
+    state: CapabilityState | None,
+    tier_floor: Mapping[str, int] | None = None,
+) -> Tier:
+    """A capability's ladder state moves within [max_tier, floor] only
+    (draft §2.4). `floor` is the least-autonomous rung the ladder may start
+    or end at: PROPOSE by default (T3/OPERATOR is never part of the ladder),
+    or the capability's entry in config `autonomy.tier_floor` (2026-11-22:
+    the operator set every `listing.*` capability's floor to AUTO, so a fresh
+    capability STARTS at AUTO and a demotion-on-undo/rejection can never drop
+    it below AUTO -- the ladder events still fold, the clamp just absorbs
+    them). A fresh capability (no state yet) starts at its floor. The Python
+    `max_tier` is still the hard ceiling: config can lower autonomy to
+    PROPOSE but can never raise it past `max_tier` (registry invariant 2),
+    because the floor is itself clamped to `max_tier`."""
+    floor = min(
+        max((tier_floor or {}).get(cap.key, int(Tier.PROPOSE)), int(cap.max_tier)),
+        int(Tier.PROPOSE),
+    )
+    current = state.tier if state is not None else Tier(floor)
+    lo, hi = sorted((floor, int(cap.max_tier)))
     return Tier(min(max(int(current), lo), hi))
 
 
