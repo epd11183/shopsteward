@@ -188,6 +188,16 @@ class EtsyFileRef(BaseModel):
     rank: int | None = None
 
 
+class ListingFile(BaseModel):
+    """One digital file on a listing (getAllListingFiles). size_bytes is None
+    when Etsy returns a non-integer filesize (e.g. "1.2MB")."""
+
+    listing_file_id: int
+    name: str | None = None
+    rank: int | None = None
+    size_bytes: int | None = None
+
+
 class EtsyListingUpdate(BaseModel):
     """Draft-field updates only (PATCH .../listings/{id}, form-urlencoded).
     Etsy's real updateListing schema has no `price` field -- price is only

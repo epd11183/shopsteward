@@ -16,10 +16,12 @@ import sqlite3
 from pathlib import Path
 
 from shopsteward.adapters.copy.fake import FixtureCopyAdapter
-from shopsteward.adapters.copy.interface import CopyAdapter, CopyInputs, CopyParseError
+from shopsteward.adapters.copy.interface import CopyAdapter, CopyInputs, CopyParseError, CopyUsage
 from shopsteward.adapters.copy.openrouter import OpenRouterCopyAdapter
-from shopsteward.core.events import Event, append
+from shopsteward.core.events import Event, append, read_all
+from shopsteward.pipeline.listings.digital_files import FilePlan, plan_sizes
 from shopsteward.pipeline.listings.models import ListingConfig, ListingImage
+from shopsteward.pipeline.listings.size_guard import undelivered_sizes
 from shopsteward.pipeline.llm_ledger import monthly_spend
 
 logger = logging.getLogger(__name__)
@@ -27,6 +29,13 @@ logger = logging.getLogger(__name__)
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _CONFIG_DEFAULTS_DIR = _REPO_ROOT / "config" / "defaults"
 _MOCKUPS_CONFIG_PATH = _CONFIG_DEFAULTS_DIR / "mockups.json"
+# Wording for the Files-included block + the prompt's sizes clause/rule
+# (config over code). Deliberately NOT part of DigitalFilesConfig: that is
+# hashed into every built draft's plan.
+_WORDING_PATH = _CONFIG_DEFAULTS_DIR / "prompts" / "digital_copy_wording.json"
+# After this many refused generations for one draft (since its last
+# listingdraft.created) the LLM is no longer called until a --force rebuild.
+MAX_COPY_REFUSALS = 3
 
 
 def build_copy_adapter(cfg: ListingConfig, *, live: bool) -> CopyAdapter:
@@ -46,6 +55,7 @@ def build_copy_adapter(cfg: ListingConfig, *, live: bool) -> CopyAdapter:
         prompt_template=prompt_template,
         pricing=cfg.copy_.est_cost_per_mtok,
         temperature=cfg.copy_.temperature,
+        sizes_wording=load_wording(),
     )
 
 
@@ -72,8 +82,118 @@ def _physical_format_label(product_format: str | None) -> str:
 
 
 def _disclosure_line() -> str:
-    cfg = json.loads(_MOCKUPS_CONFIG_PATH.read_text(encoding="utf-8"))
-    return cfg["listing_copy"]["ai_disclosure_line"]
+    # Read from the wording file, not mockups.json: mockups.json feeds the
+    # mockup config_hash -> set_key -> draft_id, so editing it there would
+    # re-key every draft (incl. photos already live). 2026-11-22.
+    return load_wording()["ai_disclosure_line"]
+
+
+def load_wording() -> dict:
+    return json.loads(_WORDING_PATH.read_text(encoding="utf-8"))
+
+
+def _ratio_label(cfg: ListingConfig, key: str, wording: dict) -> str:
+    assert cfg.digital_files is not None
+    if key in wording["ratio_labels"]:
+        return wording["ratio_labels"][key]
+    spec = next((r for r in cfg.digital_files.ratios if r.key == key), None)
+    return f"{spec.short:g}:{spec.long:g}" if spec is not None else key
+
+
+def files_included_block(plan: FilePlan, cfg: ListingConfig) -> str:
+    """Deterministic "Files included" text, one line per planned file (wording
+    from prompts/digital_copy_wording.json). Appended AFTER the size guard
+    runs; push re-checks stored copy, where this block passes by construction
+    (it names only sizes the plan delivers)."""
+    assert cfg.digital_files is not None
+    w = load_wording()
+    full = next((r for r in cfg.digital_files.ratios if r.key == "full"), None)
+    full_ratio = f"{full.short:g}:{full.long:g}" if full is not None else ""
+    lines = [w["files_header"].format(count=len(plan.files))]
+    for entry in plan.files:
+        if entry.key == "full":
+            label = (
+                w["full_label"].format(ratio=full_ratio) if entry.sizes else w["full_label_unsized"]
+            )
+        else:
+            label = _ratio_label(cfg, entry.key, w)
+        if entry.sizes:
+            lines.append(
+                w["file_line_sized"].format(
+                    label=label, sizes=", ".join(entry.sizes), ppi=cfg.digital_files.ppi
+                )
+            )
+        else:
+            lines.append(w["file_line_unsized"].format(label=label))
+    return "\n".join(lines)
+
+
+def copy_sizes_problem(
+    cfg: ListingConfig, plan: FilePlan, title: str, description: str, tags: list[str]
+) -> list[str]:
+    """Undelivered print sizes named in the copy (empty = fine)."""
+    assert cfg.digital_files is not None
+    return undelivered_sizes([title, description, *tags], plan, cfg.digital_files)
+
+
+def copy_refusals(conn: sqlite3.Connection, user_id: int, draft_id: str) -> int:
+    """copy.refused events for this draft since its last listingdraft.created
+    (a --force rebuild re-emits created, which resets the counter)."""
+    last_created = max(
+        (
+            e.id or 0
+            for e in read_all(conn, "listingdraft.created")
+            if e.user_id == user_id and e.payload.get("draft_id") == draft_id
+        ),
+        default=0,
+    )
+    return sum(
+        1
+        for e in read_all(conn, "copy.refused")
+        if e.user_id == user_id
+        and e.payload.get("draft_id") == draft_id
+        and (e.id or 0) > last_created
+    )
+
+
+def _record_usage(
+    conn: sqlite3.Connection,
+    user_id: int,
+    draft_id: str,
+    cfg: ListingConfig,
+    usage: CopyUsage | None,
+) -> None:
+    if usage is None:
+        return
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="llm.call",
+            payload={
+                "provider": cfg.copy_.provider,
+                "model": cfg.copy_.model,
+                "purpose": "listing_copy",
+                "draft_id": draft_id,
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+                "est_cost_usd": usage.est_cost_usd,
+            },
+        ),
+    )
+
+
+def _refuse(
+    conn: sqlite3.Connection, user_id: int, draft_id: str, reason: str, offending: list[str]
+):
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="copy.refused",
+            payload={"draft_id": draft_id, "reason": reason, "offending": offending},
+        ),
+    )
 
 
 _DIGITAL_MARKERS = ("digital download", "instant download", "printable")
@@ -97,6 +217,7 @@ def _build_inputs(
     *,
     medium: str = "digital",
     product_format: str | None = None,
+    plan: FilePlan | None = None,
 ) -> CopyInputs:
     house_style = (_CONFIG_DEFAULTS_DIR / cfg.copy_.house_style_path).read_text(encoding="utf-8")
 
@@ -134,7 +255,9 @@ def _build_inputs(
         rationale=score_row["rationale"] if score_row else None,
         orientation=orientation,
         format=format_label,
-        sizes=wyg["sizes"],
+        # A file plan replaces the global size list: the prompt must not claim
+        # sizes the files don't deliver (design §7); copy gets the block instead.
+        sizes=[] if plan is not None else wyg["sizes"],
         formats=wyg["formats"],
         is_physical=is_physical,
     )
@@ -154,6 +277,7 @@ def generate_copy(
     soft_cap_usd: float,
     medium: str = "digital",
     product_format: str | None = None,
+    plan: FilePlan | None = None,
 ) -> bool:
     """Appends listingdraft.copy_generated (+ llm.call when usage is present)
     for one draft. Returns False (no event appended) when a live call is
@@ -167,7 +291,13 @@ def generate_copy(
     the default. If a physical draft's generated copy still reads as a
     digital download (a live model ignoring the prompt), it is refused the
     same retryable way a parse error is -- no mislabeled listing is ever
-    written."""
+    written.
+
+    `plan` (digital, digital_files configured) is the draft's recorded file
+    plan -- the single source of truth for sizes: copy that names a print size
+    the plan does not deliver is refused the same retryable way, and a
+    deterministic "Files included" block is appended. plan=None is the
+    legacy behaviour, unchanged."""
     if live and monthly_spend(conn, user_id) >= soft_cap_usd:
         logger.warning(
             "monthly llm.call soft cap reached (>= %.2f usd); refusing live listing "
@@ -177,12 +307,28 @@ def generate_copy(
         )
         return False
 
+    if copy_refusals(conn, user_id, draft_id) >= MAX_COPY_REFUSALS:
+        logger.warning(
+            "copy refused %d times for draft %s; not calling the LLM again until a "
+            "--force rebuild (needs operator review)",
+            MAX_COPY_REFUSALS,
+            draft_id,
+        )
+        return False
+
     inputs = _build_inputs(
-        conn, user_id, landing_file_id, photo_id, cfg, medium=medium, product_format=product_format
+        conn,
+        user_id,
+        landing_file_id,
+        photo_id,
+        cfg,
+        medium=medium,
+        product_format=product_format,
+        plan=plan,
     )
     try:
         result = adapter.generate_copy(inputs, model=cfg.copy_.model)
-    except CopyParseError:
+    except CopyParseError as exc:
         # A malformed/truncated provider response is a per-draft, retryable
         # failure -- not a reason to kill the whole run. Same "no event
         # appended, fill-forward picks it up next time" contract as the
@@ -192,7 +338,16 @@ def generate_copy(
             draft_id,
             exc_info=True,
         )
+        # Billed-but-unusable: record the spend and count it toward the
+        # refusal cap, or a live model that keeps returning junk is retried
+        # (and paid for) every run.
+        _record_usage(conn, user_id, draft_id, cfg, exc.usage)
+        _refuse(conn, user_id, draft_id, "unparseable", [])
         return False
+
+    # Bill the call before any guard: a refused generation was still paid for,
+    # and the monthly cap must see it or retries are unbounded.
+    _record_usage(conn, user_id, draft_id, cfg, result.usage)
 
     # Medium guard: a physical POD listing must never carry digital-download
     # copy. If the generated title/description reads as a digital download
@@ -206,9 +361,27 @@ def generate_copy(
             "(will retry next run) rather than mislabel a physical listing",
             draft_id,
         )
+        _refuse(conn, user_id, draft_id, "digital_markers", [])
         return False
 
+    if plan is not None and not inputs.is_physical:
+        bad = copy_sizes_problem(
+            cfg, plan, result.verdict.title, result.verdict.description, result.verdict.tags
+        )
+        if bad:
+            logger.warning(
+                "copy for draft %s names sizes its file plan does not deliver "
+                "(offending: %s; plan delivers: %s); refusing it (will retry next run)",
+                draft_id,
+                ", ".join(bad),
+                ", ".join(plan_sizes(plan)) or "none",
+            )
+            _refuse(conn, user_id, draft_id, "undelivered_sizes", bad)
+            return False
+
     description = result.verdict.description
+    if plan is not None and not inputs.is_physical:
+        description = f"{description}\n\n{files_included_block(plan, cfg)}"
     # ponytail: M5a always builds the listing images from the M4 mockup set,
     # so "carries room mockups" == "has any images" for this milestone; a
     # per-image template_id check would be needed if a non-mockup image path
@@ -235,23 +408,5 @@ def generate_copy(
             },
         ),
     )
-
-    if result.usage is not None:
-        append(
-            conn,
-            Event(
-                user_id=user_id,
-                type="llm.call",
-                payload={
-                    "provider": cfg.copy_.provider,
-                    "model": cfg.copy_.model,
-                    "purpose": "listing_copy",
-                    "draft_id": draft_id,
-                    "input_tokens": result.usage.input_tokens,
-                    "output_tokens": result.usage.output_tokens,
-                    "est_cost_usd": result.usage.est_cost_usd,
-                },
-            ),
-        )
 
     return True

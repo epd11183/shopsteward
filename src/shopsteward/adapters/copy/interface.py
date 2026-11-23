@@ -72,4 +72,11 @@ class CopyAdapter(Protocol):
 
 
 class CopyParseError(RuntimeError):
-    """Raised when a copy-provider response cannot be parsed into a CopyVerdict."""
+    """Raised when a copy-provider response cannot be parsed into a CopyVerdict.
+
+    `usage` is set when the provider billed the call before the parse failed,
+    so the caller can still record the spend."""
+
+    def __init__(self, message: str, usage: CopyUsage | None = None) -> None:
+        super().__init__(message)
+        self.usage = usage

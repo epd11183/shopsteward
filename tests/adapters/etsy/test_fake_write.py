@@ -184,3 +184,60 @@ def test_create_shop_section_ids_are_sequential() -> None:
     second = adapter.create_shop_section("National Parks")
     assert second.shop_section_id == first.shop_section_id + 1
     assert [name for name, _ in adapter.calls] == ["create_shop_section", "create_shop_section"]
+
+
+def _ready_listing(adapter: FakeEtsyWriteAdapter) -> int:
+    return adapter.create_draft_listing(
+        EtsyDraftSpec(
+            quantity=1,
+            title="t",
+            description="d",
+            price=1.0,
+            who_made="i_did",
+            when_made="2020_2026",
+            taxonomy_id=0,
+            tags=[],
+        )
+    ).listing_id
+
+
+def test_fake_rejects_sixth_file_and_lists_files() -> None:
+    adapter = FakeEtsyWriteAdapter()
+    lid = _ready_listing(adapter)
+    for rank in range(1, 6):
+        adapter.upload_listing_file(lid, b"x", name=f"f{rank}.jpg", rank=rank)
+    with pytest.raises(EtsyWriteError):
+        adapter.upload_listing_file(lid, b"x", name="f6.jpg", rank=6)
+    files = adapter.list_listing_files(lid)
+    assert [(f.rank, f.name, f.size_bytes) for f in files] == [
+        (r, f"f{r}.jpg", 1) for r in range(1, 6)
+    ]
+
+
+def test_fake_rejects_file_over_20mb() -> None:
+    adapter = FakeEtsyWriteAdapter()
+    lid = _ready_listing(adapter)
+    with pytest.raises(EtsyWriteError):
+        adapter.upload_listing_file(lid, bytes(20_000_001), name="big.jpg", rank=1)
+    adapter.upload_listing_file(lid, bytes(20_000_000), name="ok.jpg", rank=1)
+
+
+def test_fake_delete_listing_file_round_trip_frees_cap_and_404s() -> None:
+    adapter = FakeEtsyWriteAdapter()
+    lid = _ready_listing(adapter)
+    refs = [adapter.upload_listing_file(lid, b"x", name=f"f{r}.jpg", rank=r) for r in range(1, 6)]
+    adapter.delete_listing_file(lid, refs[1].listing_file_id)
+    assert [f.name for f in adapter.list_listing_files(lid)] == [
+        "f1.jpg",
+        "f3.jpg",
+        "f4.jpg",
+        "f5.jpg",
+    ]
+    adapter.upload_listing_file(lid, b"x", name="f6.jpg", rank=6)  # cap freed
+    assert (
+        "delete_listing_file",
+        {"listing_id": lid, "listing_file_id": refs[1].listing_file_id},
+    ) in adapter.calls
+    with pytest.raises(EtsyWriteError) as ei:
+        adapter.delete_listing_file(lid, 999_999)
+    assert ei.value.status_code == 404

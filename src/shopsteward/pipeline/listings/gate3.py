@@ -43,12 +43,17 @@ from shopsteward.pipeline.listings.models import (
 from shopsteward.pipeline.listings.pricing import compute_economics, enforce_floor
 from shopsteward.pipeline.listings.projections import rebuild_listings
 from shopsteward.pipeline.listings.push import (
+    FilePlanDriftError,
     _create_stage,
     _emit_push_failed,
     _file_stage,
     _images_stage,
     _landing_path,
+    _prepare_files,
+    _reconcile_files,
     _update_stage,
+    check_sizes_fresh,
+    photo_has_digital_listing,
 )
 
 _QUEUE_STATES = ("pushed", "push_failed", "publish_failed")
@@ -107,7 +112,8 @@ def _row_to_card(
 def _fetch_row(conn: sqlite3.Connection, user_id: int, draft_id: str) -> sqlite3.Row | None:
     return conn.execute(
         "SELECT draft_id, etsy_listing_id, title, tags_json, description, price, currency, "
-        "margin_floor, images_json, file_source, landing_file_id, state, pod_status, format "
+        "margin_floor, images_json, file_source, landing_file_id, state, pod_status, format, "
+        "files_plan_json, set_key "
         "FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
         (user_id, draft_id),
     ).fetchone()
@@ -313,8 +319,35 @@ def retry_push(
         for img in e.payload.get("images", [])
     }
 
+    # Plan keys already attached by prior attempts (legacy events: "full").
+    skip_keys = {
+        e.payload.get("key", "full")
+        for e in read_all(conn, "listingdraft.file_attached")
+        if e.user_id == user_id and e.payload.get("draft_id") == draft_id
+    }
+
+    if listing_id is None:
+        # A superseded draft must not create a second digital listing for a
+        # photo that already has one (config change re-keyed draft_id).
+        blocker = photo_has_digital_listing(conn, user_id, row["landing_file_id"])
+        if blocker is not None:
+            raise ValueError(f"photo already has a digital listing (draft {blocker})")
+
     stage = resume_stage
     try:
+        prepared = None
+        if listing_id is None:
+            check_sizes_fresh(conn, user_id, cfg, row)
+        if listing_id is None or resume_stage in ("create", "image", "file"):
+            # Encode every not-yet-attached file before touching Etsy. A failure
+            # here keeps stage = resume_stage so the next retry still re-runs
+            # every stage from where the push really stopped.
+            if listing_id is not None:
+                _reconcile_files(
+                    conn, user_id, adapter, draft_id, listing_id, cfg,
+                    row["files_plan_json"], landing_path, skip_keys,
+                )  # fmt: skip
+            prepared = _prepare_files(cfg, row["files_plan_json"], landing_path, skip_keys)
         if listing_id is None:
             stage = "create"
             listing_id = _create_stage(conn, user_id, adapter, cfg, draft_id, row, tags)
@@ -341,11 +374,14 @@ def retry_push(
                 listing_id,
                 landing_path,
                 cfg.etsy.sellable_max_bytes,
+                prepared=prepared,
+                file_source=row["file_source"],
+                skip_keys=skip_keys,
             )
 
         stage = "update"
         _update_stage(adapter, listing_id, row, tags)
-    except (EtsyWriteError, OSError) as exc:
+    except (EtsyWriteError, OSError, FilePlanDriftError) as exc:
         _emit_push_failed(conn, user_id, draft_id, listing_id, stage, exc)
         rebuild_listings(conn)
         return _card_for(conn, user_id, draft_id, cfg)

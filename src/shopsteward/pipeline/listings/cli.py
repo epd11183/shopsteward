@@ -4,6 +4,7 @@ convention. `archive_app` (registered as `shopsteward archive` at the root
 CLI) is the source-photo-match backfill (design: source-photo-match):
 operator-invoked, dry-run by default, never autonomous."""
 
+import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -13,6 +14,8 @@ if TYPE_CHECKING:
     from shopsteward.adapters.etsy.live import LiveEtsyAdapter
 
 listings_app = typer.Typer(no_args_is_help=True, help="Digital-direct Etsy listing drafts.")
+config_app = typer.Typer(no_args_is_help=True, help="Stored listing config.")
+listings_app.add_typer(config_app, name="config")
 archive_app = typer.Typer(no_args_is_help=True, help="Local archive / source-photo-match backfill.")
 
 
@@ -274,6 +277,313 @@ def reset_cmd(
             typer.secho(str(exc), fg="red")
             raise typer.Exit(code=1) from exc
         typer.echo(f"listings reset: {report.model_dump()}")
+    finally:
+        conn.close()
+
+
+def _fail(msg: str) -> typer.Exit:
+    typer.secho(msg, fg="red")
+    return typer.Exit(code=1)
+
+
+@config_app.command("sync-defaults")
+def config_sync_defaults() -> None:
+    """Add top-level keys present in config/defaults/listing.json but missing
+    from the stored config (never overwrites existing values)."""
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.pipeline.listings import config as listing_config
+    from shopsteward.pipeline.listings.projections import rebuild_listings
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        listing_config.seed(conn, DEFAULT_USER_ID)
+        rebuild_listings(conn)
+        added = listing_config.sync_defaults(conn, DEFAULT_USER_ID)
+        typer.echo(f"added keys: {added}" if added else "nothing missing; stored config unchanged")
+    finally:
+        conn.close()
+
+
+@config_app.command("set")
+def config_set(
+    key: Annotated[str, typer.Argument(help="Dotted path of an existing key")],
+    value: Annotated[str, typer.Argument(help="JSON value: a quoted string, 5, null, {...}")],
+) -> None:
+    """Set one stored config value; the whole config is re-validated first."""
+    import json
+
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.pipeline.listings import config as listing_config
+    from shopsteward.pipeline.listings.projections import rebuild_listings
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise _fail(f"value is not valid JSON: {exc}") from exc
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        listing_config.seed(conn, DEFAULT_USER_ID)
+        rebuild_listings(conn)
+        before = listing_config.config_hash(listing_config.get_config(conn, DEFAULT_USER_ID))
+        try:
+            new_cfg = listing_config.set_value(conn, DEFAULT_USER_ID, key, parsed)
+        except ValueError as exc:
+            raise _fail(str(exc)) from exc
+        typer.echo(f"set {key} = {json.dumps(parsed)}")
+        if listing_config.config_hash(new_cfg) != before:
+            typer.secho(
+                "warning: this changes the config hash; unpushed drafts will be re-drafted "
+                "on the next build and only the newest draft per photo will be pushed; "
+                "photos already on Etsy are skipped.",
+                fg="yellow",
+            )
+    finally:
+        conn.close()
+
+
+def _resolve_landing_file(
+    conn: sqlite3.Connection, landing_file_id: str | None, listing_id: int | None
+) -> str:
+    from shopsteward.pipeline.listings.source_assets import resolve_source
+    from shopsteward.settings import DEFAULT_USER_ID
+
+    if (landing_file_id is None) == (listing_id is None):
+        raise _fail("Give exactly one of <landing_file_id> or --listing-id.")
+    if listing_id is not None:
+        ref = resolve_source(conn, DEFAULT_USER_ID, listing_id)
+        if ref is None or ref.landing_file_id is None:
+            raise _fail(f"No landing file linked to listing {listing_id} (adopt it first).")
+        return ref.landing_file_id
+    assert landing_file_id is not None
+    return landing_file_id
+
+
+def _landing_path(conn: sqlite3.Connection, landing_file_id: str) -> str:
+    from shopsteward.settings import DEFAULT_USER_ID
+
+    row = conn.execute(
+        "SELECT path FROM proj_landing_files WHERE user_id=? AND file_id=?",
+        (DEFAULT_USER_ID, landing_file_id),
+    ).fetchone()
+    if row is None:
+        raise _fail(f"Unknown landing file {landing_file_id}.")
+    return row["path"]
+
+
+@listings_app.command("crop-focus")
+def crop_focus_cmd(
+    landing_file_id: Annotated[str | None, typer.Argument()] = None,
+    listing_id: Annotated[int | None, typer.Option("--listing-id")] = None,
+    x: Annotated[float | None, typer.Option("--x", help="0..1 from the left")] = None,
+    y: Annotated[float | None, typer.Option("--y", help="0..1 from the top")] = None,
+    clear: Annotated[bool, typer.Option("--clear", help="Reset to centred")] = False,
+) -> None:
+    """Set (or --clear) the operator crop focal point for a landing file."""
+    from pydantic import ValidationError
+
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.pipeline.listings import crop_focus
+    from shopsteward.pipeline.listings.projections import rebuild_listings
+    from shopsteward.pipeline.projections import rebuild_pipeline
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    has_xy = x is not None and y is not None
+    if clear == has_xy or (x is None) != (y is None):
+        raise _fail("Pass both --x and --y, or --clear.")
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        rebuild_pipeline(conn)
+        rebuild_listings(conn)
+        file_id = _resolve_landing_file(conn, landing_file_id, listing_id)
+        _landing_path(conn, file_id)
+        if clear:
+            crop_focus.clear_crop_focus(conn, DEFAULT_USER_ID, file_id)
+            typer.echo(f"crop focus cleared for {file_id[:12]}")
+        else:
+            assert x is not None and y is not None
+            try:
+                crop_focus.set_crop_focus(conn, DEFAULT_USER_ID, file_id, x, y)
+            except ValidationError as exc:
+                raise _fail(f"--x/--y must be within [0, 1]: {exc}") from exc
+            typer.echo(f"crop focus for {file_id[:12]} = ({x}, {y})")
+        # Design section 5: warn only; v1 never replaces already-uploaded files.
+        pushed = conn.execute(
+            "SELECT 1 FROM proj_listing_drafts WHERE user_id=? AND landing_file_id=? "
+            "AND etsy_listing_id IS NOT NULL LIMIT 1",
+            (DEFAULT_USER_ID, file_id),
+        ).fetchone()
+        if pushed is not None:
+            typer.secho(
+                "warning: a draft for this photo is already pushed; "
+                "already-uploaded files are NOT replaced.",
+                fg="yellow",
+            )
+        planned = conn.execute(
+            "SELECT 1 FROM proj_listing_drafts WHERE user_id=? AND landing_file_id=? "
+            "AND etsy_listing_id IS NULL AND files_plan_json IS NOT NULL LIMIT 1",
+            (DEFAULT_USER_ID, file_id),
+        ).fetchone()
+        if planned is not None:
+            typer.secho(
+                "warning: an unpushed draft for this photo already has a file plan "
+                "recorded with the old focus; run `listings build --force` to re-plan.",
+                fg="yellow",
+            )
+    finally:
+        conn.close()
+
+
+@listings_app.command("crop-preview")
+def crop_preview_cmd(
+    out: Annotated[Path, typer.Option("--out", help="Output directory")],
+    landing_file_id: Annotated[str | None, typer.Argument()] = None,
+    listing_id: Annotated[int | None, typer.Option("--listing-id")] = None,
+) -> None:
+    """Write quick downscaled JPEG looks of each planned file (NOT the
+    sellable files: no copyright/ICC/EXIF) and print the plan. Falls back to the
+    default digital_files settings when the stored config has none (run
+    `listings config sync-defaults` to align)."""
+    from PIL import Image, ImageOps
+
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.pipeline.listings import config as listing_config
+    from shopsteward.pipeline.listings.crop_focus import get_crop_focus
+    from shopsteward.pipeline.listings.digital_files import photo_dims, plan_files
+    from shopsteward.pipeline.listings.projections import rebuild_listings
+    from shopsteward.pipeline.projections import rebuild_pipeline
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        rebuild_pipeline(conn)
+        listing_config.seed(conn, DEFAULT_USER_ID)
+        rebuild_listings(conn)
+        file_id = _resolve_landing_file(conn, landing_file_id, listing_id)
+        path = _landing_path(conn, file_id)
+        dcfg = (
+            listing_config.get_config(conn, DEFAULT_USER_ID).digital_files
+            or listing_config.load_listing_config().digital_files
+        )
+        if dcfg is None:
+            raise _fail("No digital_files config in the stored config or the defaults.")
+        focus = get_crop_focus(conn, DEFAULT_USER_ID, file_id)
+        plan = plan_files(photo_dims(path), focus, dcfg)
+    finally:
+        conn.close()
+
+    out.mkdir(parents=True, exist_ok=True)
+    typer.echo(f"source {plan.source_dims} focus {plan.focus}")
+    typer.echo(f"{'key':<8} {'rank':>4}  {'crop_box':<28} sizes")
+    with Image.open(path) as src:
+        base = ImageOps.exif_transpose(src).convert("RGB")
+        for entry in plan.files:
+            crop = base.crop(entry.crop_box)
+            crop.thumbnail((1200, 1200))
+            sizes = "-".join(entry.sizes) or "nosize"
+            crop.save(out / f"{entry.key}_{sizes}.jpg", "JPEG", quality=85, comment=b"")
+            box = str(entry.crop_box)
+            typer.echo(f"{entry.key:<8} {entry.rank:>4}  {box:<28} {', '.join(entry.sizes)}")
+
+
+@listings_app.command("backfill-files")
+def backfill_files_cmd(
+    listing_id: Annotated[int | None, typer.Option("--listing-id")] = None,
+    live: Annotated[bool, typer.Option("--live", help="Upload (or --rollback) for real")] = False,
+    rollback: Annotated[
+        bool, typer.Option("--rollback", help="Delete files this backfill uploaded")
+    ] = False,
+) -> None:
+    """Add the multi-ratio crops (ranks 2..N) to live digital listings. Dry-run
+    by default (B0): reads Etsy (list files) but never uploads or deletes. Both
+    modes need the live Etsy write gate (the file list is only on the write
+    adapter). --live uploads; the existing rank-1 file is never touched.
+    --rollback --live --listing-id N deletes only files this backfill uploaded."""
+    from shopsteward.core import projections as core_projections
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.mockups.projections import rebuild_mockups
+    from shopsteward.pipeline.listings import backfill as bf
+    from shopsteward.pipeline.listings import config as listing_config
+    from shopsteward.pipeline.listings.projections import rebuild_listings
+    from shopsteward.pipeline.listings.push import build_etsy_write_adapter
+    from shopsteward.pipeline.live_gate import live_etsy_write_error, live_etsy_write_open
+    from shopsteward.pipeline.projections import rebuild_pipeline
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    if rollback and (not live or listing_id is None):
+        raise _fail("--rollback needs --live and --listing-id.")
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        listing_config.seed(conn, DEFAULT_USER_ID)
+        rebuild_listings(conn)
+        cfg = listing_config.get_config(conn, DEFAULT_USER_ID)
+        if not rollback:  # rollback must work with digital_files null (design section 12)
+            try:
+                bf.check_preconditions(cfg, live=live)
+            except bf.BackfillRefused as exc:
+                raise _fail(str(exc)) from exc
+        if not live_etsy_write_open():
+            raise _fail(live_etsy_write_error())
+        core_projections.rebuild(conn)
+        rebuild_pipeline(conn)
+        rebuild_mockups(conn)
+        rebuild_listings(conn)
+        adapter = build_etsy_write_adapter(live=True)
+
+        if rollback:
+            assert listing_id is not None
+            r = bf.rollback(conn, DEFAULT_USER_ID, adapter, listing_id)
+            typer.echo(f"{listing_id}: {r.status} {r.detail} (files removed: {r.changed})")
+            if r.status in ("refused", "failed", "etsy_error"):
+                raise typer.Exit(code=1)
+            return
+
+        if cfg.digital_files and not cfg.digital_files.copyright_holder:
+            typer.secho("warning: copyright_holder is null; --live would refuse.", fg="yellow")
+        report = bf.backfill(conn, DEFAULT_USER_ID, cfg, adapter, listing_id=listing_id, live=live)
+        for r in report.results:
+            typer.echo(f"{r.listing_id}: {r.status} {r.detail}".rstrip())
+            if r.existing:
+                typer.echo(f"    existing: {', '.join(r.existing)}")
+            if r.to_upload:
+                typer.echo(
+                    f"    {'uploaded' if r.status == 'uploaded' else 'would upload'}: "
+                    f"{', '.join(r.to_upload)}"
+                )
+            if r.undelivered:
+                typer.echo(f"    copy claims undelivered sizes: {', '.join(r.undelivered)}")
+            if r.panel:
+                typer.echo(f"    what-you-get panel: {r.panel}")
+        sources = {r.copy_source for r in report.results if r.copy_source}
+        if "draft" in sources:
+            typer.echo("note: description/tags from draft, may be stale (no synced snapshot).")
+        if "synced" in sources:
+            typer.echo("note: description/tags from the last `sync --live` snapshot; may be stale.")
+        typer.echo(
+            f"{len(report.results)} listings checked, {report.would_get} "
+            f"{'got' if live else 'would get'} files, {report.loses_size} lose a claimed size; "
+            f"other: {report.skip_counts()}"
+        )
+        if not live:
+            typer.echo("Dry-run: nothing written. Re-run with --live to upload.")
+        elif any(r.status in ("failed", "etsy_error", "refused") for r in report.results):
+            raise typer.Exit(code=1)
     finally:
         conn.close()
 

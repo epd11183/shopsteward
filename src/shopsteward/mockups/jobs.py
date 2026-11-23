@@ -23,6 +23,10 @@ from shopsteward.mockups.intents import render_intent
 from shopsteward.mockups.models import MockupConfig, MockupJobResult, StagingTemplate
 from shopsteward.mockups.projections import rebuild_mockups
 from shopsteward.mockups.templates import scan_templates
+from shopsteward.pipeline.listings import config as listing_config
+from shopsteward.pipeline.listings.crop_focus import get_crop_focus
+from shopsteward.pipeline.listings.digital_files import photo_dims, plan_files, plan_sizes
+from shopsteward.pipeline.listings.projections import rebuild_listings
 from shopsteward.pipeline.projections import rebuild_pipeline
 from shopsteward.settings import mockups_dir
 
@@ -99,6 +103,18 @@ def _largest_region_index(template: StagingTemplate) -> int:
     )
 
 
+def _panel_stale(conn: sqlite3.Connection, user_id: int, set_key: str, expected: list[str]) -> bool:
+    """True when the set's digital_whatyougot panel recorded no sizes or different ones."""
+    for row in conn.execute(
+        "SELECT params_json FROM proj_mockups WHERE user_id=? AND set_key=? "
+        "AND intent='digital_whatyougot'",
+        (user_id, set_key),
+    ):
+        if json.loads(row["params_json"] or "{}").get("sizes") != expected:
+            return True
+    return False
+
+
 def _event_params(region_index: int | None, render_params: dict, cfg: MockupConfig) -> dict:
     params: dict = {
         "print_w_in": render_params.get("print_w_in"),
@@ -106,6 +122,8 @@ def _event_params(region_index: int | None, render_params: dict, cfg: MockupConf
         "mat_frac": cfg.render.mat_fraction,
         "out_px": cfg.render.output_long_edge_px,
     }
+    if "sizes" in render_params:
+        params["sizes"] = render_params["sizes"]
     if region_index is not None:
         params["quad_index"] = region_index
     gain = render_params.get("gain")
@@ -143,8 +161,15 @@ def run_mockups(
     rebuild_editing(conn)
     rebuild_pipeline(conn)
     rebuild_mockups(conn)
+    rebuild_listings(conn)
 
     cfg = load_mockup_defaults()
+    try:
+        digital_files = listing_config.get_config(conn, user_id).digital_files
+    except KeyError:
+        # Not seeded yet (catalog-expand runs mockups before build_drafts seeds
+        # it): the shipped defaults are exactly what the seed will store.
+        digital_files = listing_config.load_listing_config().digital_files
     cfg_hash = config_hash(cfg)
     template_library_hash = _template_library_hash(conn, user_id)
     templates = _candidate_templates(conn, user_id)
@@ -168,7 +193,30 @@ def run_mockups(
             "SELECT 1 FROM proj_mockup_sets WHERE user_id=? AND set_key=?",
             (user_id, set_key),
         ).fetchone()
-        if existing and not force:
+        # Per-photo "what you get" sizes (design 2026-11-21 §7): the same plan
+        # the listing copy and push use. Only the panel intent sees photo_cfg.
+        photo_cfg = cfg
+        plan = None
+        if digital_files is not None:
+            try:
+                plan = plan_files(
+                    photo_dims(row["path"]),
+                    get_crop_focus(conn, user_id, landing_file_id),
+                    digital_files,
+                )
+            except OSError:
+                if existing and not force:  # master unreadable: nothing to re-render from
+                    result.skipped_idempotent += 1
+                    continue
+                raise
+        # An existing set whose panel never recorded sizes (legacy) or shows
+        # sizes other than the current plan's is stale: re-render it in place
+        # without --force, or no build path would ever fix it.
+        if (
+            existing
+            and not force
+            and (plan is None or not _panel_stale(conn, user_id, set_key, plan_sizes(plan)))
+        ):
             result.skipped_idempotent += 1
             continue
 
@@ -179,6 +227,11 @@ def run_mockups(
         master = compositor.prep_master(Path(row["path"]), _MASTER_MAX_LONG_EDGE_PX)
         photo_hue = selection.photo_avg_hue(master)
         orientation = compositor.photo_orientation(master.shape[1], master.shape[0])
+
+        if plan is not None:
+            photo_cfg = cfg.model_copy(
+                update={"whatyougot": cfg.whatyougot.model_copy(update={"sizes": plan_sizes(plan)})}
+            )
 
         used_room_types: set[str] = set()
         used_filenames: set[str] = set()
@@ -246,7 +299,7 @@ def run_mockups(
                     files_written += 1
 
             else:
-                out, render_params = render_intent(intent_name, master, None, None, cfg)
+                out, render_params = render_intent(intent_name, master, None, None, photo_cfg)
                 path = _unique_path(out_dir, f"{intent_name}_synthetic", used_filenames)
                 out.save(path, "JPEG", quality=cfg.render.jpeg_quality)
 

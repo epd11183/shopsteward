@@ -6,10 +6,12 @@ VERIFIED -- docs/policy/2026-08-11-autonomy-platform-policy.md entry E16
 (PERMITTED; listing our own original work is the core permitted seller act,
 mechanically identical to E5 gap-fill -- ends in an unpublished Etsy draft,
 Gate 3 is the publish authority), subject to E16's three accuracy
-conditions: (1) the photograph is ours and never AI-generated/AI-edited --
+conditions: (1) the photograph is ours, never AI-generated, and AI never adds to it
+(operator-directed distraction removal is allowed, amended 2026-11-22) --
 the only image transform anywhere in this chain is `images._load_sellable`'s
-deterministic max-quality sRGB JPEG re-encode: no resize, no upscale, no
-fill, no generative step, ever; (2) the advertised print sizes must be
+deterministic max-quality sRGB JPEG re-encode (plus deterministic ratio
+crops for multi-file digital listings): no upscale, no fill, no generative
+step, ever; (2) the advertised print sizes must be
 deliverable by the source file -- enforced by `min_long_edge_px` (design §6);
 (3) AI-assisted copy carries the existing disclosure line -- the copy stage
 (`copy.py`) is unchanged.
@@ -182,15 +184,32 @@ def expand_one(
     )
 
     run_mockups(conn, user_id, photo_id=photo_id)
-    build_drafts(conn, user_id, photo_id=photo_id, live_copy=live_copy, etsy_adapter=adapter)
+    report = build_drafts(
+        conn, user_id, photo_id=photo_id, live_copy=live_copy, etsy_adapter=adapter
+    )
 
     row = conn.execute(
-        "SELECT draft_id FROM proj_listing_drafts WHERE user_id=? AND landing_file_id=?",
+        "SELECT draft_id, title FROM proj_listing_drafts WHERE user_id=? AND landing_file_id=?",
         (user_id, file_id),
     ).fetchone()
-    if row is None:  # pragma: no cover - defensive, the chain above always builds one
+    # A skipped draft (stale "what you get" panel) or one whose generated copy
+    # was refused (undelivered size / refusal cap) says WHY instead of a bare
+    # "no draft was built" -- these are fixed by re-rendering / operator review,
+    # not by retrying blindly.
+    if row is not None and row["title"] is None:
+        from shopsteward.pipeline.listings.copy import MAX_COPY_REFUSALS, copy_refusals
+
+        if copy_refusals(conn, user_id, row["draft_id"]) >= MAX_COPY_REFUSALS:
+            # Terminal: the LLM is no longer called for this draft, so re-running
+            # archive/mockups/build every cycle cannot help.
+            raise StaleTargetError(
+                f"{path}: copy refused {MAX_COPY_REFUSALS}x: needs operator review"
+            )
+    if row is None or (row["title"] is None and report.copy_refused):
+        reasons = "; ".join(report.skip_reasons) or "no reason reported"
         raise RuntimeError(
-            f"{path}: catalog-expand chain completed but no draft was built (file_id={file_id!r})"
+            f"{path}: catalog-expand chain completed but no usable draft was built "
+            f"(file_id={file_id!r}): {reasons}"
         )
     return row["draft_id"]
 

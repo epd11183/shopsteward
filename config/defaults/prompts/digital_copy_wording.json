@@ -1,0 +1,12 @@
+{
+  "ai_disclosure_line": "Room scenes are AI-generated staging mockups. The photograph itself is the artist's original work: it is not AI-generated, and AI is never used to add anything to it.",
+  "files_header": "Files included ({count} print-ready JPEG files):",
+  "file_line_sized": "• {label} — prints {sizes} ({ppi} PPI)",
+  "file_line_unsized": "• {label} — for screens and custom sizes",
+  "full_label": "Full frame ({ratio})",
+  "full_label_unsized": "Full frame",
+  "ratio_labels": { "A": "A-series" },
+  "sizes_clause": " — {sizes}",
+  "sizes_rule_listed": "Mention the available sizes ({sizes}).",
+  "sizes_rule_none": "Do NOT mention any print size, paper size or dimension; the exact file list is appended automatically."
+}

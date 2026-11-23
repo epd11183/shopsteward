@@ -80,7 +80,8 @@ Manager.
 
 - **Local-first.** Your catalog, your machine, your data. SQLite, no cloud
   dependency beyond the APIs you already use.
-- **The AI never edits your photograph.** Vision models score; staging
+- **The AI never adds to your photograph.** Distraction removal is your
+  call when finishing; nothing new is ever generated. Vision models score; staging
   templates are AI-generated empty rooms; the print is composited
   deterministically with Pillow/OpenCV.
 - **The editing module stands alone.** It imports nothing from the Etsy

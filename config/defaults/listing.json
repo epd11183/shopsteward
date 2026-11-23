@@ -52,5 +52,141 @@
     "taxonomy_id": 2078,
     "should_auto_renew": true,
     "sellable_max_bytes": 20000000
+  },
+  "digital_files": {
+    "ppi": 300,
+    "min_retained_fraction": 0.6,
+    "full_ratio_tolerance": 0.01,
+    "max_files": 5,
+    "max_bytes": 20000000,
+    "copyright_holder": "PhotosByEricD",
+    "ratios": [
+      {
+        "key": "full",
+        "short": 2,
+        "long": 3,
+        "sizes": [
+          {
+            "label": "4x6",
+            "inches": [
+              4,
+              6
+            ]
+          },
+          {
+            "label": "8x12",
+            "inches": [
+              8,
+              12
+            ]
+          },
+          {
+            "label": "12x18",
+            "inches": [
+              12,
+              18
+            ]
+          },
+          {
+            "label": "16x24",
+            "inches": [
+              16,
+              24
+            ]
+          },
+          {
+            "label": "20x30",
+            "inches": [
+              20,
+              30
+            ]
+          }
+        ]
+      },
+      {
+        "key": "4x5",
+        "short": 4,
+        "long": 5,
+        "sizes": [
+          {
+            "label": "4x5",
+            "inches": [
+              4,
+              5
+            ]
+          },
+          {
+            "label": "8x10",
+            "inches": [
+              8,
+              10
+            ]
+          },
+          {
+            "label": "16x20",
+            "inches": [
+              16,
+              20
+            ]
+          }
+        ]
+      },
+      {
+        "key": "5x7",
+        "short": 5,
+        "long": 7,
+        "sizes": [
+          {
+            "label": "5x7",
+            "inches": [
+              5,
+              7
+            ]
+          }
+        ]
+      },
+      {
+        "key": "11x14",
+        "short": 11,
+        "long": 14,
+        "sizes": [
+          {
+            "label": "11x14",
+            "inches": [
+              11,
+              14
+            ]
+          }
+        ]
+      },
+      {
+        "key": "A",
+        "short": 210,
+        "long": 297,
+        "sizes": [
+          {
+            "label": "A4",
+            "mm": [
+              210,
+              297
+            ]
+          },
+          {
+            "label": "A3",
+            "mm": [
+              297,
+              420
+            ]
+          },
+          {
+            "label": "A2",
+            "mm": [
+              420,
+              594
+            ]
+          }
+        ]
+      }
+    ]
   }
 }

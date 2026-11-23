@@ -394,6 +394,7 @@ def render_digital_whatyougot(photo: np.ndarray, cfg: MockupConfig) -> tuple[Ima
     w_in, h_in = _synthetic_print_size_inches(pw, ph, cfg)
     params = {
         "intent": "digital_whatyougot",
+        "sizes": list(cfg.whatyougot.sizes),
         "template_id": None,
         "print_w_in": round(w_in, 3),
         "print_h_in": round(h_in, 3),

@@ -26,6 +26,7 @@ from shopsteward.adapters.etsy.models import (
     EtsyShop,
     EtsyShopSection,
     EtsyTaxonomyNode,
+    ListingFile,
 )
 
 BASE = "https://openapi.etsy.com/v3/application"
@@ -233,6 +234,10 @@ class LiveEtsyAdapter:
         return EtsyActiveListingsPage.model_validate(self._get("/listings/active", **params))
 
 
+# Per-request: a 20 MB file can outlast the client's 30 s default on slow links.
+_UPLOAD_TIMEOUT = 300.0
+
+
 class LiveEtsyWriteAdapter:
     """Live Etsy Open API v3 write client (PRD §13 decision 41). A separate
     class from LiveEtsyAdapter -- the read path (M1) and its fixtures stay
@@ -249,7 +254,12 @@ class LiveEtsyWriteAdapter:
         )
 
     def _request(self, method: str, path: str, **kwargs: object) -> dict:
-        resp = self._client.request(method, f"{BASE}{path}", **kwargs)
+        try:
+            resp = self._client.request(method, f"{BASE}{path}", **kwargs)
+        except httpx.HTTPError as exc:
+            # Transport failure (timeout/connect): surface as a normal write
+            # failure so callers record push_failed instead of crashing.
+            raise EtsyWriteError(0, f"transport error: {type(exc).__name__}") from exc
         if resp.status_code >= 400:
             raise EtsyWriteError(resp.status_code, _safe_error(resp))
         return resp.json()
@@ -286,6 +296,7 @@ class LiveEtsyWriteAdapter:
             f"/shops/{self._shop_id}/listings/{listing_id}/images",
             data={"rank": rank},
             files={"image": ("image.jpg", image, "image/jpeg")},
+            timeout=_UPLOAD_TIMEOUT,
         )
         return EtsyImageRef(listing_image_id=body["listing_image_id"], rank=body.get("rank", rank))
 
@@ -297,8 +308,28 @@ class LiveEtsyWriteAdapter:
             f"/shops/{self._shop_id}/listings/{listing_id}/files",
             data={"name": name, "rank": rank},
             files={"file": (name, file, "application/octet-stream")},
+            timeout=_UPLOAD_TIMEOUT,
         )
         return EtsyFileRef(listing_file_id=body["listing_file_id"], rank=body.get("rank"))
+
+    def list_listing_files(self, listing_id: int) -> list[ListingFile]:
+        # getAllListingFiles. `size_bytes` is the integer size; `filesize` is a
+        # human string ("1.2MB") and is ignored. None unless a real integer.
+        body = self._request("GET", f"/shops/{self._shop_id}/listings/{listing_id}/files")
+        out: list[ListingFile] = []
+        for r in body.get("results", []):
+            size = r.get("size_bytes")
+            out.append(
+                ListingFile(
+                    listing_file_id=r["listing_file_id"],
+                    name=r.get("filename"),
+                    rank=r.get("rank"),
+                    size_bytes=size
+                    if isinstance(size, int) and not isinstance(size, bool)
+                    else None,
+                )
+            )
+        return out
 
     def update_listing(self, listing_id: int, fields: EtsyListingUpdate) -> EtsyListing:
         # updateListing is also form-urlencoded (Etsy OpenAPI spec), not
@@ -450,5 +481,17 @@ class LiveEtsyWriteAdapter:
 
     def delete_listing(self, listing_id: int) -> None:
         resp = self._client.delete(f"{BASE}/shops/{self._shop_id}/listings/{listing_id}")
+        if resp.status_code >= 400:
+            raise EtsyWriteError(resp.status_code, _safe_error(resp))
+
+    def delete_listing_file(self, listing_id: int, listing_file_id: int) -> None:
+        # deleteListingFile returns 204 with no body, so _request (which ends in
+        # resp.json()) can't be used; transport errors are mapped the same way.
+        try:
+            resp = self._client.delete(
+                f"{BASE}/shops/{self._shop_id}/listings/{listing_id}/files/{listing_file_id}"
+            )
+        except httpx.HTTPError as exc:
+            raise EtsyWriteError(0, f"transport error: {type(exc).__name__}") from exc
         if resp.status_code >= 400:
             raise EtsyWriteError(resp.status_code, _safe_error(resp))
