@@ -378,9 +378,9 @@ def test_generate_copy_physical_fixture_is_not_labeled_digital(conn, cfg):
     )
     assert ok is True
 
-    payload = [
-        e for e in read_all(conn, "listingdraft.copy_generated") if e.user_id == USER_ID
-    ][0].payload
+    payload = [e for e in read_all(conn, "listingdraft.copy_generated") if e.user_id == USER_ID][
+        0
+    ].payload
     assert "Digital Download" not in payload["title"]
     assert "(Canvas Print)" in payload["title"]
 

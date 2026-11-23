@@ -416,3 +416,26 @@ def test_case_only_rename_still_reconciles(conn, tmp_path):
 
     assert adapter.file_uploads() == [(4, EXPECTED_NAMES[3]), (5, EXPECTED_NAMES[4])]
     assert len(adapter.list_listing_files(1000)) == 5
+
+
+def test_retry_after_reset_ignores_files_attached_to_the_old_listing(conn, tmp_path):
+    """Live 2026-11-22: a fake push attached all 5 keys to listing 1000; after
+    a reset, the real push failed partway and the retry skipped every key."""
+    from shopsteward.core.events import Event, append
+
+    _setup(conn, tmp_path)
+    adapter = CapturingAdapter()
+    build_drafts(conn, USER_ID, etsy_adapter=adapter)
+    draft_id = conn.execute("SELECT draft_id FROM proj_listing_drafts").fetchone()[0]
+    append(conn, Event(user_id=USER_ID, type="listingdraft.reset", payload={"draft_id": draft_id}))
+    rebuild_listings(conn)
+
+    adapter.fail_on_file_call = 8  # 3rd file of the second push (5 + 3)
+    build_drafts(conn, USER_ID, etsy_adapter=adapter)
+    new_id = int(conn.execute("SELECT etsy_listing_id FROM proj_listing_drafts").fetchone()[0])
+    assert new_id != 1000
+
+    adapter.calls.clear()
+    retry_push(conn, USER_ID, draft_id, adapter)
+    assert [rank for rank, _ in adapter.file_uploads()] == [3, 4, 5]
+    assert len(adapter.list_listing_files(new_id)) == 5
