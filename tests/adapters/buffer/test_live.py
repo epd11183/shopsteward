@@ -153,6 +153,8 @@ _BANNED = [
     re.compile(r"buffer\.com/", re.I),
     re.compile(r"instagram\.com/", re.I),
     re.compile(r"etsystatic", re.I),
+    re.compile(r"pinterest\.com/", re.I),
+    re.compile(r"\d{12,}"),
 ]
 
 
@@ -161,5 +163,44 @@ def test_fixtures_hold_no_id_shaped_values(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     for pat in _BANNED:
         assert not pat.search(text), f"{path.name}: matches {pat.pattern}"
-    ids = re.findall(r'"(?:id|channelId|serviceId)":\s*"([^"]*)"', text)
-    assert all(v.startswith("fx-") for v in ids), f"{path.name}: non-fx id {ids}"
+    bad = [v for v in _id_values(json.loads(text)) if not v.startswith("fx-")]
+    assert not bad, f"{path.name}: non-fx id values {bad}"
+
+
+def _id_values(node: object, key: str = "") -> list[str]:
+    """Every string under a key named `id` or ending in `Id`/`Ids`."""
+    if isinstance(node, dict):
+        return [v for k, child in node.items() for v in _id_values(child, k)]
+    if isinstance(node, list):
+        return [v for child in node for v in _id_values(child, key)]
+    is_id_key = key == "id" or key.endswith(("Id", "Ids"))
+    return [node] if is_id_key and isinstance(node, str) else []
+
+
+def test_scrub_guard_catches_unmapped_id_keys() -> None:
+    assert _id_values({"a": {"boardServiceId": "123"}, "tagIds": ["fx-1", "x"]}) == [
+        "123",
+        "fx-1",
+        "x",
+    ]
+
+
+@respx.mock
+def test_unmapped_graphql_error_on_mutation_is_unknown_outcome() -> None:
+    body = {"errors": [{"message": "boom", "extensions": {"code": "INTERNAL_SERVER_ERROR"}}]}
+    respx.post(URL).mock(return_value=httpx.Response(200, json=body))
+    with pytest.raises(BufferUnknownOutcome):
+        _adapter().create_post(SPEC)
+    with pytest.raises(BufferError) as exc:  # a read is never "unknown outcome"
+        _adapter().list_channels()
+    assert not isinstance(exc.value, BufferUnknownOutcome)
+
+
+@respx.mock
+def test_list_channels_skips_unsupported_services() -> None:
+    chans = _fx("channels")
+    chans["data"]["channels"].append(
+        {"id": "fx-channel-3", "service": "tiktok", "name": "fx-name-3", "metadata": None}
+    )
+    _route(_ok("account"), httpx.Response(200, json=chans))
+    assert [c.channel_id for c in _adapter().list_channels()] == ["fx-channel-1", "fx-channel-2"]

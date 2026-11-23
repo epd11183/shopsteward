@@ -8,12 +8,12 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import Any, cast, get_args
 
 import httpx
 
 from shopsteward.adapters.buffer.interface import BufferError, BufferUnknownOutcome
-from shopsteward.adapters.buffer.models import BufferChannel, BufferPost, BufferPostSpec
+from shopsteward.adapters.buffer.models import BufferChannel, BufferPost, BufferPostSpec, Service
 
 BASE_URL = "https://api.buffer.com"
 _PAGE_SIZE = 50
@@ -177,8 +177,13 @@ class LiveBufferAdapter:
         errors = body.get("errors")
         if errors:
             first = errors[0]
-            code = _EXT_CODES.get((first.get("extensions") or {}).get("code", ""), "TRANSPORT")
-            raise BufferError(code, "; ".join(str(e.get("message", "")) for e in errors))
+            code = _EXT_CODES.get((first.get("extensions") or {}).get("code", ""))
+            msg = "; ".join(str(e.get("message", "")) for e in errors)
+            if code is None:
+                # Unmapped (e.g. INTERNAL_SERVER_ERROR): a mutation may have been applied.
+                cls = BufferUnknownOutcome if mutation else BufferError
+                raise cls("TRANSPORT", msg)
+            raise BufferError(code, msg)
         return body.get("data") or {}
 
     def _mutation_result(self, data: dict, field: str) -> dict:
@@ -200,6 +205,9 @@ class LiveBufferAdapter:
         rows = self._gql(_CHANNELS_Q, {"input": {"organizationId": self._org()}})["channels"]
         out = []
         for r in rows:
+            service = str(r.get("service") or "").lower()
+            if service not in get_args(Service):
+                continue  # channels we don't publish to (tiktok, x, ...) are ignored
             boards = {
                 b["name"]: b["serviceId"]
                 for b in ((r.get("metadata") or {}).get("boards") or [])
@@ -208,7 +216,7 @@ class LiveBufferAdapter:
             out.append(
                 BufferChannel(
                     channel_id=r["id"],
-                    service=str(r["service"]).lower(),  # type: ignore[arg-type]
+                    service=cast(Service, service),
                     name=r.get("name") or r.get("displayName") or "",
                     is_disconnected=bool(r.get("isDisconnected")),
                     is_locked=bool(r.get("isLocked")),
