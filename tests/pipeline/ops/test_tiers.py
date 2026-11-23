@@ -47,6 +47,18 @@ def test_tier_floor_starts_a_fresh_capability_at_auto_and_holds_after_demotion()
     assert effective_tier(cap, demoted, floor) == Tier.AUTO
 
 
+def test_effective_tier_for_shows_the_floor_for_registered_and_ladder_otherwise(monkeypatch):
+    from shopsteward.pipeline.ops import tiers
+
+    cap = StubCapability(max_tier=Tier.AUTO)
+    st = CapabilityState(capability=cap.key, tier=Tier.PROPOSE, tier_since="2026-01-01")
+    floor = {cap.key: int(Tier.AUTO)}
+    monkeypatch.setattr(tiers, "REGISTRY", {cap.key: cap})
+    assert tiers.effective_tier_for(cap.key, st, floor) == Tier.AUTO
+    monkeypatch.setattr(tiers, "REGISTRY", {})
+    assert tiers.effective_tier_for(cap.key, st, floor) == Tier.PROPOSE
+
+
 def test_tier_floor_can_never_raise_past_the_python_max_tier():
     # gapfill/catalog_expand-style PROPOSE ceiling: config asking for AUTO is clamped.
     cap = StubCapability(max_tier=Tier.PROPOSE)

@@ -96,6 +96,7 @@ def brief(
         rebuild_core(conn)
         rebuild_ops(conn)
         cfg = ops_config.get_ops_config(conn, DEFAULT_USER_ID)
+        _register_autorenew(False, announce=False)  # effective tiers in AUTONOMY
         report = generate_brief(conn, DEFAULT_USER_ID, cfg)
         brief_text = render_text(report)
         typer.echo(brief_text)
@@ -496,6 +497,7 @@ def status() -> None:
     from shopsteward.pipeline.ops import config as ops_config
     from shopsteward.pipeline.ops.governor import is_halted, month_spend
     from shopsteward.pipeline.ops.projections import capability_states, rebuild_ops
+    from shopsteward.pipeline.ops.tiers import effective_tier_for
     from shopsteward.settings import DEFAULT_USER_ID, db_path
 
     db = db_path()
@@ -525,9 +527,12 @@ def status() -> None:
         )
         typer.echo(f"today: {today_executed} executed, {today_refused} refused")
 
+        _register_autorenew(False, announce=False)
         for cap_key, st in capability_states(conn, DEFAULT_USER_ID).items():
+            eff = effective_tier_for(cap_key, st, cfg.autonomy.tier_floor)
+            ladder = "" if eff == st.tier else f" (ladder {st.tier.name})"
             typer.echo(
-                f"  {cap_key}: tier={st.tier.name} approvals={st.approvals} "
+                f"  {cap_key}: tier={eff.name}{ladder} approvals={st.approvals} "
                 f"rejections={st.rejections} undos={st.undos} executions={st.executions} "
                 f"tier_since={st.tier_since}"
             )
@@ -535,7 +540,7 @@ def status() -> None:
         conn.close()
 
 
-def _register_autorenew(live_autonomy: bool) -> None:
+def _register_autorenew(live_autonomy: bool, *, announce: bool = True) -> None:
     """Shared by `approve`/`undo`: same fake-vs-live construction as `ops
     run` (module docstring). Registers into the module-global REGISTRY so
     approve_action/undo_action can look the capability up by key. Also
@@ -559,7 +564,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
     from shopsteward.pipeline.ops.registry import register
 
     adapter = build_etsy_write_adapter(live=live_autonomy)
-    if not live_autonomy:
+    if not live_autonomy and announce:
         typer.echo("offline (fake adapter) -- no live Etsy calls will be made.")
     register(ListingAutorenewOff(adapter))
     register(ListingAutorenewOn(adapter))
