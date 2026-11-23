@@ -67,6 +67,16 @@ def _encode_form_data(model: pydantic.BaseModel) -> dict[str, str | bool | int |
     return {k: ",".join(v) if isinstance(v, list) else v for k, v in raw.items() if v != []}
 
 
+def _retry_delay(resp: httpx.Response, attempt: int) -> float:
+    """Seconds to wait after a 429: numeric Retry-After, else exponential
+    backoff (an HTTP-date or garbage header falls back too), clamped to 0..60."""
+    try:
+        delay = float(resp.headers.get("Retry-After", ""))
+    except ValueError:
+        delay = 2.0 * (2**attempt)
+    return max(0.0, min(delay, 60.0))
+
+
 def _safe_error(resp: httpx.Response) -> str | None:
     try:
         body = resp.json()
@@ -103,9 +113,7 @@ class LiveEtsyAdapter:
                 return resp.json()
             if attempt == max_attempts - 1:
                 resp.raise_for_status()
-            retry_after = resp.headers.get("Retry-After")
-            delay = float(retry_after) if retry_after else 2.0 * (2**attempt)
-            time.sleep(delay)
+            time.sleep(_retry_delay(resp, attempt))
         raise AssertionError("unreachable")  # pragma: no cover
 
     def _paginate(self, path: str, **params: int | str) -> list[dict]:
@@ -254,12 +262,19 @@ class LiveEtsyWriteAdapter:
         )
 
     def _request(self, method: str, path: str, **kwargs: object) -> dict:
-        try:
-            resp = self._client.request(method, f"{BASE}{path}", **kwargs)
-        except httpx.HTTPError as exc:
-            # Transport failure (timeout/connect): surface as a normal write
-            # failure so callers record push_failed instead of crashing.
-            raise EtsyWriteError(0, f"transport error: {type(exc).__name__}") from exc
+        # GET only: retry Etsy's per-second 429 like LiveEtsyAdapter._get does
+        # (a loop of list_listing_files trips it). Writes are never retried.
+        attempts = 4 if method == "GET" else 1
+        for attempt in range(attempts):
+            try:
+                resp = self._client.request(method, f"{BASE}{path}", **kwargs)
+            except httpx.HTTPError as exc:
+                # Transport failure (timeout/connect): surface as a normal write
+                # failure so callers record push_failed instead of crashing.
+                raise EtsyWriteError(0, f"transport error: {type(exc).__name__}") from exc
+            if resp.status_code != 429 or attempt == attempts - 1:
+                break
+            time.sleep(_retry_delay(resp, attempt))
         if resp.status_code >= 400:
             raise EtsyWriteError(resp.status_code, _safe_error(resp))
         return resp.json()
