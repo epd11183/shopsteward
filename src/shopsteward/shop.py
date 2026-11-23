@@ -110,6 +110,13 @@ def run_shop_build(
         etsy_adapter=etsy_adapter,
     )
 
+    # POD link+enrich share ONE adapter so fake link seeds the dict enrich
+    # reads. Unless --live-gelato, that adapter (and copy) must be FAKE: the
+    # fake link mints placeholder Etsy ids that must never reach live Etsy,
+    # and copy for never-live drafts must not spend LLM tokens.
+    pod_live = live_gelato
+    pod_etsy_adapter = etsy_adapter if pod_live else build_etsy_write_adapter(live=False)
+
     # Costed physical POD drafts (variant selection + pricing + print-file
     # hosting, design §13 slice 1-2) for every eligible winner -- stops at
     # print_file_hosted; provider create/Etsy push/enrichment is Phase C.
@@ -125,7 +132,7 @@ def run_shop_build(
         user_id,
         adapter=build_pod_adapter(
             live=live_gelato,
-            etsy_listings=getattr(etsy_adapter, "listings", None),
+            etsy_listings=getattr(pod_etsy_adapter, "listings", None),
             store_id=pod_config.resolve_store_id(pod_cfg),
         ),
         print_file_host=host,
@@ -136,13 +143,14 @@ def run_shop_build(
     # copy generation + image ordering are the same machinery build_drafts
     # used above, and pod.json carries no image_order/image_cap of its own.
     listing_cfg = listing_config.get_config(conn, user_id)
+    pod_copy_live = live_copy and pod_live
     enriched = enrich_pod_drafts(
         conn,
         user_id,
-        etsy_adapter=etsy_adapter,
-        copy_adapter=build_copy_adapter(listing_cfg, live=live_copy),
+        etsy_adapter=pod_etsy_adapter,
+        copy_adapter=build_copy_adapter(listing_cfg, live=pod_copy_live),
         cfg=listing_cfg,
-        live=live_copy,
+        live=pod_copy_live,
         soft_cap_usd=profile.vision.monthly_soft_cap_usd,
     )
 
