@@ -65,6 +65,7 @@ def test_shipped_tier_floor_covers_exactly_the_undoable_listing_capabilities():
     assert set(floor) == {
         "listing.seo_edit",
         "listing.size_claims_fix",
+        "listing.panel_replace",
         "listing.reprice",
         "listing.deactivate",
         "listing.renew",

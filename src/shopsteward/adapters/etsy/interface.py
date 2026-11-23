@@ -138,6 +138,19 @@ class EtsyWriteAdapter(Protocol):
 
     def create_draft_listing(self, spec: EtsyDraftSpec) -> EtsyListingRef: ...
     def upload_listing_image(self, listing_id: int, image: bytes, *, rank: int) -> EtsyImageRef: ...
+
+    def delete_listing_image(self, listing_id: int, listing_image_id: int) -> None:
+        """deleteListingImage (listings_w; 204). Etsy keeps the image
+        server-side, so attach_listing_image can bring it back."""
+        ...
+
+    def attach_listing_image(
+        self, listing_id: int, listing_image_id: int, *, rank: int
+    ) -> EtsyImageRef:
+        """uploadListingImage with only `listing_image_id`: re-attaches a
+        previously deleted image at `rank` (the undo path)."""
+        ...
+
     def upload_listing_file(
         self, listing_id: int, file: bytes, *, name: str, rank: int
     ) -> EtsyFileRef: ...

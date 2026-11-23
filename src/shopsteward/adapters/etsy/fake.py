@@ -192,6 +192,43 @@ class FakeEtsyWriteAdapter:
         )
         return EtsyImageRef(listing_image_id=image_id, rank=rank)
 
+    def delete_listing_image(self, listing_id: int, listing_image_id: int) -> None:
+        """Etsy keeps a deleted image server-side: park it in `deleted_images`
+        so attach_listing_image can re-attach it."""
+        row = self._require(listing_id)
+        for i, img in enumerate(row["images"]):
+            if img["listing_image_id"] == listing_image_id:
+                row.setdefault("deleted_images", []).append(row["images"].pop(i))
+                break
+        else:
+            raise EtsyWriteError(404, f"unknown listing_image_id {listing_image_id}")
+        self.calls.append(
+            (
+                "delete_listing_image",
+                {"listing_id": listing_id, "listing_image_id": listing_image_id},
+            )
+        )
+
+    def attach_listing_image(
+        self, listing_id: int, listing_image_id: int, *, rank: int
+    ) -> EtsyImageRef:
+        row = self._require(listing_id)
+        parked = row.setdefault("deleted_images", [])
+        for i, img in enumerate(parked):
+            if img["listing_image_id"] == listing_image_id:
+                row["images"].append({"listing_image_id": listing_image_id, "rank": rank})
+                del parked[i]
+                break
+        else:
+            raise EtsyWriteError(404, f"unknown listing_image_id {listing_image_id}")
+        self.calls.append(
+            (
+                "attach_listing_image",
+                {"listing_id": listing_id, "listing_image_id": listing_image_id, "rank": rank},
+            )
+        )
+        return EtsyImageRef(listing_image_id=listing_image_id, rank=rank)
+
     def upload_listing_file(
         self, listing_id: int, file: bytes, *, name: str, rank: int
     ) -> EtsyFileRef:

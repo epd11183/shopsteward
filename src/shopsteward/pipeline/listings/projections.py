@@ -378,6 +378,23 @@ def rebuild_listings(conn: sqlite3.Connection) -> None:
                     (json.dumps(list(by_rank.values())), e.user_id, p["draft_id"]),
                 )
 
+        elif e.type == "listingdraft.panel_replaced":
+            # slice 5b swap (and its undo): the image now at `rank` is `etsy_image_id`.
+            row = conn.execute(
+                "SELECT images_json FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
+                (e.user_id, p["draft_id"]),
+            ).fetchone()
+            if row is not None:
+                imgs = json.loads(row["images_json"] or "[]")
+                for img in imgs:
+                    if img["rank"] == p["rank"] and img.get("intent") == "digital_whatyougot":
+                        img["etsy_image_id"] = p["etsy_image_id"]
+                        img["panel_sizes"] = p.get("sizes")
+                conn.execute(
+                    "UPDATE proj_listing_drafts SET images_json=? WHERE user_id=? AND draft_id=?",
+                    (json.dumps(imgs), e.user_id, p["draft_id"]),
+                )
+
         elif e.type == "listingdraft.push_failed":
             etsy_listing_id = p.get("etsy_listing_id")
             if etsy_listing_id is not None:

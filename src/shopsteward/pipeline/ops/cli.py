@@ -329,6 +329,7 @@ def run_cmd(
     from shopsteward.pipeline.ops.capabilities.catalog_expand import ListingCatalogExpand
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
     from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
+    from shopsteward.pipeline.ops.capabilities.panel_replace import ListingPanelReplace
     from shopsteward.pipeline.ops.capabilities.pinterest_post import SocialPinterestPost
     from shopsteward.pipeline.ops.capabilities.renew import ListingRenew
     from shopsteward.pipeline.ops.capabilities.reprice import ListingReprice
@@ -353,6 +354,7 @@ def run_cmd(
     register(ListingReprice(adapter))
     register(ListingSeoEdit(adapter))
     register(ListingSizeClaimsFix(adapter))
+    register(ListingPanelReplace(adapter))
     register(ListingDeactivate(adapter))
     register(ListingRenew(adapter))
     register(OpsTuneThreshold())  # no adapter -- registers regardless of --live-autonomy
@@ -550,6 +552,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
     from shopsteward.pipeline.ops.capabilities.catalog_expand import ListingCatalogExpand
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
     from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
+    from shopsteward.pipeline.ops.capabilities.panel_replace import ListingPanelReplace
     from shopsteward.pipeline.ops.capabilities.pinterest_post import SocialPinterestPost
     from shopsteward.pipeline.ops.capabilities.renew import ListingRenew
     from shopsteward.pipeline.ops.capabilities.reprice import ListingReprice
@@ -566,6 +569,7 @@ def _register_autorenew(live_autonomy: bool) -> None:
     register(ListingReprice(adapter))
     register(ListingSeoEdit(adapter))
     register(ListingSizeClaimsFix(adapter))
+    register(ListingPanelReplace(adapter))
     register(ListingDeactivate(adapter))
     register(ListingRenew(adapter))
     register(OpsTuneThreshold())
