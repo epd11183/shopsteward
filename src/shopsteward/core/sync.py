@@ -94,7 +94,16 @@ def sync_etsy(conn: sqlite3.Connection, adapter: EtsyAdapter, user_id: int) -> S
                 payload={
                     "listing_id": listing.listing_id,
                     "images": [
-                        img.model_dump(include={"listing_image_id", "rank", "url_570xN"})
+                        img.model_dump(
+                            include={
+                                "listing_image_id",
+                                "rank",
+                                "url_570xN",
+                                "url_fullxfull",
+                                "full_width",
+                                "full_height",
+                            }
+                        )
                         for img in images
                     ],
                 },

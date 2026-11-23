@@ -108,6 +108,7 @@ class EtsyListingImage(BaseModel):
     listing_image_id: int
     rank: int = 1
     url_570xN: str
+    url_fullxfull: str | None = None
     full_width: int | None = None
     full_height: int | None = None
 
