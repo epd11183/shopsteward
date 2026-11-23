@@ -48,7 +48,6 @@ from datetime import UTC, datetime, timedelta
 
 from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.core.events import Event, append, read_all
-from shopsteward.core.sync import read_live_observed
 from shopsteward.pipeline.ops import social as _social
 from shopsteward.pipeline.ops.config import get_ops_config, ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
@@ -64,24 +63,6 @@ class _Target:
     listing_id: int
     title: str
     image_url: str
-
-
-def _image_url(conn: sqlite3.Connection, user_id: int, listing_id: int) -> str | None:
-    """The most recent `etsy.listing.images.observed` payload for this
-    listing (autorenew.py/seo_edit.py's `_latest_observed` precedent) --
-    prefers the rank-1 image, falls back to the first image with a
-    `url_570xN`. Returns None if no usable image has ever been observed."""
-    images: list[dict] | None = None
-    for e in read_live_observed(conn, "etsy.listing.images.observed"):
-        if e.user_id != user_id or e.payload.get("listing_id") != listing_id:
-            continue
-        images = e.payload.get("images") or []
-    if not images:
-        return None
-    by_rank = sorted(
-        (img for img in images if img.get("url_570xN")), key=lambda img: img.get("rank", 1)
-    )
-    return by_rank[0]["url_570xN"] if by_rank else None
 
 
 def _last_pinned_at(conn: sqlite3.Connection, user_id: int, listing_id: int) -> str | None:
@@ -124,7 +105,7 @@ def _candidates(
     now = now or datetime.now(UTC)
     cutoff = now - timedelta(days=cfg.pinterest.cooldown_days)
     for r in rows:
-        image_url = _image_url(conn, user_id, r["listing_id"])
+        image_url = _social.image_url(conn, user_id, r["listing_id"])
         if image_url is None:
             continue
         last_pinned = _last_pinned_at(conn, user_id, r["listing_id"])
