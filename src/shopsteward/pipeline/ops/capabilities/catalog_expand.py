@@ -205,7 +205,9 @@ def expand_one(
             raise StaleTargetError(
                 f"{path}: copy refused {MAX_COPY_REFUSALS}x: needs operator review"
             )
-    if row is None or (row["title"] is None and report.copy_refused):
+    # No title for any reason (refused, or skipped for want of a vision score) is
+    # retryable: never record a titleless draft as an executed expansion.
+    if row is None or row["title"] is None:
         reasons = "; ".join(report.skip_reasons) or "no reason reported"
         raise RuntimeError(
             f"{path}: catalog-expand chain completed but no usable draft was built "

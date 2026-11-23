@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,8 @@ from shopsteward.api import create_app
 from shopsteward.core.db import connect, migrate
 from shopsteward.core.projections import rebuild
 from shopsteward.core.sync import sync_etsy
+
+from .pipeline.listings.helpers import seed_scores_for_landing
 
 FIXTURES = Path(__file__).parent / "fixtures" / "etsy"
 
@@ -241,6 +244,13 @@ def test_mockups_run_and_list_and_image_traversal(tmp_path, monkeypatch):
 # --- M5a slice 4: listings build + Gate 3 ----------------------------------
 
 
+def _score_landing() -> None:
+    # the real flow scores via vision first; digital copy is refused without it
+    sconn = connect(os.environ["SHOPSTEWARD_DB"])
+    seed_scores_for_landing(sconn)
+    sconn.close()
+
+
 def _build_one_pushed_draft_via_api(client, tmp_path, monkeypatch):
     """landing/scan -> mockups/run -> listings/build, all through the API,
     mirroring the real operator flow. Returns the pushed draft_id."""
@@ -257,6 +267,8 @@ def _build_one_pushed_draft_via_api(client, tmp_path, monkeypatch):
     mockups_resp = client.post("/api/pipeline/mockups/run", json={})
     assert mockups_resp.status_code == 200, mockups_resp.text
     assert mockups_resp.json()["mockups_written"] > 0
+
+    _score_landing()
 
     build_resp = client.post("/api/pipeline/listings/build", json={})
     assert build_resp.status_code == 200, build_resp.text
@@ -354,6 +366,7 @@ def test_gate3_retry_after_push_failure(tmp_path, monkeypatch):
 
     client.post("/api/pipeline/landing/scan", json={})
     client.post("/api/pipeline/mockups/run", json={})
+    _score_landing()
     build_resp = client.post("/api/pipeline/listings/build", json={})
     assert build_resp.json()["push_failed"] == 1
 

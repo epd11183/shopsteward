@@ -17,7 +17,12 @@ from shopsteward.pipeline.listings.drafts import build_drafts
 from shopsteward.pipeline.listings.projections import rebuild_listings
 from shopsteward.pipeline.listings.reset import ResetIncomplete, apply_reset, plan_reset
 
-from .helpers import USER_ID, seed_fully_built_draft, seed_landing_file_with_mockup_set
+from .helpers import (
+    USER_ID,
+    seed_fully_built_draft,
+    seed_landing_file_with_mockup_set,
+    seed_scores_for_landing,
+)
 
 runner = CliRunner()
 
@@ -103,6 +108,7 @@ def test_reset_reenables_scan_and_push(conn, tmp_path):
     assert report.landing_files_reset == 1
     assert report.landing is not None
 
+    seed_scores_for_landing(conn)
     third = build_drafts(conn, USER_ID, etsy_adapter=FakeEtsyWriteAdapter())
     assert third.drafts_built == 1
     assert third.pushed == 1

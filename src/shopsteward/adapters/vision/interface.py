@@ -18,6 +18,7 @@ class VisionVerdict(BaseModel):
     strongest_room_style: str
     one_risk: str
     rationale: str = Field(max_length=500)
+    scene: str | None = None
 
 
 class VisionUsage(BaseModel):

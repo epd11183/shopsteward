@@ -37,7 +37,7 @@ from shopsteward.pipeline.listings.push import push_drafts
 from shopsteward.pipeline.listings.size_guard import undelivered_sizes
 from shopsteward.pipeline.projections import rebuild_pipeline
 
-from .helpers import USER_ID, seed_landing_file_with_mockup_set
+from .helpers import USER_ID, seed_landing_file_with_mockup_set, seed_score
 
 DRAFT_ID = "draft-1"
 IMAGE = ListingImage(path="/mockups/single.jpg", intent="single", rank=1)
@@ -90,6 +90,8 @@ def cfg(conn):
 
 
 def _generate(conn, cfg, adapter, plan):
+    seed_score(conn, "photo-1")
+    rebuild_pipeline(conn)
     return generate_copy(
         conn, USER_ID, DRAFT_ID, "f" * 64, "photo-1", [IMAGE], adapter, cfg,
         live=False, soft_cap_usd=10.0, plan=plan,

@@ -47,7 +47,15 @@ they're actually warranted, not as a default when uncertain.
 
 Return ONLY a JSON object with these exact fields:
 - commercial_score: integer 0-100, per the bands above
-- subject: 1-3 words naming the main subject
+- subject: 1-3 words naming the main subject. If unsure between similar
+  species, name the broader group instead of guessing (for example "ground
+  squirrel", not "chipmunk")
+- scene: 2-3 factual sentences describing ONLY what is visible: the exact
+  species and the exact count of animals; what they are doing; the setting
+  and ground (snow, grass, rocks, water); season cues; light and sky; the
+  background. No location names unless unmistakable. No mood words. If
+  unsure between similar species, name the broader group instead of
+  guessing (for example "a ground squirrel", not "a chipmunk")
 - strongest_room_style: 1-3 words naming the decor style this best suits
 - one_risk: a short phrase naming the single biggest risk to a sale
 - rationale: a rationale for the score, 140 characters or fewer

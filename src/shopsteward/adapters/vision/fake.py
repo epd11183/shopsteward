@@ -33,6 +33,7 @@ class FixtureVisionAdapter:
             strongest_room_style="neutral",
             one_risk="none flagged (fixture)",
             rationale=f"deterministic fixture verdict, score={score}",
+            scene="fixture scene: one animal standing on rocks under a clear sky.",
         )
         return VisionResult(verdict=verdict, usage=None)
 

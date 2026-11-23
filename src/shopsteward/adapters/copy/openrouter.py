@@ -120,6 +120,7 @@ class OpenRouterCopyAdapter:
             strongest_room_style=inputs.strongest_room_style or "unspecified",
             one_risk=inputs.one_risk or "unspecified",
             rationale=inputs.rationale or "unspecified",
+            scene=inputs.scene or "not available; stay general",
             orientation=inputs.orientation,
             format=inputs.format,
             sizes=sizes,

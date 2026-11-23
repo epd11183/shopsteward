@@ -24,6 +24,9 @@ from shopsteward.pipeline.ops.models import RefusalReason, Tier
 from shopsteward.pipeline.ops.projections import rebuild_ops
 from shopsteward.pipeline.ops.registry import REGISTRY, register
 from shopsteward.pipeline.ops.runner import approve_action, reject_action, run
+from shopsteward.pipeline.projections import rebuild_pipeline
+
+from ..listings.helpers import seed_score
 
 USER_ID = 1
 TODAY = datetime.now(UTC).date()
@@ -133,6 +136,10 @@ def test_propose_approve_pushes_a_gate3_card_then_stops_reproposing(conn, tmp_pa
 
     action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
 
+    # Digital copy needs a vision signal; adopt names the photo from the file hash.
+    seed_score(conn, f"file-{hashlib.sha256(photo_path.read_bytes()).hexdigest()[:12]}")
+    rebuild_pipeline(conn)
+
     # 2. approve_action() against a FakeEtsyWriteAdapter -> one pushed Gate-3
     # card with real title/price/etsy_listing_id.
     approved = approve_action(
@@ -227,9 +234,13 @@ def test_pace_exhausted_refuses_never_raises_never_terminalizes(conn, tmp_path, 
     )
     _enable_asset_store(conn, tmp_path)
     folder = tmp_path / "candidates"
-    _candidate_image(folder, "one.jpg")
+    photo1 = _candidate_image(folder, "one.jpg")
     photo2 = _candidate_image(folder, "two.jpg", ellipse=True)  # distinct pHash, not a dup
     cfg = _apply_ops_cfg_max_new_per_week(conn, tmp_path, source_folder=folder, max_new_per_week=1)
+    # Digital copy needs a vision signal; an unscored file is (rightly) a retryable refusal.
+    for p in (photo1, photo2):
+        seed_score(conn, f"file-{hashlib.sha256(p.read_bytes()).hexdigest()[:12]}")
+    rebuild_pipeline(conn)
 
     adapter = FakeEtsyWriteAdapter()
     cap = ListingCatalogExpand(adapter, live_copy=True)
@@ -311,3 +322,29 @@ def test_genuine_staleness_still_raises_and_terminalizes(conn, tmp_path, monkeyp
         e.type for e in read_all(conn, "action.") if e.payload.get("action_id") == action_id
     }
     assert "action.failed" in statuses
+
+
+def test_unscored_photo_is_a_retryable_refusal_not_an_executed_expansion(
+    conn, tmp_path, monkeypatch
+):
+    # No vision score -> copy is skipped -> no title. That must not be recorded as a
+    # done expansion (nothing on the ops path would ever title it later).
+    monkeypatch.setattr(
+        "shopsteward.pipeline.listings.drafts.build_copy_adapter",
+        lambda cfg, *, live: FixtureCopyAdapter(),
+    )
+    _enable_asset_store(conn, tmp_path)
+    folder = tmp_path / "candidates"
+    _candidate_image(folder, "one.jpg")
+    cfg = _apply_ops_cfg_max_new_per_week(conn, tmp_path, source_folder=folder, max_new_per_week=1)
+    cap = ListingCatalogExpand(FakeEtsyWriteAdapter(), live_copy=True)
+    register(cap)
+
+    run(conn, USER_ID, cfg, [cap], today=TODAY, live_autonomy=True)
+    action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
+    approved = approve_action(
+        conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True
+    )
+    assert approved.executed == 0
+    assert read_all(conn, "action.executed") == []
+    assert read_all(conn, "action.failed") == []  # retryable, not terminal
