@@ -88,6 +88,23 @@ def _seed_rising_zero_sales_listing(conn, listing_id=903, title="Rising Listing,
     rebuild_ops(conn)
 
 
+@pytest.fixture(autouse=True)
+def _proven_caption_policy(tmp_path_factory, monkeypatch, _isolated_catalog_candidates):
+    """These tests were written against the `proven` caption policy; the shipped
+    default became `explore` (30-day cooldown) on 2026-11-24. Pin the old
+    policy here so they keep testing what they test."""
+    import json
+
+    path = ops_config.load_ops_config.__defaults__[0]
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    for ch in cfg["caption"]["channels"].values():
+        ch.update(eligibility="proven", cooldown_days=1)
+    new = tmp_path_factory.mktemp("captioncfg") / "ops.json"
+    new.write_text(json.dumps(cfg), encoding="utf-8")
+    monkeypatch.setattr(ops_config.load_ops_config, "__defaults__", (new,))
+    monkeypatch.setattr(ops_config.seed, "__defaults__", (new,))
+
+
 def _cfg(**autonomy_overrides):
     cfg = ops_config.load_ops_config()
     for k, v in autonomy_overrides.items():

@@ -921,6 +921,7 @@ def pin_experiment_readout(
                 title=_title(conn, user_id, listing_id),
                 drafted_at=drafted_date.isoformat(),
                 days_since_posted=(as_of - anchor_date).days,
+                window_days=window_days,
                 baseline_views_per_day=baseline,
                 observed_views_per_day=observed,
                 delta_views_per_day=delta_per_day,

@@ -81,12 +81,12 @@
     "max_len": 2200,
     "channels": {
       "instagram": {
-        "eligibility": "proven",
-        "cooldown_days": 1
+        "eligibility": "explore",
+        "cooldown_days": 30
       },
       "facebook": {
-        "eligibility": "proven",
-        "cooldown_days": 1
+        "eligibility": "explore",
+        "cooldown_days": 30
       }
     }
   },
