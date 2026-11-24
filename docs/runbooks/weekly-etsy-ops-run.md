@@ -10,29 +10,25 @@ listings behind the read-back gate, 2026-11-23; $20/month cap).
 
 ## Gates
 
-The env vars come from `.claude/settings.local.json`. If a command says a gate
-is closed, prefix it inline, e.g. `SHOPSTEWARD_LIVE_AUTONOMY=1 uv run ...`.
+**Run every command through `scripts/ops.sh`** (from the repo root), e.g.
+`scripts/ops.sh sync --live`. It sets every live gate this runbook needs, then
+runs `uv run shopsteward`. Do not set gates by hand and do not try to read
+`.claude/settings.local.json` (the Desktop shell can't; the 2026-11-24 run set
+gates by hand, missed three, and new listings and social posting silently
+did nothing). If a command still says a gate is closed, stop and report it.
 
-| Command | Needs |
-|---|---|
-| `sync --live` | `SHOPSTEWARD_LIVE_ETSY_READ=1` |
-| `ops run/approve/undo/edit-listing` live | `SHOPSTEWARD_LIVE_AUTONOMY=1` **and** `--live-autonomy` |
-| `listings ...` Etsy writes | `SHOPSTEWARD_LIVE_ETSY_WRITE=1` |
-| live copy / vision | `SHOPSTEWARD_LIVE_COPY=1` / `SHOPSTEWARD_LIVE_VISION=1` |
-
-⚠ Running `ops approve` without the autonomy gate executes against a fake
-adapter and burns the proposal. Check the gate first.
+`ops run/approve/undo/edit-listing/replace-file` still need `--live-autonomy`
+on the command itself to act on the real shop.
 
 ## The cycle
 
-1. `uv run shopsteward sync --live`. This pulls listings, receipts and reviews.
-   Then `uv run shopsteward ops buffer-sync --live` (read-only; the gate is set
-   in `.claude/settings.local.json`). It records Buffer posts and metrics, marks
+1. `scripts/ops.sh sync --live`. This pulls listings, receipts and reviews.
+   Then `scripts/ops.sh ops buffer-sync --live` (read-only). It records Buffer posts and metrics, marks
    sent pins posted at their real send time, and feeds the per-channel pacing
    counts. Run it every week: pacing is wrong without it.
-2. `uv run shopsteward ops run`. This is a **dry run by default**. Read what it
+2. `scripts/ops.sh ops run`. This is a **dry run by default**. Read what it
    would do.
-3. `uv run shopsteward ops run --no-dry-run --live-autonomy`. This executes
+3. `scripts/ops.sh ops run --no-dry-run --live-autonomy`. This executes
    every AUTO-tier action inside the governor's caps:
    - listing capabilities: `seo_edit`, `size_claims_fix`, `reprice`,
      `deactivate`, `renew`, `autorenew_off`;
@@ -47,10 +43,11 @@ adapter and burns the proposal. Check the gate first.
      Buffer, at least 4 hours ahead, within each channel's weekly target
      (governor `PACE`). Each can be undone while still queued;
    - capabilities still at PROPOSE stay pending: `gapfill_reprint`,
-     `autorenew_on`.
-4. `uv run shopsteward ops brief`. Its sections are NEEDS YOU, DONE, REFUSED
+     `autorenew_on`, and `listing.reprice` (paused 2026-11-24 after it
+     re-cut prices during the sale; never approve a price cut yourself).
+4. `scripts/ops.sh ops brief`. Its sections are NEEDS YOU, DONE, REFUSED
    and THE SHOP. Report from it.
-5. `uv run shopsteward ops status`. Shows month spend against the $20 cap and
+5. `scripts/ops.sh ops status`. Shows month spend against the $20 cap and
    whether ops is halted.
 6. Missed-run alert: the Windows task "ShopSteward weekly-run heartbeat"
    (daily 09:00, `scripts/ops_heartbeat_alert.ps1`) pops up a desktop alert when
