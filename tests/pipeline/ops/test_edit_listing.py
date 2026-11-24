@@ -108,7 +108,6 @@ def test_real_listing_capabilities_floor_auto_with_undo_and_gapfill_stays_propos
     auto_caps = [
         ListingSeoEdit(fake),
         ListingSizeClaimsFix(fake),
-        ListingReprice(fake),
         ListingDeactivate(fake),
         ListingRenew(fake),
         ListingAutorenewOff(fake),
@@ -117,6 +116,11 @@ def test_real_listing_capabilities_floor_auto_with_undo_and_gapfill_stays_propos
         register(cap)  # registry invariant 1: AUTO needs a callable undo
         assert cap.max_tier == Tier.AUTO and callable(cap.undo)
         assert effective_tier(cap, None, floor) == Tier.AUTO
+
+    # paused 2026-11-24: can run at AUTO (has undo) but its floor entry is gone
+    reprice = ListingReprice(fake)
+    assert reprice.max_tier == Tier.AUTO and callable(reprice.undo)
+    assert effective_tier(reprice, None, floor) == Tier.PROPOSE
 
     # may run at AUTO, but starts at PROPOSE: recurring fees the cap can't see
     on = ListingAutorenewOn(fake)

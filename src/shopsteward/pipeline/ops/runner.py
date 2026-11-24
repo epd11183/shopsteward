@@ -34,6 +34,7 @@ _PIN_CAPABILITY = "social.pinterest_post"
 _DEACTIVATE_CAPABILITY = "listing.deactivate"
 _LISTING_TARGET = "listing"
 
+_NON_LIFECYCLE = {"proposal_deduped"}
 _TERMINAL = {"executed", "refused", "rejected", "undone", "expired", "superseded"}
 
 # Terminal for a *manual* re-approve (approve_action only): a "refused" id is
@@ -136,13 +137,21 @@ class RunReport(BaseModel):
 
 
 def _action_status(conn: sqlite3.Connection, user_id: int, action_id: str) -> str | None:
-    """The latest action.* event type (minus the "action." prefix) recorded
-    for this action_id, or None if it has never been proposed."""
+    """The latest action.* LIFECYCLE event type (minus the "action." prefix)
+    recorded for this action_id, or None if it has never been proposed.
+
+    `action.proposal_deduped` is bookkeeping, not a lifecycle state: counting
+    it made a dry-run-deduped id look "already known" to the next live run,
+    which then skipped both the dedupe check and `action.proposed` and
+    executed it with no proposal to undo from (2026-11-24 weekly run)."""
     status: str | None = None
     for e in read_all(conn, "action."):
         if e.user_id != user_id or e.payload.get("action_id") != action_id:
             continue
-        status = e.type.split(".", 1)[1]
+        kind = e.type.split(".", 1)[1]
+        if kind in _NON_LIFECYCLE:
+            continue
+        status = kind
     return status
 
 
@@ -600,10 +609,24 @@ def _maybe_promote(
     )
 
 
-def _load_proposed_action(conn: sqlite3.Connection, user_id: int, action_id: str) -> ProposedAction:
+def _load_proposed_action(
+    conn: sqlite3.Connection, user_id: int, action_id: str, *, recover_deduped: bool = False
+) -> ProposedAction:
     for e in read_all(conn, "action.proposed"):
         if e.user_id == user_id and e.payload.get("action_id") == action_id:
             return ProposedAction.model_validate(e.payload)
+    if not recover_deduped:
+        raise KeyError(f"no action.proposed found for action_id={action_id!r}, user_id={user_id}")
+    # Undo-only recovery for ids executed under the pre-fix _action_status bug
+    # (approve/reject must never act on a deduped id: that would execute a
+    # duplicate of the still-pending original). Such an
+    # id was deduped against an existing proposal with the SAME capability,
+    # target and inputs_hash (dedupe requires equal hashes), so that proposal,
+    # re-keyed to this id, is exactly what was executed.
+    for e in read_all(conn, "action.proposal_deduped"):
+        if e.user_id == user_id and e.payload.get("action_id") == action_id:
+            original = _load_proposed_action(conn, user_id, e.payload["existing_action_id"])
+            return original.model_copy(update={"action_id": action_id})
     raise KeyError(f"no action.proposed found for action_id={action_id!r}, user_id={user_id}")
 
 
@@ -732,7 +755,7 @@ def undo_action(
     `LIVE_GATED_CAPABILITIES` capability would hit a fresh, empty fake --
     raises `LiveGateBlockedError` BEFORE calling `cap.undo()`, leaving the
     executed action untouched (no `action.undone`, no demotion)."""
-    action = _load_proposed_action(conn, user_id, action_id)
+    action = _load_proposed_action(conn, user_id, action_id, recover_deduped=True)
     cap = _find_capability(capabilities, action.capability)
 
     if _action_status(conn, user_id, action_id) != "executed":

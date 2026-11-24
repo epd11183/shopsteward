@@ -592,6 +592,8 @@ def test_undo_demotes_the_ladder_state_but_effective_tier_stays_auto(conn):
     fake.seed_listing(805, state="active", price=50.0)
     cap = ListingReprice(fake)
     cfg = _cfg(enabled=True, weekly_catalog_pct_cap=1.0)
+    # The shipped floor entry is paused (2026-11-24); this tests the floor mechanism.
+    cfg.autonomy.tier_floor = {**cfg.autonomy.tier_floor, "listing.reprice": int(Tier.AUTO)}
 
     run(conn, USER_ID, cfg, [cap], today=TODAY)
     proposed = [e.payload for e in read_all(conn, "action.proposed")]

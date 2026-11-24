@@ -224,3 +224,68 @@ def test_expired_action_cannot_be_manually_reapproved(conn):
 
     assert report.skipped_idempotent == 1
     assert cap.execute_calls == []
+
+
+# --- 2026-11-24 weekly run: a dry-run dedupe must not let a later live run
+# execute the deduped id with no action.proposed (undo then had nothing) ---
+
+
+def test_dry_run_dedupe_then_live_run_executes_only_proposed_ids_and_undo_works(conn):
+    from shopsteward.pipeline.ops.runner import undo_action
+
+    cfg = _cfg(tier_floor={"stub.dd": 1})  # NOTIFY: auto-executes on a live run
+    cap = StubCapability(key="stub.dd", day=DAY1, targets={"111": {"on": True}})
+    run(conn, USER_ID, cfg, [cap], today=DAY1, dry_run=True)  # pending DAY1 id
+    cap.day = DAY2
+    run(conn, USER_ID, cfg, [cap], today=DAY2, dry_run=True)  # dedupes the DAY2 id
+    run(conn, USER_ID, cfg, [cap], today=DAY2)  # same cfg -> same DAY2 id, live
+
+    proposed = {e.payload["action_id"] for e in read_all(conn, "action.proposed")}
+    executed = [e.payload["action_id"] for e in read_all(conn, "action.executed")]
+    assert len(executed) == 1 and executed[0] in proposed
+    undo_action(conn, USER_ID, executed[0], [cap])
+    assert len(read_all(conn, "action.undone")) == 1
+
+
+def test_undo_recovers_an_id_executed_under_the_old_dedupe_bug(conn):
+    """Ids already executed with no action.proposed (pre-fix) are undoable via
+    the proposal they were deduped against (identical inputs by construction)."""
+    from shopsteward.pipeline.ops.runner import undo_action
+
+    cap = StubCapability(key="stub.rec", day=DAY1, targets={"111": {"on": True}})
+    run(conn, USER_ID, _cfg(), [cap], today=DAY1)
+    original = read_all(conn, "action.proposed")[0].payload["action_id"]
+    orphan = "orphan-executed-id"
+    for etype, payload in (
+        (
+            "action.proposal_deduped",
+            {
+                "action_id": orphan,
+                "capability": "stub.rec",
+                "target_id": "111",
+                "existing_action_id": original,
+            },
+        ),
+        ("action.approved", {"action_id": orphan, "by": "tier:T0"}),
+        (
+            "action.executed",
+            {"action_id": orphan, "before": {"on": False}, "after": {"on": True}, "cost_usd": 0.0},
+        ),
+    ):
+        append(conn, Event(user_id=USER_ID, type=etype, payload=payload))
+    undo_action(conn, USER_ID, orphan, [cap])
+    (undone,) = read_all(conn, "action.undone")
+    assert undone.payload["action_id"] == orphan
+
+
+def test_approve_never_acts_on_a_deduped_id(conn):
+    """The undo-only recovery must not let `ops approve` execute a duplicate of
+    the still-pending original (review 2026-11-24)."""
+    cap = StubCapability(key="stub.ap", day=DAY1, targets={"111": {"on": True}})
+    run(conn, USER_ID, _cfg(), [cap], today=DAY1)
+    cap.day = DAY2
+    run(conn, USER_ID, _cfg(), [cap], today=DAY2)  # dedupes the DAY2 id
+    (deduped,) = read_all(conn, "action.proposal_deduped")
+    with pytest.raises(KeyError):
+        approve_action(conn, USER_ID, deduped.payload["action_id"], [cap], cfg=_cfg(), today=DAY2)
+    assert read_all(conn, "action.executed") == []
