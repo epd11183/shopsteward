@@ -94,13 +94,12 @@ which is this function:
   review reversed that call, and this module's docstring is corrected to
   match).
 
-**Cost accounting -- the honest version** (design §3): Etsy actually charges
-the $0.20 at Gate-3 publish, outside this chassis -- `execute()` does not
-actually spend. `estimated_cost_usd`/`ExecutionResult.cost_usd` still carry
-`0.20` anyway, a deliberate OVER-reserve, because it is the only point the
-governor's `month_spend()` can see. A declined draft is over-counted, which
-fails safe; under-counting would let listings publish against a governor
-that saw $0 spent.
+**Cost accounting** (design §3): Etsy charges the $0.20 at Gate-3 publish,
+outside this chassis -- `execute()` does not spend, so its executed
+`cost_usd` is 0 and `governor.month_spend()` counts the fee once, from the
+`gate3.published` event. `estimated_cost_usd` still carries the fee so the
+governor's pre-execution budget check reserves it. Known ceiling: drafts
+expanded but not yet published are not in `month_spend()`.
 
 **Holdout: no change needed, by construction.**
 `governor._pin_event_dates` does `int(target_id)` and returns `[]` on
@@ -438,7 +437,12 @@ class ListingCatalogExpand:
         return ExecutionResult(
             before={"draft_id": None},
             after={"draft_id": draft_id},
-            cost_usd=action.estimated_cost_usd,
+            # ponytail: executed cost is 0 -- the fee is booked once, at
+            # gate3.published (governor.month_spend_parts). Ceiling: expanded
+            # drafts not yet published are invisible to month_spend, so up to
+            # max_new_per_week fees can overshoot the cap. Upgrade: count
+            # unpublished catalog_expand drafts as pending fees.
+            cost_usd=0.0,
             duration_ms=0,
         )
 

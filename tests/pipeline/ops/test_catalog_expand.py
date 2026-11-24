@@ -158,6 +158,17 @@ def test_propose_approve_pushes_a_gate3_card_then_stops_reproposing(conn, tmp_pa
     # 3. propose() again -> [] -- the file is now a landing file.
     assert cap.propose(conn, USER_ID, cfg) == []
 
+    # 4. the fee is counted exactly once: execute booked $0, publish books one fee.
+    from shopsteward.pipeline.ops.governor import month_spend
+
+    (executed,) = read_all(conn, "action.executed")
+    assert executed.payload["cost_usd"] == 0.0
+    month = datetime.now(UTC).isoformat()[:7]
+    fee = cfg.catalog_expansion.listing_fee_usd
+    assert month_spend(conn, USER_ID, month, cfg) == 0.0
+    gate3.publish(conn, USER_ID, card.draft_id, adapter)
+    assert month_spend(conn, USER_ID, month, cfg) == fee
+
 
 # --- the resolution bar (design §6.2 / E16 condition 2) ----------------------
 

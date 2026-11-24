@@ -699,6 +699,9 @@ class BriefAutonomy(BaseModel):
     enabled: bool
     halted: bool
     month_spend_usd: float
+    month_actions_usd: float = 0.0
+    month_listing_fees_usd: float = 0.0
+    month_llm_usd: float = 0.0
     monthly_spend_cap_usd: float
     ladder: list[BriefLadderRow] = Field(default_factory=list)
 

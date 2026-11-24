@@ -496,8 +496,9 @@ def status() -> None:
 
     from shopsteward.core.db import connect, migrate
     from shopsteward.core.events import read_all
+    from shopsteward.pipeline.llm_ledger import monthly_spend
     from shopsteward.pipeline.ops import config as ops_config
-    from shopsteward.pipeline.ops.governor import is_halted, month_spend
+    from shopsteward.pipeline.ops.governor import is_halted, month_spend_parts
     from shopsteward.pipeline.ops.projections import capability_states, rebuild_ops
     from shopsteward.pipeline.ops.tiers import effective_tier_for
     from shopsteward.settings import DEFAULT_USER_ID, db_path
@@ -514,8 +515,12 @@ def status() -> None:
 
         typer.echo(f"autonomy.enabled: {cfg.autonomy.enabled}")
         typer.echo(f"halted: {is_halted(conn, DEFAULT_USER_ID)}")
-        spend = month_spend(conn, DEFAULT_USER_ID, today.isoformat()[:7])
-        typer.echo(f"month spend: ${spend:.2f} of ${cfg.autonomy.monthly_spend_cap_usd:.2f} cap")
+        acts, fees = month_spend_parts(conn, DEFAULT_USER_ID, today.isoformat()[:7], cfg)
+        llm = monthly_spend(conn, DEFAULT_USER_ID, today.isoformat()[:7])
+        typer.echo(
+            f"month spend: ${acts + fees:.2f} of ${cfg.autonomy.monthly_spend_cap_usd:.2f} cap "
+            f"(actions ${acts:.2f}, listing fees ${fees:.2f}); LLM ${llm:.2f} (separate ledger)"
+        )
 
         today_executed = sum(
             1
