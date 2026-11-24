@@ -156,6 +156,7 @@
     "proposal_ttl_days": 14,
     "planner_enabled": true,
     "planner_max_per_capability_per_run": 1,
+    "planner_max_per_run_overrides": {"social.caption_draft": 2, "social.pinterest_post": 2},
     "tier_floor": {
       "listing.seo_edit": 0,
       "listing.size_claims_fix": 0,

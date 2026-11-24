@@ -29,7 +29,7 @@ entirely downstream, in `runner.run()`."""
 import json
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 
 import httpx
 
@@ -41,7 +41,7 @@ from shopsteward.adapters.planner.interface import (
 )
 from shopsteward.core.events import Event, append
 from shopsteward.pipeline.llm_ledger import monthly_spend
-from shopsteward.pipeline.ops import analytics
+from shopsteward.pipeline.ops import analytics, cadence
 from shopsteward.pipeline.ops.capabilities.caption_draft import _candidates as _caption_candidates
 from shopsteward.pipeline.ops.capabilities.pinterest_post import _candidates as _pin_candidates
 from shopsteward.pipeline.ops.capabilities.pinterest_post import _last_pinned_at
@@ -340,6 +340,12 @@ def _build_facts_json(
         # first, a coverage policy, not a proof-first one. materialize()'s
         # _candidates() still re-grounds.
         "pin_eligible_listings": _pin_eligible_listings(conn, user_id, cfg),
+        # S7: posts still owed per Buffer channel this ISO week (all sources).
+        # SQL picks targets, the LLM writes copy; empty when no channel is
+        # configured.
+        "cadence_deficit": cadence.cadence_deficit(
+            conn, user_id, cfg, (as_of or datetime.now(UTC)).date()
+        ),
         "candidate_target_ids": {
             cap.key: [a.target_id for a in cap.propose(conn, user_id, cfg)] for cap in capabilities
         },
@@ -498,7 +504,8 @@ def plan_proposals(
     )
 
     cap_by_key = {cap.key: cap for cap in capabilities}
-    max_per_cap = cfg.autonomy.planner_max_per_capability_per_run
+    default_cap = cfg.autonomy.planner_max_per_capability_per_run
+    overrides = cfg.autonomy.planner_max_per_run_overrides
     kept_counts: dict[str, int] = {}
     proposals: list[ProposedAction] = []
 
@@ -536,7 +543,9 @@ def plan_proposals(
             _drop(conn, user_id, reason, intent.capability_key, intent.target_id)
             continue
 
-        if kept_counts.get(intent.capability_key, 0) >= max_per_cap:
+        if kept_counts.get(intent.capability_key, 0) >= overrides.get(
+            intent.capability_key, default_cap
+        ):
             _drop(conn, user_id, "per_run_cap", intent.capability_key, intent.target_id)
             continue
 

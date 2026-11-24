@@ -364,6 +364,10 @@ class _OpsAutonomy(BaseModel):
     # Per-capability cap on materialized proposals per `plan_proposals()` run
     # (design §10 CPO improvement) -- keeps NEEDS YOU short and high-signal.
     planner_max_per_capability_per_run: int = Field(gt=0, default=1)
+    # Capability key -> per-run cap that replaces the default above for that
+    # capability only (Buffer design §7: a cadence deficit needs more than one
+    # post per run). Default-empty so stored configs still validate.
+    planner_max_per_run_overrides: dict[str, int] = Field(default_factory=dict)
     # Capability key -> the LEAST-autonomous tier its ladder may sit at
     # (0=AUTO, 1=NOTIFY, 2=PROPOSE; default PROPOSE when absent). A fresh
     # capability starts at its floor and demotion can never push it below.

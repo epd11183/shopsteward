@@ -7,9 +7,9 @@ answerable from the log without guesswork.
 Refusal precedence (first hit wins, draft §5 ordering as pinned by the PR1
 contract): HALTED, EXPIRED, POLICY_UNVERIFIED, PRECONDITION, HOLDOUT,
 BUDGET, DAILY_CAP, PER_CAPABILITY_CAP, PACE, INELIGIBLE, PORTFOLIO_CAP.
-PACE (H1, 2026-08-25) is `listing.catalog_expand`-specific today -- see
-that check's own comment below for why it lives here rather than in the
-capability. INELIGIBLE (H2a, 2026-08-25, the SAME reasoning applied to
+PACE (H1, 2026-08-25) covers `listing.catalog_expand` and (S7) per-channel
+Buffer cadence -- see those checks' comments below for why it lives here
+rather than in the capability. INELIGIBLE (H2a, 2026-08-25, the SAME reasoning applied to
 `social.caption_draft`) covers a per-target cooldown/eligibility-mode
 condition -- see that check's own comment below.
 
@@ -54,6 +54,7 @@ from datetime import date
 from pydantic import BaseModel
 
 from shopsteward.core.events import Event, append, read_all
+from shopsteward.pipeline.ops import cadence
 from shopsteward.pipeline.ops.models import OpsConfig, ProposedAction, RefusalReason
 from shopsteward.pipeline.ops.registry import Capability
 from shopsteward.pipeline.ops.timeutil import parse_ts
@@ -369,6 +370,18 @@ def _refusal_reason(
     if cap.key == _CATALOG_EXPAND_CAPABILITY:
         week_counts = _executed_this_iso_week(conn, user_id, capability_of, today)
         if week_counts.get(cap.key, 0) >= cfg.catalog_expansion.max_new_per_week:
+            return RefusalReason.PACE
+
+    # S7 (Buffer design §4): per-channel PACE for Buffer-published posts only,
+    # counting posts from ANY source (cadence.py). A rate decision, so it is
+    # a governor refusal, never an execute()-time raise (same H1 reasoning).
+    if action.params.get("publish_via") == "buffer":
+        channel = (
+            action.target_id.partition(":")[2]
+            if cap.key == _CAPTION_DRAFT_CAPABILITY
+            else "pinterest"
+        )
+        if cadence.pace_exceeded(conn, user_id, cfg, today, channel):
             return RefusalReason.PACE
 
     if cap.key == _CAPTION_DRAFT_CAPABILITY:
