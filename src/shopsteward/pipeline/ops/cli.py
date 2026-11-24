@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from shopsteward.adapters.buffer.interface import BufferAdapter
     from shopsteward.adapters.etsy.interface import EtsyWriteAdapter
     from shopsteward.adapters.etsy.live import LiveEtsyAdapter
+    from shopsteward.pipeline.ops.buffer_publish import BufferPublisherAdapter
     from shopsteward.pipeline.ops.capabilities.catalog_expand import ListingCatalogExpand
     from shopsteward.pipeline.ops.models import OpsConfig
     from shopsteward.pipeline.ops.registry import Capability
@@ -370,9 +371,8 @@ def run_cmd(
     # No adapter at all -- execute() only ever appends an event, so this is
     # never gated on --live-autonomy either (no Meta/IG/FB call anywhere).
     register(SocialCaptionDraft())
-    # No adapter at all either -- Variant A only, no Pinterest call
-    # anywhere (2026-08-24 design doc §2, item 2 of the sign-off register).
-    register(SocialPinterestPost())
+    # Variant A (draft-only) unless live-autonomy AND the Buffer gate are open.
+    register(SocialPinterestPost(_build_buffer_publisher(live_autonomy)))
 
     db = db_path()
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -643,7 +643,7 @@ def _register_autorenew(live_autonomy: bool, *, announce: bool = True) -> None:
     register(_catalog_expand(adapter))
     register(ListingGapfillReprint(build_print_file_host(live=False)))
     register(SocialCaptionDraft())
-    register(SocialPinterestPost())
+    register(SocialPinterestPost(_build_buffer_publisher(live_autonomy)))
 
 
 @ops_app.command("approve")
@@ -758,6 +758,19 @@ def _build_buffer_adapter(live: bool) -> "BufferAdapter":
         from shopsteward.adapters.buffer.fake import FakeBufferAdapter
 
         return FakeBufferAdapter()
+    from shopsteward.adapters.buffer.live import LiveBufferAdapter
+
+    return LiveBufferAdapter(os.environ["BUFFER_API_KEY"])
+
+
+def _build_buffer_publisher(live_autonomy: bool) -> "BufferPublisherAdapter | None":
+    """The live Buffer adapter only under `--live-autonomy` AND the Buffer WRITE
+    gate (SHOPSTEWARD_LIVE_BUFFER=1 + SHOPSTEWARD_LIVE_BUFFER_WRITE=1 + key);
+    otherwise None, i.e. draft-only Variant A. Never a fake in production code."""
+    from shopsteward.pipeline.live_gate import live_buffer_write_open
+
+    if not (live_autonomy and live_buffer_write_open()):
+        return None
     from shopsteward.adapters.buffer.live import LiveBufferAdapter
 
     return LiveBufferAdapter(os.environ["BUFFER_API_KEY"])

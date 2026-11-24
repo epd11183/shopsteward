@@ -7,7 +7,9 @@ nothing), and, on a `sent` post that maps to a drafted pin/caption, the
 existing `social.pin_posted` / `social.caption_posted` via the same
 `mark_posted()` that `ops mark-posted` uses (`posted_at == sent_at`).
 
-Mapping (S4 has no `social.buffer_queued` yet, so it joins on content):
+Mapping: `social.buffer_queued` (post_id -> action) is primary (S5; intents are
+reconciled into it first, see `buffer_publish.reconcile`). The content join below
+stays as the fallback for posts the Desktop job made:
 - the pin/caption's `utm_content=<action_id[:12]>` found in the post's pin_url
   or text -> the executed `social.pinterest_post` / `social.caption_draft`
   action with that id prefix;
@@ -24,6 +26,8 @@ from pydantic import BaseModel, Field
 from shopsteward.adapters.buffer.interface import BufferAdapter
 from shopsteward.adapters.buffer.models import BufferChannel, BufferPost
 from shopsteward.core.events import Event, append, read_all
+from shopsteward.pipeline.ops import buffer_publish
+from shopsteward.pipeline.ops.config import get_ops_config
 from shopsteward.pipeline.ops.projections import action_rows
 
 _UTM = re.compile(r"utm_content=([0-9a-f]{12})")
@@ -36,6 +40,7 @@ class SyncResult(BaseModel):
     observed_new: int = 0  # buffer.post.observed appended
     marked_posted: int = 0  # social.*_posted appended
     unmatched: int = 0  # posts with no drafted pin/caption behind them
+    reconciled: int = 0  # unresolved publish intents resolved (queued or lost)
     skipped: list[str] = Field(default_factory=list)  # mapped but not markable
 
 
@@ -113,6 +118,16 @@ def sync_buffer(
     if not prior or prior[-1].payload != ch_payload:
         append(conn, Event(user_id=user_id, type=_CHANNELS, payload=ch_payload))
 
+    if buffer_publish.unresolved_intents(conn, user_id):
+        res.reconciled = buffer_publish.reconcile(
+            conn, user_id, adapter, get_ops_config(conn, user_id), channels, now=now
+        )
+    queued = {
+        e.payload["buffer_post_id"]: (e.payload.get("kind", "pin"), e.payload["action_id"])
+        for e in read_all(conn, buffer_publish.QUEUED)
+        if e.user_id == user_id
+    }
+
     posts = adapter.list_posts(
         channel_ids=list(service_of),
         created_since=now - timedelta(days=since_days),
@@ -128,7 +143,7 @@ def sync_buffer(
         key = f"{service}/{post.status}"
         res.seen[key] = res.seen.get(key, 0) + 1
 
-        mapped = _find_action(conn, user_id, post, service)
+        mapped = queued.get(post.post_id) or _find_action(conn, user_id, post, service)
         state = {
             "post_id": post.post_id,
             "channel": service,

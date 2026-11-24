@@ -37,12 +37,7 @@ from shopsteward.core.sync import read_live_observed
 from shopsteward.pipeline.ops.timeutil import parse_ts
 
 
-def image_url(conn: sqlite3.Connection, user_id: int, listing_id: int) -> str | None:
-    """Best social image for a listing from the latest
-    `etsy.listing.images.observed` payload: the lowest-rank image with any
-    usable URL, preferring its `url_fullxfull` (S3, additive) and falling
-    back to `url_570xN` -- so events recorded before S3 still resolve to
-    570xN. None if no usable image has ever been observed."""
+def _best_image(conn: sqlite3.Connection, user_id: int, listing_id: int) -> dict | None:
     images: list[dict] = []
     for e in read_live_observed(conn, "etsy.listing.images.observed"):
         if e.user_id != user_id or e.payload.get("listing_id") != listing_id:
@@ -52,7 +47,28 @@ def image_url(conn: sqlite3.Connection, user_id: int, listing_id: int) -> str | 
         (img for img in images if img.get("url_fullxfull") or img.get("url_570xN")),
         key=lambda img: img.get("rank", 1),
     )
-    return (usable[0].get("url_fullxfull") or usable[0]["url_570xN"]) if usable else None
+    return usable[0] if usable else None
+
+
+def image_url(conn: sqlite3.Connection, user_id: int, listing_id: int) -> str | None:
+    """Best social image for a listing from the latest
+    `etsy.listing.images.observed` payload: the lowest-rank image with any
+    usable URL, preferring its `url_fullxfull` (S3, additive) and falling
+    back to `url_570xN` -- so events recorded before S3 still resolve to
+    570xN. None if no usable image has ever been observed."""
+    img = _best_image(conn, user_id, listing_id)
+    return (img.get("url_fullxfull") or img["url_570xN"]) if img else None
+
+
+def image_long_edge(conn: sqlite3.Connection, user_id: int, listing_id: int) -> int | None:
+    """Long edge in px of the fullxfull image `image_url()` picks, or None when
+    that image is a 570xN fallback or its dimensions were never observed
+    (unknown is never guessed)."""
+    img = _best_image(conn, user_id, listing_id)
+    if not img or not img.get("url_fullxfull"):
+        return None
+    w, h = img.get("full_width"), img.get("full_height")
+    return max(w, h) if isinstance(w, int) and isinstance(h, int) else None
 
 
 def effective_at(e: Event) -> str | None:
