@@ -223,3 +223,18 @@ def test_recorded_live_responses_parse() -> None:
     keys = {k for p in posts for k in p.metrics}
     assert {"impressions", "pin_clicks", "eng_rate", "saves"} <= keys
     assert all(re.fullmatch(r"[a-z0-9_]+", k) for k in keys)
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("service", "meta"),
+    [
+        ("instagram", {"instagram": {"type": "post", "shouldShareToFeed": True}}),
+        ("facebook", {"facebook": {"type": "post"}}),
+    ],
+)
+def test_instagram_and_facebook_send_required_metadata(service, meta) -> None:
+    route = _route(_ok("create_post"))
+    _adapter().create_post(SPEC.model_copy(update={"service": service}))
+    inp = json.loads(route.calls[0].request.content)["variables"]["input"]
+    assert inp["metadata"] == meta  # never isAiGenerated (operator Q1)

@@ -392,7 +392,12 @@ def _refusal_reason(
         # (raises `StaleTargetError`, which the runner DOES terminalize;
         # H2a's whole point is separating the two, not moving every
         # rejection reason to the governor).
-        if parsed is not None:
+        # A re-approval of an action Buffer already holds (e.g. reconciled after
+        # a timeout) is idempotent in execute(); its own drafted event must not
+        # trip the cooldown here.
+        from shopsteward.pipeline.ops.buffer_publish import find_queued
+
+        if parsed is not None and find_queued(conn, user_id, action.action_id) is None:
             listing_id, channel = parsed
             if _caption_stale_check(
                 conn, user_id, cfg, listing_id, channel

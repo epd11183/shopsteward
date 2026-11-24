@@ -71,6 +71,16 @@ def image_long_edge(conn: sqlite3.Connection, user_id: int, listing_id: int) -> 
     return max(w, h) if isinstance(w, int) and isinstance(h, int) else None
 
 
+def image_aspect(conn: sqlite3.Connection, user_id: int, listing_id: int) -> float | None:
+    """width / height of the fullxfull image `image_url()` picks, or None when
+    its dimensions were never observed (unknown is never guessed)."""
+    img = _best_image(conn, user_id, listing_id)
+    if not img or not img.get("url_fullxfull"):
+        return None
+    w, h = img.get("full_width"), img.get("full_height")
+    return w / h if isinstance(w, int) and isinstance(h, int) and w > 0 and h > 0 else None
+
+
 def effective_at(e: Event) -> str | None:
     """E4 (2026-08-25, `--posted-at`): an event's own `posted_at` payload
     field if present (an operator may backdate this to when they actually

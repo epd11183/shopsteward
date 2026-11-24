@@ -290,6 +290,13 @@ class LiveBufferAdapter:
         }
         if pin:
             inp["metadata"] = {"pinterest": pin}
+        # Schema (introspected live 2026-11-24): instagram metadata requires
+        # type + shouldShareToFeed, facebook requires type. Send them explicitly
+        # rather than rely on Buffer defaulting a missing block. Never isAiGenerated.
+        elif spec.service == "instagram":
+            inp["metadata"] = {"instagram": {"type": "post", "shouldShareToFeed": True}}
+        elif spec.service == "facebook":
+            inp["metadata"] = {"facebook": {"type": "post"}}
         data = self._gql(_CREATE_Q, {"input": inp}, mutation=True)
         return _parse_post(self._mutation_result(data, "createPost")["post"])
 

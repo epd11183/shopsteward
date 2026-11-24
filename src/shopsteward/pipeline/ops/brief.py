@@ -174,6 +174,8 @@ def _caption_drafts(conn: sqlite3.Connection, user_id: int, as_of: date) -> list
             e.created_at, as_of, _DONE_REFUSED_WINDOW_DAYS
         ):
             continue
+        if e.payload.get("publish_via") == "buffer":
+            continue  # queued in Buffer, not a hand-post item (double-post guard)
         action_id = e.payload.get("action_id")
         if action_id is not None and action_id in posted_action_ids:
             continue  # marked posted -- drop from the copy-paste queue
