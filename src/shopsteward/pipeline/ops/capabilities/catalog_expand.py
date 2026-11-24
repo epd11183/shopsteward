@@ -130,12 +130,12 @@ from shopsteward.adapters.etsy.interface import EtsyWriteAdapter
 from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.adapters.vision.interface import CopyChecker
 from shopsteward.core.events import Event, append, read_all
-from shopsteward.mockups.jobs import run_mockups
 from shopsteward.pipeline import tuning
 from shopsteward.pipeline.listings import adopt, archive, asset_store_config, gate3
 from shopsteward.pipeline.listings.drafts import build_drafts
 from shopsteward.pipeline.listings.photo_match import hamming_distance, phash_bytes
 from shopsteward.pipeline.listings.readback import run_readback
+from shopsteward.pipeline.mockup_hooks import get as mockup_hook
 from shopsteward.pipeline.ops.config import ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
 from shopsteward.pipeline.ops.registry import StaleTargetError, compute_action_id
@@ -196,7 +196,7 @@ def expand_one(
         height=height,
     )
 
-    run_mockups(conn, user_id, photo_id=photo_id)
+    mockup_hook("run_mockups")(conn, user_id, photo_id=photo_id)
     report = build_drafts(
         conn, user_id, photo_id=photo_id, live_copy=live_copy, etsy_adapter=adapter
     )

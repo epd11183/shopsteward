@@ -35,10 +35,10 @@ from datetime import UTC, datetime, timedelta
 from shopsteward.adapters.etsy.interface import EtsyWriteAdapter, EtsyWriteError
 from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.core.events import Event, append, read_all
-from shopsteward.mockups.panel import render_panel_jpeg
 from shopsteward.pipeline.listings.backfill import PLANNED, _events, _snapshots
 from shopsteward.pipeline.listings.digital_files import FilePlan, plan_sizes
 from shopsteward.pipeline.listings.source_assets import resolve_source
+from shopsteward.pipeline.mockup_hooks import get as mockup_hook
 from shopsteward.pipeline.ops.capabilities.size_claims_fix import _delivered_plan, _refresh
 from shopsteward.pipeline.ops.config import ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
@@ -212,6 +212,7 @@ class ListingPanelReplace:
         if ref is None or not ref.on_disk_present or ref.on_disk_path is None:
             raise ValueError(f"listing {lid}: source photo not on disk -- cannot render the panel")
 
+        render_panel_jpeg = mockup_hook("render_panel_jpeg")
         new = self._adapter.upload_listing_image(
             lid, render_panel_jpeg(ref.on_disk_path, p["new_sizes"]), rank=rank
         )

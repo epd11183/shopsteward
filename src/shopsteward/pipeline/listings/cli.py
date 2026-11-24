@@ -514,12 +514,12 @@ def backfill_files_cmd(
     --rollback --live --listing-id N deletes only files this backfill uploaded."""
     from shopsteward.core import projections as core_projections
     from shopsteward.core.db import connect, migrate
-    from shopsteward.mockups.projections import rebuild_mockups
     from shopsteward.pipeline.listings import backfill as bf
     from shopsteward.pipeline.listings import config as listing_config
     from shopsteward.pipeline.listings.projections import rebuild_listings
     from shopsteward.pipeline.listings.push import build_etsy_write_adapter
     from shopsteward.pipeline.live_gate import live_etsy_write_error, live_etsy_write_open
+    from shopsteward.pipeline.mockup_hooks import get as mockup_hook
     from shopsteward.pipeline.projections import rebuild_pipeline
     from shopsteward.settings import DEFAULT_USER_ID, db_path
 
@@ -542,7 +542,7 @@ def backfill_files_cmd(
             raise _fail(live_etsy_write_error())
         core_projections.rebuild(conn)
         rebuild_pipeline(conn)
-        rebuild_mockups(conn)
+        mockup_hook("rebuild_mockups")(conn)
         rebuild_listings(conn)
         adapter = build_etsy_write_adapter(live=True)
 
