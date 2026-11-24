@@ -95,6 +95,9 @@ def test_without_live_autonomy_refuses_before_execute_and_leaves_proposal_pendin
 
 def test_a_non_live_gated_capability_is_unaffected_by_live_autonomy_false(conn):
     cfg = _cfg()
+    cfg.autonomy.tier_floor = {
+        k: v for k, v in cfg.autonomy.tier_floor.items() if not k.startswith("social.")
+    }  # exercise the PROPOSE -> approve path
     cap = StubCapability(key="social.caption_draft", targets={"111": {"on": True}})
     run(conn, USER_ID, cfg, [cap], today=TODAY)
     action_id = read_all(conn, "action.proposed")[0].payload["action_id"]

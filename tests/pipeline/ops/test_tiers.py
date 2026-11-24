@@ -83,8 +83,15 @@ def test_shipped_tier_floor_covers_exactly_the_undoable_listing_capabilities():
         "listing.deactivate",
         "listing.renew",
         "listing.autorenew_off",
+        "social.pinterest_post",
+        "social.caption_draft",
     }
-    assert set(floor.values()) == {int(Tier.AUTO)}
+    listing = {k: v for k, v in floor.items() if k.startswith("listing.")}
+    assert set(listing.values()) == {int(Tier.AUTO)}
+    # Buffer cutover (operator 2026-11-24): social posting starts at NOTIFY. Its
+    # max_tier is NOTIFY only with a live Buffer publisher (undo = deletePost
+    # while queued); without one it stays PROPOSE/draft-only (the clamp holds).
+    assert floor["social.pinterest_post"] == floor["social.caption_draft"] == int(Tier.NOTIFY)
     # no-undo / non-listing capabilities are deliberately absent (stay PROPOSE);
     # autorenew_on starts recurring renewal fees the $20 cap can't see (reviewer)
     assert not {"listing.gapfill_reprint", "listing.autorenew_on"} & set(floor)

@@ -254,6 +254,9 @@ def test_runner_refuse_reconcile_reapprove_then_undo(conn, fake, monkeypatch):
     cap, action = _cap_and_action(conn, fake)
     register(cap)
     cfg = ops_config.get_ops_config(conn, USER_ID)
+    cfg.autonomy.tier_floor = {
+        k: v for k, v in cfg.autonomy.tier_floor.items() if not k.startswith("social.")
+    }  # exercise the PROPOSE -> approve path
     today = datetime.now(UTC).date()
     run(conn, USER_ID, cfg, [cap], today=today, proposals=[action])
     real_list = fake.list_posts
