@@ -26,10 +26,10 @@ adapter and burns the proposal. Check the gate first.
 ## The cycle
 
 1. `uv run shopsteward sync --live`. This pulls listings, receipts and reviews.
-   Optional until the S9 cutover: `SHOPSTEWARD_LIVE_BUFFER=1 uv run shopsteward
-   ops buffer-sync --live` (read-only; needs `BUFFER_API_KEY`). It records Buffer
-   posts and metrics and marks sent pins posted at their real send time. Without
-   `--live` it uses an empty fake and does nothing.
+   Then `uv run shopsteward ops buffer-sync --live` (read-only; the gate is set
+   in `.claude/settings.local.json`). It records Buffer posts and metrics, marks
+   sent pins posted at their real send time, and feeds the per-channel pacing
+   counts. Run it every week: pacing is wrong without it.
 2. `uv run shopsteward ops run`. This is a **dry run by default**. Read what it
    would do.
 3. `uv run shopsteward ops run --no-dry-run --live-autonomy`. This executes
@@ -124,6 +124,26 @@ the photo by a vision model. A pass publishes it ($0.20, counted in the cap).
 - The Etsy token cannot delete listings (it lacks the `listings_d` scope). Fix
   drafts in place.
 
+## Buffer cutover (design slice S9, from 2026-11-24)
+
+ShopSteward can now post pins, Instagram and Facebook posts itself through
+Buffer, but posting stays off (`SHOPSTEWARD_LIVE_BUFFER_WRITE` is not set)
+while the Claude Desktop Buffer job keeps posting. Each weekly run until cutover:
+
+1. After `ops buffer-sync --live`, run `ops run` (dry run) and read the
+   `social.pinterest_post` / `social.caption_draft` proposals next to the
+   brief's SOCIAL QUEUE deficits.
+2. Check, per channel: proposals <= that channel's deficit, and no proposal's
+   (listing, channel) matches a post Buffer already shows for that listing in
+   the last 35 days (Desktop-job posts included).
+3. Report the result as a line: `S9 check: pinterest 2 proposed / 2 owed,
+   instagram 1/1, facebook 1/1, no duplicates` (or what failed).
+
+After one clean week, report "S9 ready". The operator then sets
+`SHOPSTEWARD_LIVE_BUFFER_WRITE=1` in `.claude/settings.local.json` and disables
+the Desktop Buffer job. Never set that gate yourself: two schedulers posting at
+once is the failure this whole check exists to prevent.
+
 ## Hard limits
 
 - **Spend:**
@@ -138,9 +158,8 @@ the photo by a vision model. A pass publishes it ($0.20, counted in the cap).
   design `docs/designs/2026-11-22-buffer-social-adapter.md`) exists, and
   `social.pinterest_post` can post through it (Variant B) behind a separate
   write gate, `SHOPSTEWARD_LIVE_BUFFER_WRITE=1`; so can `social.caption_draft`
-  for Instagram and Facebook (S6). Both stay off for the
-  weekly run until the cutover (design slice S9): keep using the existing
-  Buffer connector for posts until then.
+  for Instagram and Facebook (S6). Both stay off until the cutover: see
+  "Buffer cutover" above.
   The brief's SOCIAL QUEUE section shows what is queued and until when it can
   be undone. UNRESOLVED means a create outcome is unknown: run
   `ops buffer-sync --live`, which resolves it to queued or lost. ERROR means a
@@ -155,5 +174,6 @@ End with a short report:
 - candidates left in `D:/Photos/Etsy/candidates`;
 - what is pending and why;
 - spend this month against the $20 cap;
+- the S9 check line (until cutover) and any SOCIAL QUEUE UNRESOLVED/ERROR items;
 - anything that failed;
 - one recommended next action.
