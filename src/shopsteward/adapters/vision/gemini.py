@@ -29,6 +29,7 @@ _VERDICT_SCHEMA = {
         "strongest_room_style": {"type": "STRING"},
         "one_risk": {"type": "STRING"},
         "rationale": {"type": "STRING"},
+        "scene": {"type": "STRING"},
     },
     "required": [
         "commercial_score",
@@ -36,6 +37,7 @@ _VERDICT_SCHEMA = {
         "strongest_room_style",
         "one_risk",
         "rationale",
+        "scene",
     ],
 }
 

@@ -18,6 +18,7 @@ class VisionVerdict(BaseModel):
     strongest_room_style: str
     one_risk: str
     rationale: str = Field(max_length=500)
+    scene: str | None = None
 
 
 class VisionUsage(BaseModel):
@@ -34,6 +35,24 @@ class VisionResult(BaseModel):
 
 class VisionAdapter(Protocol):
     def score_commercial(self, jpeg_bytes: bytes, *, model: str) -> VisionResult: ...
+
+
+class CopyCheckVerdict(BaseModel):
+    ok: bool
+    problems: list[str] = Field(default_factory=list)
+
+
+class CopyCheckResult(BaseModel):
+    verdict: CopyCheckVerdict
+    usage: VisionUsage | None = None  # None => fixture/fake mode, no llm.call event
+
+
+class CopyChecker(Protocol):
+    def check_copy(
+        self, jpeg_bytes: bytes, *, title: str, tags: list[str], description: str, model: str
+    ) -> CopyCheckResult:
+        """Does the listing copy claim anything the photo does not show?"""
+        ...
 
 
 class VisionParseError(RuntimeError):

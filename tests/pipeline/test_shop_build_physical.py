@@ -107,3 +107,60 @@ def test_run_shop_build_refuses_live_gelato_before_creating_products(conn, tmp_p
         "SELECT COUNT(*) AS n FROM events WHERE type='listingdraft.provider_created'"
     ).fetchone()
     assert created["n"] == 0
+
+
+def test_pod_stages_never_get_live_etsy_or_copy_without_live_gelato(conn, tmp_path, monkeypatch):
+    """--live-etsy-write/--live-copy without --live-gelato: the digital push
+    keeps the live adapter, but POD link/enrich get a separate FAKE Etsy
+    adapter and non-live copy (fake link mints placeholder listing ids)."""
+    import shopsteward.shop as shop
+
+    monkeypatch.setattr(shop, "live_copy_open", lambda: True)
+    monkeypatch.setattr(shop, "live_etsy_write_open", lambda: True)
+
+    etsy_calls: list[tuple[bool, object]] = []
+    real_etsy = shop.build_etsy_write_adapter
+
+    def spy_etsy(*, live: bool):
+        adapter = real_etsy(live=False)  # never construct a live adapter in tests
+        etsy_calls.append((live, adapter))
+        return adapter
+
+    copy_lives: list[bool] = []
+    real_copy = shop.build_copy_adapter
+
+    def spy_copy(cfg, *, live: bool):
+        copy_lives.append(live)
+        return real_copy(cfg, live=False)
+
+    seen: dict[str, object] = {}
+    real_link, real_enrich = shop.link_pod_drafts, shop.enrich_pod_drafts
+
+    def spy_link(*a, **kw):
+        seen["link_listings"] = getattr(kw["adapter"], "_etsy_listings", None)
+        return real_link(*a, **kw)
+
+    def spy_enrich(*a, **kw):
+        seen["enrich_etsy"] = kw["etsy_adapter"]
+        seen["enrich_live"] = kw["live"]
+        return real_enrich(*a, **kw)
+
+    import shopsteward.pipeline.listings.drafts as drafts_mod
+
+    # digital build_drafts builds its own copy adapter; keep it offline
+    monkeypatch.setattr(
+        drafts_mod, "build_copy_adapter", lambda cfg, *, live: real_copy(cfg, live=False)
+    )
+    monkeypatch.setattr(shop, "build_etsy_write_adapter", spy_etsy)
+    monkeypatch.setattr(shop, "build_copy_adapter", spy_copy)
+    monkeypatch.setattr(shop, "link_pod_drafts", spy_link)
+    monkeypatch.setattr(shop, "enrich_pod_drafts", spy_enrich)
+
+    run_shop_build(conn, USER_ID, _winners_folder(tmp_path), live_copy=True, live_etsy_write=True)
+
+    assert [live for live, _ in etsy_calls] == [True, False]
+    digital, pod = etsy_calls[0][1], etsy_calls[1][1]
+    assert seen["enrich_etsy"] is pod
+    assert seen["enrich_etsy"] is not digital
+    assert seen["enrich_live"] is False
+    assert copy_lives == [False]

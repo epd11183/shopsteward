@@ -1,7 +1,8 @@
-"""Vision-for-copy: score each photo-less landing winner with the vision adapter
-and emit a `photo.scored` event (synthetic id file-<file_id[:12]>) so listing
-copy regains subject/style/risk signals. Copy helper only -- never rejects or
-edits a photo. Gated + cost-capped; offline default is the fixture adapter.
+"""Vision-for-copy: score each valid landing winner with the vision adapter and
+emit a `photo.scored` event (keyed by its catalog photo_id, else the synthetic
+id file-<file_id[:12]>) so listing copy regains subject/style/risk signals.
+Copy helper only -- never rejects or edits a photo. Gated + cost-capped;
+offline default is the fixture adapter.
 
 `composite` is emitted as 0.0: proj_scores.composite is NOT NULL and this
 path never scores/gates a photo, so it carries no real composite score."""
@@ -42,9 +43,12 @@ def run_vision_copy(
     regenerate: bool = False,
 ) -> dict:
     rebuild_pipeline(conn)
+    # Catalog-matched files (photo_id set) need copy signals too: with no
+    # photo.scored for that photo_id, copy got subject "unspecified" and wrote
+    # a generic landscape for a bear or a bison (2026-11-22).
     rows = conn.execute(
-        "SELECT file_id, path FROM proj_landing_files "
-        "WHERE user_id=? AND status='valid' AND photo_id IS NULL ORDER BY file_id",
+        "SELECT file_id, path, photo_id FROM proj_landing_files "
+        "WHERE user_id=? AND status='valid' ORDER BY file_id",
         (user_id,),
     ).fetchall()
     done = set() if regenerate else _already_scored(conn, user_id)
@@ -52,7 +56,7 @@ def run_vision_copy(
     scored = skipped = failed = 0
     cap_hit = False
     for row in rows:
-        sid = _synthetic_id(row["file_id"])
+        sid = row["photo_id"] or _synthetic_id(row["file_id"])
         if sid in done:
             skipped += 1
             continue
@@ -92,6 +96,7 @@ def run_vision_copy(
             ),
         )
         scored += 1
+        done.add(sid)  # two files matched to one photo_id: pay once
 
     rebuild_pipeline(conn)
     return {"scored": scored, "skipped": skipped, "failed": failed, "cap_hit": cap_hit}

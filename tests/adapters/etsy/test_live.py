@@ -937,3 +937,104 @@ def test_write_error_truncates_long_body(tmp_path) -> None:
         adapter.create_draft_listing(_spec())
 
     assert len(str(exc_info.value)) < 1000
+
+
+@respx.mock
+def test_list_listing_files_parses_and_nulls_non_int_size(tmp_path) -> None:
+    # Scrubbed, recorded-shape getAllListingFiles body (invented ids); Etsy
+    # may return filesize as an int or a human string like "1.2MB".
+    body = {
+        "count": 2,
+        "results": [
+            {
+                "listing_file_id": 9001,
+                "listing_id": 555,
+                "rank": 1,
+                "filename": "a_full.jpg",
+                "filesize": "1.2MB",
+                "size_bytes": 1234567,
+                "filetype": "image/jpeg",
+            },
+            {
+                "listing_file_id": 9002,
+                "listing_id": 555,
+                "rank": 2,
+                "filename": "a_4x5.jpg",
+                "filesize": "1.2MB",
+                "filetype": "image/jpeg",
+            },
+        ],
+    }
+    respx.get(f"{BASE}/shops/100001/listings/555/files").mock(
+        return_value=httpx.Response(200, json=body)
+    )
+    files = _write_adapter(tmp_path).list_listing_files(555)
+    assert [(f.listing_file_id, f.name, f.rank, f.size_bytes) for f in files] == [
+        (9001, "a_full.jpg", 1, 1234567),
+        (9002, "a_4x5.jpg", 2, None),
+    ]
+
+
+@respx.mock
+def test_transport_error_becomes_etsy_write_error(tmp_path) -> None:
+    respx.get(f"{BASE}/shops/100001/listings/555/files").mock(
+        side_effect=httpx.ConnectError("down")
+    )
+    with pytest.raises(EtsyWriteError) as ei:
+        _write_adapter(tmp_path).list_listing_files(555)
+    assert ei.value.status_code == 0
+
+
+@respx.mock
+def test_delete_listing_file_204_and_errors(tmp_path) -> None:
+    url = f"{BASE}/shops/100001/listings/555/files/9001"
+    route = respx.delete(url).mock(return_value=httpx.Response(204))
+    adapter = _write_adapter(tmp_path)
+    assert adapter.delete_listing_file(555, 9001) is None
+    assert route.called
+
+    route.mock(return_value=httpx.Response(404, json={"error": "no such file"}))
+    with pytest.raises(EtsyWriteError) as ei:
+        adapter.delete_listing_file(555, 9001)
+    assert ei.value.status_code == 404
+
+    route.mock(side_effect=httpx.ConnectError("down"))
+    with pytest.raises(EtsyWriteError) as ei:
+        adapter.delete_listing_file(555, 9001)
+    assert ei.value.status_code == 0
+    assert "transport error" in str(ei.value)
+
+
+@respx.mock
+def test_write_adapter_retries_429_on_get_only(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("shopsteward.adapters.etsy.live.time.sleep", lambda s: None)
+    adapter = _write_adapter(tmp_path)
+    get = respx.get(f"{BASE}/shops/100001/listings/555/files").mock(
+        side_effect=[
+            httpx.Response(429, headers={"Retry-After": "1"}),
+            httpx.Response(200, json={"results": []}),
+        ]
+    )
+    assert adapter.list_listing_files(555) == []
+    assert get.call_count == 2
+
+    post = respx.post(f"{BASE}/shops/100001/listings/555/files").mock(
+        return_value=httpx.Response(429, json={"error": "slow down"})
+    )
+    with pytest.raises(EtsyWriteError) as ei:
+        adapter.upload_listing_file(555, b"x", name="a.jpg", rank=2)
+    assert ei.value.status_code == 429
+    assert post.call_count == 1  # writes are never retried
+
+
+def test_retry_delay_handles_http_date_negative_and_huge() -> None:
+    from shopsteward.adapters.etsy.live import _retry_delay
+
+    def r(value: str | None) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": value} if value else {})
+
+    assert _retry_delay(r("Wed, 21 Oct 2026 07:28:00 GMT"), 1) == 4.0
+    assert _retry_delay(r(None), 0) == 2.0
+    assert _retry_delay(r("-1"), 0) == 0.0
+    assert _retry_delay(r("9999"), 0) == 60.0
+    assert _retry_delay(r("3"), 0) == 3.0

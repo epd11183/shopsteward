@@ -11,9 +11,10 @@ omitting the method, so the registry can tell "no undo" apart from a typo.
 
 max_tier is a Python attribute on the capability object, not config (draft
 §2.3 invariant 2): config can never RAISE the effective tier above this
-Python ceiling. There is no per-capability config-lowering knob yet
-(tiers.effective_tier() takes no config param) -- add one in a later PR
-when the first real capability needs it (YAGNI)."""
+Python ceiling. Config `autonomy.tier_floor` sets where a capability's ladder
+starts and the least-autonomous rung it can be demoted to (2026-11-22: every
+`listing.*` capability with an undo starts at AUTO); tiers.effective_tier()
+clamps the floor to max_tier, so it can never exceed this ceiling."""
 
 import hashlib
 from typing import Protocol, runtime_checkable

@@ -41,7 +41,7 @@ owned by the operator's Business.
 | E13 | **Respond to a public review** | **RESTRICTED (dashboard-only)** | **read-only** API (`getReviewsByShop/ByListing`) | `feedback_r` to read | Responding allowed as a seller act, but **no API to post** it |
 | E14 | **Refunds / disputes / cases** | **PROHIBITED (no mechanism)** | none in v3 | — | Manual Shop-Manager/Payment-account process (Seller Policy §3b) |
 | E15 | **Renew a specific expired listing with sales history** | **PERMITTED** | `updateListing` PATCH (`state`→`active`) on an `expired` listing | `listings_w` (already held) | Renewal is a first-class Etsy seller act; `updateListing` names "manually renewing" as a use of the `state` field. Etsy charges the standard $0.20 listing fee, non-refundable. Distinct from E8 — see §2 |
-| E16 | **New digital-download listing from our own original photograph** (catalog expansion) | **PERMITTED** | `createDraftListing` → images → digital file → `updateListing` copy; **publish only at Gate 3** | `listings_w` (already held) | Listing our own original work is the core permitted seller act. Mechanically identical to E5 (ends in an unpublished draft; Gate 3 is the approval). Three accuracy conditions below — added 2026-08-25 for `listing.catalog_expand` |
+| E16 | **New digital-download listing from our own original photograph** (catalog expansion) | **PERMITTED** | `createDraftListing` → images → digital file → `updateListing` copy; **publish only via `gate3.publish`** (automated behind the read-back gate since 2026-11-23, operator authorization) | `listings_w` (already held) | Listing our own original work is the core permitted seller act. Mechanically identical to E5 up to the draft; since 2026-11-23 the read-back gate (Etsy read-back + vision copy-vs-photo check) is the approval. Three accuracy conditions below — added 2026-08-25 for `listing.catalog_expand` |
 
 #### E16 conditions (added 2026-08-25)
 
@@ -49,11 +49,19 @@ owned by the operator's Business.
 three conditions below hold. Each is an accuracy obligation under Seller
 Policy §1.c.4 — the same clause E3 (SEO edit) cites — not a new restriction.
 
-1. **The photograph is ours and is never AI-generated or AI-edited.** The
-   architecture guarantee ("AI never touches the photograph") is the control:
-   the only image transform in the path is a deterministic max-quality sRGB
-   JPEG re-encode. No generative upscale, fill, or edit, ever — including to
-   clear the resolution bar in condition 2.
+1. **The photograph is ours, is never AI-generated, and AI never adds to
+   it.** *(Amended 2026-11-22, operator decision.)* Operator-directed
+   generative *removal* of distractions during finishing (stray people,
+   power lines, signs, litter, sensor dust) is permitted; the operator has
+   determined it is editing, not "created with generative AI" under Etsy's
+   creativity standards / AI disclosure guidance (Seller Handbook articles
+   1522733284810 and 1275449912004). Still never: generative upscale, fill
+   that adds content, sky replacement, added or altered subjects, invented
+   detail — including to clear the resolution bar in condition 2. Within
+   the pipeline itself, the only image transforms are deterministic
+   (crop + max-quality sRGB JPEG re-encode). The listing disclosure line
+   says "not AI-generated, and AI is never used to add anything to it",
+   which stays true for removal-edited photos.
 2. **The advertised print sizes must be deliverable by the source file.**
    `whatyougot` copy advertising 16x20 at 300 DPI requires a 6000 px long
    edge; listing a smaller file against that copy is an inaccurate listing.

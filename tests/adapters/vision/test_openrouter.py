@@ -78,6 +78,7 @@ def test_score_commercial_parses_verdict_and_usage() -> None:
         "strongest_room_style",
         "one_risk",
         "rationale",
+        "scene",
     }
 
 

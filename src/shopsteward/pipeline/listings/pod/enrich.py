@@ -46,7 +46,7 @@ from shopsteward.adapters.etsy.interface import EtsyWriteAdapter, EtsyWriteError
 from shopsteward.core.events import Event, append, read_all
 from shopsteward.pipeline import tuning
 from shopsteward.pipeline.config import TUNING_PROFILE_PATH
-from shopsteward.pipeline.listings.copy import generate_copy
+from shopsteward.pipeline.listings.copy import MAX_COPY_REFUSALS, copy_refusals, generate_copy
 from shopsteward.pipeline.listings.drafts import (
     _completed_mockup_set,
     _mockup_projections_ready,
@@ -74,6 +74,9 @@ class PodEnrichReport(BaseModel):
     enriched: int = 0
     skipped: int = 0
     failed: int = 0
+    # Copy refused by a guard / the 3x cap: needs operator review.
+    copy_refused: int = 0
+    skip_reasons: list[str] = []
 
 
 def _eligible_drafts(conn: sqlite3.Connection, user_id: int) -> list[sqlite3.Row]:
@@ -158,8 +161,8 @@ def _enrich_one(
     live: bool,
     soft_cap_usd: float,
 ) -> str:
-    """Returns "enriched" | "skipped" (not ready yet / soft cap -- retried
-    next run) | "failed" (adapter error, retried next run via
+    """Returns "enriched" | "refused" (copy refusal cap reached) | "skipped"
+    (not ready yet / soft cap -- retried next run) | "failed" (adapter error, retried next run via
     pod_status='enrich_failed')."""
     draft_id = row["draft_id"]
     landing_file_id = row["landing_file_id"]
@@ -206,6 +209,8 @@ def _enrich_one(
             product_format=row["format"],
         )
         if not ran:
+            if copy_refusals(conn, user_id, draft_id) >= MAX_COPY_REFUSALS:
+                return "refused"
             return "skipped"
         # generate_copy only appends the event -- proj_listing_drafts.title
         # stays NULL until the projection is rebuilt, and _update_stage below
@@ -275,6 +280,12 @@ def enrich_pod_drafts(
             report.enriched += 1
         elif outcome == "skipped":
             report.skipped += 1
+        elif outcome == "refused":
+            report.copy_refused += 1
+            report.skip_reasons.append(
+                f"draft {row['draft_id'][:12]}: copy refused {MAX_COPY_REFUSALS}x: "
+                "needs operator review"
+            )
         else:
             report.failed += 1
 

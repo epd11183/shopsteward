@@ -1,11 +1,12 @@
 """`listing.reprice` -- the first money-moving, parameterized autonomy
 capability (M8b slice 3, design §4/§8 slice 3). Policy: Etsy E2 PERMITTED
 via `updateListingInventory`/`listings_w` (2026-08-11 autonomy platform
-policy). Draft #9: a price change is a **T2 ceiling, NEVER higher** --
-`max_tier = Tier.PROPOSE`, and it can never be promoted regardless of the
-ladder (runner._maybe_promote never raises a capability's effective tier
-past its own Python `max_tier`; see registry.py's invariant 2 for why this
-is a Python attribute, not config). Draft #9b / PRD decision 43: **POD
+policy). Draft #9 said a price change was a T2 ceiling, never higher;
+**2026-11-22 operator decision (explicit): listing edits of every kind need no
+operator approval**, so `max_tier = Tier.AUTO` and config
+`autonomy.tier_floor` starts it at AUTO (config still cannot exceed the Python
+`max_tier`; registry.py's invariant 2). undo() restores the prior price.
+Draft #9b / PRD decision 43: **POD
 listing prices are FORBIDDEN** -- touching updateListingInventory on a
 Printful/Gelato-backed listing rewrites provider SKUs -- so this capability
 is **DIGITAL LISTINGS ONLY**. `_eligible()` is the ONE grounding function
@@ -28,8 +29,9 @@ does not rely on title-keyword matching alone:
      `analytics._classify_product_type` (left unchanged for its other
      callers). A title like "Instant Download Ready Canvas Print" matches
      "digital" but also "canvas" -- excluded, never guessed.
-Both guards are re-checked at execute() time too, and reprice is T2 (the
-operator approves every single reprice) as a final backstop either way.
+Both guards are re-checked at execute() time too (against even a hand-forged
+action). With approval gone (2026-11-22) these guards, the price bounds and the
+undo are the controls; only the approval was removed, not the POD guard.
 
 Draft §4: price changes lack a demand model until M7, so this capability
 proposes a single deterministic default (a price DECREASE on a
@@ -224,11 +226,10 @@ def _is_in_bounds_price(p: object, current_price_usd: float, cfg: OpsConfig) -> 
 
 class ListingReprice:
     key = "listing.reprice"
-    # T2 ceiling -- NEVER promotable (Money axis = 2 by construction, draft
-    # #9: a buyer who saw $12 yesterday seeing $18 today always needs an
-    # operator). runner._maybe_promote enforces this Python ceiling; there
-    # is no config path that can raise it.
-    max_tier = Tier.PROPOSE
+    # 2026-11-22 operator decision: no approval for listing edits (was a T2
+    # ceiling, draft #9). Starts at AUTO via config `autonomy.tier_floor`;
+    # the digital-only guards in execute() are unchanged.
+    max_tier = Tier.AUTO
     policy_verified = True  # Etsy E2 permitted.
 
     def __init__(self, adapter: EtsyWriteAdapter) -> None:

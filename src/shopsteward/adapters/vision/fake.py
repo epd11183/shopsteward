@@ -17,7 +17,12 @@ needs it.
 import hashlib
 from pathlib import Path
 
-from shopsteward.adapters.vision.interface import VisionResult, VisionVerdict
+from shopsteward.adapters.vision.interface import (
+    CopyCheckResult,
+    CopyCheckVerdict,
+    VisionResult,
+    VisionVerdict,
+)
 
 
 class FixtureVisionAdapter:
@@ -33,8 +38,42 @@ class FixtureVisionAdapter:
             strongest_room_style="neutral",
             one_risk="none flagged (fixture)",
             rationale=f"deterministic fixture verdict, score={score}",
+            scene="fixture scene: one animal standing on rocks under a clear sky.",
         )
         return VisionResult(verdict=verdict, usage=None)
+
+
+class FixtureCopyChecker:
+    """Offline default for the pre-publish copy check. It cannot see anything,
+    so it NEVER approves: a fixture run must not auto-publish a real listing."""
+
+    def check_copy(
+        self, jpeg_bytes: bytes, *, title: str, tags: list[str], description: str, model: str
+    ) -> CopyCheckResult:
+        return CopyCheckResult(
+            verdict=CopyCheckVerdict(
+                ok=False, problems=["copy not verified against the photo (fixture checker)"]
+            )
+        )
+
+
+class FakeCopyChecker:
+    """Programmable checker for tests: queued CopyCheckResult | Exception."""
+
+    def __init__(self, results: list[CopyCheckResult | Exception]):
+        self._results = list(results)
+        self.calls: list[dict] = []
+
+    def check_copy(
+        self, jpeg_bytes: bytes, *, title: str, tags: list[str], description: str, model: str
+    ) -> CopyCheckResult:
+        self.calls.append({"title": title, "tags": tags, "description": description})
+        if not self._results:
+            raise RuntimeError("FakeCopyChecker exhausted: no more queued results")
+        result = self._results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 class FakeVisionAdapter:

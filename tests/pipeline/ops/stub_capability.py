@@ -23,7 +23,9 @@ class StubCapability:
         cost_usd: float = 0.0,
         undoable: bool = True,
         day: date | None = None,
+        target_type: str = "stub",
     ) -> None:
+        self.target_type = target_type
         self.key = key
         self.max_tier = max_tier
         self.policy_verified = policy_verified
@@ -61,7 +63,7 @@ class StubCapability:
             out[target_id] = ProposedAction(
                 action_id=action_id,
                 capability=self.key,
-                target_type="stub",
+                target_type=self.target_type,
                 target_id=target_id,
                 tier=Tier.PROPOSE,  # overwritten by the runner with the effective tier
                 reason="stub proposes a no-op change for testing.",

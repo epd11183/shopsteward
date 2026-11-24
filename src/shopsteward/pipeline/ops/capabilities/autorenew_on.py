@@ -103,9 +103,10 @@ the future renewal is a separate event outside this system's control -- but
 the two capabilities' $0.00s do not mean the same thing, and this docstring
 previously implied a false symmetry.
 
-`max_tier = Tier.NOTIFY` -- same T1 ceiling as `autorenew_off`: this is the
+`max_tier = Tier.AUTO` -- same as `autorenew_off` (2026-11-22 operator
+decision: listing edits need no approval; was a T1 ceiling): this is the
 same class of action (a free, reversible, single-field state flip), just
-the opposite direction.
+the opposite direction. Note the spend-cap blind spot above still holds.
 
 Holds its own EtsyWriteAdapter, injected at construction (the chassis
 contract: capabilities hold their own adapter). This module never imports
@@ -285,7 +286,10 @@ def _candidates(
 
 class ListingAutorenewOn:
     key = "listing.autorenew_on"
-    max_tier = Tier.NOTIFY  # T1 ceiling -- ships at T2 (PROPOSE) per the chassis default.
+    # 2026-11-22 operator decision: listing capabilities run without approval
+    # (was T1 ceiling, shipped at T2). Floored at AUTO via config
+    # `autonomy.tier_floor`; undo() below is the control (registry invariant 1).
+    max_tier = Tier.AUTO
     policy_verified = True  # E1 -- same mechanism/scope as autorenew_off, direction-agnostic.
 
     def __init__(self, adapter: EtsyWriteAdapter) -> None:

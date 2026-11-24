@@ -17,7 +17,12 @@ from shopsteward.pipeline.listings.drafts import build_drafts
 from shopsteward.pipeline.listings.projections import rebuild_listings
 from shopsteward.pipeline.listings.reset import ResetIncomplete, apply_reset, plan_reset
 
-from .helpers import USER_ID, seed_fully_built_draft, seed_landing_file_with_mockup_set
+from .helpers import (
+    USER_ID,
+    seed_fully_built_draft,
+    seed_landing_file_with_mockup_set,
+    seed_scores_for_landing,
+)
 
 runner = CliRunner()
 
@@ -103,6 +108,7 @@ def test_reset_reenables_scan_and_push(conn, tmp_path):
     assert report.landing_files_reset == 1
     assert report.landing is not None
 
+    seed_scores_for_landing(conn)
     third = build_drafts(conn, USER_ID, etsy_adapter=FakeEtsyWriteAdapter())
     assert third.drafts_built == 1
     assert third.pushed == 1
@@ -631,3 +637,24 @@ def test_format_filter_leaves_real_digital_listing_untouched_when_resetting_pod_
         ).fetchone()
         assert pod_row is None
     conn.close()
+
+
+def test_reset_clears_the_drafts_attached_files_so_the_next_plan_is_not_frozen(conn):
+    """A fake push left file rows behind; without clearing them the rebuilt
+    draft's files_planned was ignored and the real push sent one legacy file."""
+    for key in ("full", "4x5"):
+        append(
+            conn,
+            Event(
+                user_id=USER_ID,
+                type="listingdraft.file_attached",
+                payload={"draft_id": "d-1", "etsy_listing_id": 1006, "etsy_file_id": 1, "key": key},
+            ),
+        )
+    append(
+        conn,
+        Event(user_id=USER_ID, type="listingdraft.reset", payload={"draft_id": "d-1"}),
+    )
+    rebuild_listings(conn)
+    rows = conn.execute("SELECT 1 FROM proj_listing_files WHERE draft_id='d-1'").fetchall()
+    assert rows == []

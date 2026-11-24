@@ -69,9 +69,14 @@ disagree, the PRD wins; flag the discrepancy.
   create the product and push the Etsy draft; we then *enrich* the draft
   (title, tags, description, images, price) via the Etsy API. Never modify
   provider-set SKU values or variation structure.
-- **AI never touches the photograph.** Vision models score and generate
+- **AI never adds to the photograph.** Vision models score and generate
   empty-room templates; the print is composited deterministically with
-  Pillow/OpenCV. No generative edit, upscale, or fill on a photograph, ever.
+  Pillow/OpenCV. **Generative removal of distractions is allowed** (stray
+  people, power lines, signs, litter, sensor dust) when the operator
+  directs it during finishing. **Never generate new elements:** no fill
+  that adds content, no sky replacement, no added or altered subjects, no
+  generative upscale or invented detail. (Operator clarification
+  2026-11-21; supersedes the earlier "no generative edit or fill, ever".)
 - **user_id foreign key on every major table** — multi-tenant readiness,
   even though v1 is single-operator.
 
@@ -216,6 +221,33 @@ that make broad delegated authority safe, not a substitute for it.
   justify one — that recommendation itself crosses the budget-expansion
   boundary, so it's a proposal to the operator, not a unilateral spend.
 
+**Amended 2026-11-22, explicit operator authorization: total control of
+listings.** Listing edits of every kind (title, tags, description, price,
+images, files, renew, deactivate, auto-renew toggles) no longer require
+operator approval: every `listing.*` capability with a working undo has
+`max_tier = Tier.AUTO` and starts at AUTO via config `autonomy.tier_floor`.
+Never hand a listing fix back to the operator; do it. Act-then-show. Remaining
+controls: the event log plus undo where Etsy allows (registry invariant 1: no
+AUTO/NOTIFY without a working undo), the live gates (`--live-autonomy` and env
+gates), the governor including the $20/month cap, and the digital-only /
+`provider_linked` guards for POD listings. `listing.gapfill_reprint` has no
+undo and stays at `Tier.PROPOSE`;
+`listing.autorenew_on` starts at PROPOSE because it creates recurring renewal
+fees the cap cannot see. `ops edit-listing` is the direct entry point for agent-authored edits.
+New-listing fees ($0.20 each) are an authorized expense inside the $20/month
+cap (operator, 2026-11-22): create new listings in batches (first batch 10),
+checking each batch live before the next.
+
+**Amended 2026-11-23, explicit operator authorization: `listing.catalog_expand`
+is AUTO behind a read-back gate.** The weekly run creates AND publishes new
+listings with no human step: each new digital draft is read back from Etsy
+(state, 5 files, 7 images, "(Digital Download)" title, 13 tags) and checked
+against the photo by a vision model (`copy_check_model`); a pass publishes it,
+a fail leaves it a draft under NEEDS YOU. Pace stays
+`catalog_expansion.max_new_per_week`; the $0.20 fee counts toward the $20 cap
+and is not refunded on undo. Undo deactivates the listing. No live checker
+(gate closed / non-openrouter provider) means no auto-publish.
+
 **Objective — optimize for contribution profit and long-term portfolio
 value, not gross sales or activity.** Trailing-window contribution profit
 (revenue minus Etsy fees, fulfillment cost, and attributed ad spend) is the
@@ -286,3 +318,12 @@ Destructive-data/Truly-irreversible boundaries in that section, not a
 standalone rule. The $20/month ceiling statement is superseded by the
 Financial governance subsection above (same number, now with the explicit
 Etsy-Ads carve-out and reallocation authority spelled out).
+
+**Superseded for listing capabilities, 2026-11-22.** The `Tier.PROPOSE`
+hard-pin statements above (e.g. `seo_edit` "stays operator-approved ... does
+not lift") no longer hold for `listing.*` capabilities that have an undo; see
+"Governance & decision authority", 2026-11-22. They still hold for
+capabilities without an undo (`gapfill_reprint`; `catalog_expand` lifted
+2026-11-23, see above) and for
+non-listing ones (`social.*`, `ops.tune_threshold`). The $20/month ceiling
+and the live gates are unchanged.

@@ -11,6 +11,7 @@ from shopsteward.adapters.etsy.models import (
     EtsyFileRef,
     EtsyImageRef,
     EtsyListing,
+    EtsyListingDetail,
     EtsyListingImage,
     EtsyListingInventory,
     EtsyListingProduct,
@@ -21,8 +22,12 @@ from shopsteward.adapters.etsy.models import (
     EtsyShop,
     EtsyShopSection,
     EtsyTaxonomyNode,
+    ListingFile,
     Money,
 )
+
+_MAX_FILES = 5
+_MAX_FILE_BYTES = 20_000_000
 
 
 class FixtureEtsyAdapter:
@@ -188,13 +193,57 @@ class FakeEtsyWriteAdapter:
         )
         return EtsyImageRef(listing_image_id=image_id, rank=rank)
 
+    def delete_listing_image(self, listing_id: int, listing_image_id: int) -> None:
+        """Etsy keeps a deleted image server-side: park it in `deleted_images`
+        so attach_listing_image can re-attach it."""
+        row = self._require(listing_id)
+        for i, img in enumerate(row["images"]):
+            if img["listing_image_id"] == listing_image_id:
+                row.setdefault("deleted_images", []).append(row["images"].pop(i))
+                break
+        else:
+            raise EtsyWriteError(404, f"unknown listing_image_id {listing_image_id}")
+        self.calls.append(
+            (
+                "delete_listing_image",
+                {"listing_id": listing_id, "listing_image_id": listing_image_id},
+            )
+        )
+
+    def attach_listing_image(
+        self, listing_id: int, listing_image_id: int, *, rank: int
+    ) -> EtsyImageRef:
+        row = self._require(listing_id)
+        parked = row.setdefault("deleted_images", [])
+        for i, img in enumerate(parked):
+            if img["listing_image_id"] == listing_image_id:
+                row["images"].append({"listing_image_id": listing_image_id, "rank": rank})
+                del parked[i]
+                break
+        else:
+            raise EtsyWriteError(404, f"unknown listing_image_id {listing_image_id}")
+        self.calls.append(
+            (
+                "attach_listing_image",
+                {"listing_id": listing_id, "listing_image_id": listing_image_id, "rank": rank},
+            )
+        )
+        return EtsyImageRef(listing_image_id=listing_image_id, rank=rank)
+
     def upload_listing_file(
         self, listing_id: int, file: bytes, *, name: str, rank: int
     ) -> EtsyFileRef:
         row = self._require(listing_id)
+        # Etsy limits: 5 files per listing, 20 MB per file (design §2).
+        if len(row["files"]) >= _MAX_FILES:
+            raise EtsyWriteError(400, f"listing already has {_MAX_FILES} files")
+        if len(file) > _MAX_FILE_BYTES:
+            raise EtsyWriteError(413, f"file exceeds {_MAX_FILE_BYTES} bytes")
         file_id = self._next_file_id
         self._next_file_id += 1
-        row["files"].append({"listing_file_id": file_id, "rank": rank, "name": name})
+        row["files"].append(
+            {"listing_file_id": file_id, "rank": rank, "name": name, "size": len(file)}
+        )
         self.calls.append(
             (
                 "upload_listing_file",
@@ -202,6 +251,50 @@ class FakeEtsyWriteAdapter:
             )
         )
         return EtsyFileRef(listing_file_id=file_id, rank=rank)
+
+    def list_listing_files(self, listing_id: int) -> list[ListingFile]:
+        row = self._require(listing_id)
+        self.calls.append(("list_listing_files", {"listing_id": listing_id}))
+        return [
+            ListingFile(
+                listing_file_id=f["listing_file_id"],
+                name=f["name"],
+                rank=f["rank"],
+                size_bytes=f.get("size"),
+            )
+            for f in row["files"]
+        ]
+
+    def delete_listing_file(self, listing_id: int, listing_file_id: int) -> None:
+        # Unopinionated like the live adapter: deleting the last file is allowed
+        # here (real Etsy would convert the listing to physical).
+        row = self._require(listing_id)
+        for i, f in enumerate(row["files"]):
+            if f["listing_file_id"] == listing_file_id:
+                del row["files"][i]
+                break
+        else:
+            raise EtsyWriteError(404, f"unknown listing_file_id {listing_file_id}")
+        self.calls.append(
+            ("delete_listing_file", {"listing_id": listing_id, "listing_file_id": listing_file_id})
+        )
+
+    def get_listing(self, listing_id: int) -> EtsyListingDetail:
+        row = self._require(listing_id)
+        self.calls.append(("get_listing", {"listing_id": listing_id}))
+        images = [
+            EtsyListingImage(
+                listing_image_id=i["listing_image_id"],
+                rank=i["rank"],
+                url_570xN=f"fake://image/{i['listing_image_id']}",
+            )
+            for i in row["images"]
+        ]
+        return EtsyListingDetail(
+            **self._to_listing(listing_id, row).model_dump(exclude={"description"}),
+            description=row["description"],
+            images=images,
+        )
 
     def update_listing(self, listing_id: int, fields: EtsyListingUpdate) -> EtsyListing:
         # Etsy's real updateListing has no price field -- price is fixed at

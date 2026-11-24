@@ -7,10 +7,12 @@ still PURE, no LLM, no network, exactly like THE SHOP's analytics.py reads.
 generate_brief() is deterministic (PURE, no LLM, no network -- design §7).
 render_text() is a template, not a model."""
 
+import contextlib
 import sqlite3
 from datetime import UTC, date, datetime
 
 from shopsteward.core.events import read_all
+from shopsteward.pipeline import llm_ledger
 from shopsteward.pipeline.ops import analytics, governor
 from shopsteward.pipeline.ops.models import (
     Brief,
@@ -20,6 +22,7 @@ from shopsteward.pipeline.ops.models import (
     BriefLadderRow,
     BriefPin,
     BriefProposal,
+    BriefReadbackFailure,
     BriefRefusal,
     OpsConfig,
     ProposedAction,
@@ -30,6 +33,7 @@ from shopsteward.pipeline.ops.projections import (
     action_rows,
     capability_states,
 )
+from shopsteward.pipeline.ops.tiers import effective_tier_for
 
 # ponytail: fixed 7-day lookback for DONE/REFUSED, not a config knob -- add
 # one under cfg.windows if the operator ever wants a longer/shorter Brief
@@ -73,6 +77,40 @@ def _needs_you(conn: sqlite3.Connection, user_id: int, as_of: date) -> list[Brie
                 tier=Tier(row["tier"]),
                 reason=row["reason"],
                 expires_at=p.expires_at,
+            )
+        )
+    return out
+
+
+def _readback_failed(conn: sqlite3.Connection, user_id: int) -> list[BriefReadbackFailure]:
+    """Drafts whose LATEST read-back failed and that were never published
+    since (event-derived, so the brief needs no projection rebuild)."""
+    latest: dict[str, list[str] | None] = {}
+    for e in read_all(conn, "listingdraft.readback"):
+        if e.user_id == user_id:
+            p = e.payload
+            latest[p["draft_id"]] = None if p["ok"] else list(p["problems"])
+    published = {
+        e.payload["draft_id"] for e in read_all(conn, "gate3.published") if e.user_id == user_id
+    }
+    out = []
+    for draft_id, problems in latest.items():
+        if problems is None or draft_id in published:
+            continue
+        row = None
+        # listings projection may not be built in this conn -- id/title are cosmetic
+        with contextlib.suppress(sqlite3.OperationalError):
+            row = conn.execute(
+                "SELECT etsy_listing_id, title FROM proj_listing_drafts "
+                "WHERE user_id=? AND draft_id=?",
+                (user_id, draft_id),
+            ).fetchone()
+        out.append(
+            BriefReadbackFailure(
+                draft_id=draft_id,
+                etsy_listing_id=row["etsy_listing_id"] if row else None,
+                title=row["title"] if row else None,
+                problems=problems,
             )
         )
     return out
@@ -229,7 +267,7 @@ def _autonomy_section(
     ladder = [
         BriefLadderRow(
             capability=cap_key,
-            tier=st.tier,
+            tier=effective_tier_for(cap_key, st, cfg.autonomy.tier_floor),
             approvals=st.approvals,
             rejections=st.rejections,
             executions=st.executions,
@@ -238,10 +276,14 @@ def _autonomy_section(
         )
         for cap_key, st in sorted(capability_states(conn, user_id).items())
     ]
+    parts = governor.month_spend_parts(conn, user_id, as_of.isoformat()[:7], cfg)
     return BriefAutonomy(
         enabled=cfg.autonomy.enabled,
         halted=governor.is_halted(conn, user_id),
-        month_spend_usd=governor.month_spend(conn, user_id, as_of.isoformat()[:7]),
+        month_spend_usd=sum(parts),
+        month_actions_usd=parts[0],
+        month_listing_fees_usd=parts[1],
+        month_llm_usd=llm_ledger.monthly_spend(conn, user_id, as_of.isoformat()[:7]),
         monthly_spend_cap_usd=cfg.autonomy.monthly_spend_cap_usd,
         ladder=ladder,
     )
@@ -276,6 +318,7 @@ def generate_brief(
     )
 
     needs_you = _needs_you(conn, user_id, as_of) if sections.autonomy else []
+    readback_failed = _readback_failed(conn, user_id) if sections.autonomy else []
     done_recent = _done_recent(conn, user_id, as_of) if sections.autonomy else []
     refused_recent = _refused_recent(conn, user_id, as_of) if sections.autonomy else []
     autonomy = _autonomy_section(conn, user_id, cfg, as_of) if sections.autonomy else None
@@ -300,6 +343,7 @@ def generate_brief(
         shoot_more=shoot,
         data_quality_notes=notes,
         needs_you=needs_you,
+        readback_failed=readback_failed,
         done_recent=done_recent,
         refused_recent=refused_recent,
         autonomy=autonomy,
@@ -321,11 +365,16 @@ def render_text(brief: Brief) -> str:
     # bundle is omitted together, never shown half-populated.
     if brief.autonomy is not None:
         lines.append("")
-        lines.append(f"NEEDS YOU ({len(brief.needs_you)})")
+        lines.append(f"NEEDS YOU ({len(brief.needs_you) + len(brief.readback_failed)})")
         for p in brief.needs_you:
             lines.append(
                 f"  [{p.action_id}] {p.capability} -> {p.target_type}:{p.target_id} : "
                 f"{p.reason} (expires {p.expires_at})"
+            )
+        for f in brief.readback_failed:
+            lines.append(
+                f"  DRAFT NOT PUBLISHED (read-back failed) {f.draft_id} "
+                f"(etsy {f.etsy_listing_id}) {f.title or ''}: " + "; ".join(f.problems)
             )
 
         lines.append("")
@@ -462,7 +511,9 @@ def render_text(brief: Brief) -> str:
         lines.append("AUTONOMY")
         lines.append(f"  autonomy: {state}")
         lines.append(
-            f"  spend {_money(a.month_spend_usd)} of {_money(a.monthly_spend_cap_usd)} cap"
+            f"  month spend: {_money(a.month_spend_usd)} of {_money(a.monthly_spend_cap_usd)} cap "
+            f"(actions {_money(a.month_actions_usd)}, listing fees "
+            f"{_money(a.month_listing_fees_usd)}); LLM {_money(a.month_llm_usd)} (separate ledger)"
         )
         for row in a.ladder:
             lines.append(

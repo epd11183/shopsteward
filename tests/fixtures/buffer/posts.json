@@ -1,0 +1,16 @@
+{"data": {"posts": {
+  "edges": [
+    {"node": {"id": "fx-post-1", "channelId": "fx-channel-1", "status": "sent",
+              "text": "fx text", "dueAt": "2026-01-02T14:00:00.000Z",
+              "sentAt": "2026-01-02T14:00:05.000Z", "createdAt": "2026-01-01T10:00:00.000Z",
+              "externalLink": null, "error": null,
+              "metricsUpdatedAt": "2026-01-03T00:00:00.000Z",
+              "metrics": [{"name": "impressions", "value": 12}, {"name": "saves", "value": null}],
+              "metadata": {"__typename": "PinterestPostMetadata", "url": "https://example.test/fx?utm_content=fx"}}},
+    {"node": {"id": "fx-post-2", "channelId": "fx-channel-1", "status": "scheduled",
+              "text": "fx text 2", "dueAt": "2026-01-09T14:00:00.000Z", "sentAt": null,
+              "createdAt": "2026-01-01T11:00:00.000Z", "externalLink": null, "error": null,
+              "metricsUpdatedAt": null, "metrics": [], "metadata": {"__typename": "FacebookPostMetadata"}}}
+  ],
+  "pageInfo": {"hasNextPage": false, "endCursor": null}
+}}}

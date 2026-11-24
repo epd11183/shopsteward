@@ -1,0 +1,5 @@
+{"data": {"createPost": {"__typename": "PostActionSuccess", "post": {
+  "id": "fx-post-3", "channelId": "fx-channel-1", "status": "scheduled", "text": "fx new",
+  "dueAt": "2026-01-10T14:00:00.000Z", "sentAt": null, "createdAt": "2026-01-02T09:00:00.000Z",
+  "externalLink": null, "error": null, "metricsUpdatedAt": null,
+  "metadata": {"__typename": "PinterestPostMetadata", "url": "https://example.test/fx"}}}}}

@@ -5,12 +5,24 @@ adapters inline."""
 
 import os
 
-from shopsteward.adapters.vision.fake import FixtureVisionAdapter
+from shopsteward.adapters.vision.fake import FixtureCopyChecker, FixtureVisionAdapter
 from shopsteward.adapters.vision.gemini import GeminiVisionAdapter
-from shopsteward.adapters.vision.interface import VisionAdapter
+from shopsteward.adapters.vision.interface import CopyChecker, VisionAdapter
 from shopsteward.adapters.vision.openrouter import OpenRouterVisionAdapter
-from shopsteward.pipeline.config import COMMERCIAL_PROMPT_PATH
+from shopsteward.pipeline.config import COMMERCIAL_PROMPT_PATH, COPY_CHECK_PROMPT_PATH
 from shopsteward.pipeline.models import TuningProfile
+
+
+def build_copy_checker(profile: TuningProfile, live: bool) -> CopyChecker:
+    """Fixture checker (never approves) unless live AND provider=openrouter
+    (the only provider with a copy checker; anything else fails closed)."""
+    if not live or profile.vision.provider != "openrouter":
+        return FixtureCopyChecker()
+    return OpenRouterVisionAdapter(
+        api_key=os.environ["OPENROUTER_API_KEY"],
+        prompt=COPY_CHECK_PROMPT_PATH.read_text(encoding="utf-8"),
+        pricing=profile.vision.est_cost_per_mtok,
+    )
 
 
 def build_vision_adapter(profile: TuningProfile, live: bool) -> VisionAdapter:

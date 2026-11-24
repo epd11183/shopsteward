@@ -30,12 +30,29 @@ from shopsteward.core.events import Event, append
 from shopsteward.pipeline import tuning
 from shopsteward.pipeline.config import TUNING_PROFILE_PATH
 from shopsteward.pipeline.listings import config as listing_config
-from shopsteward.pipeline.listings.copy import build_copy_adapter, generate_copy
+from shopsteward.pipeline.listings.copy import (
+    MAX_COPY_REFUSALS,
+    build_copy_adapter,
+    copy_refusals,
+    generate_copy,
+)
+from shopsteward.pipeline.listings.crop_focus import get_crop_focus
+from shopsteward.pipeline.listings.digital_files import (
+    FilePlan,
+    digital_files_hash,
+    photo_dims,
+    plan_files,
+)
 from shopsteward.pipeline.listings.images import order_listing_images, resolve_sellable_file
 from shopsteward.pipeline.listings.models import BuildReport, ListingConfig, ListingImage
 from shopsteward.pipeline.listings.pricing import apply_price, enforce_floor
 from shopsteward.pipeline.listings.projections import rebuild_listings
-from shopsteward.pipeline.listings.push import build_etsy_write_adapter, push_drafts
+from shopsteward.pipeline.listings.push import (
+    build_etsy_write_adapter,
+    panel_mismatch,
+    photo_has_digital_listing,
+    push_drafts,
+)
 from shopsteward.pipeline.projections import rebuild_pipeline
 
 
@@ -90,9 +107,53 @@ def _mockup_rows(conn: sqlite3.Connection, user_id: int, set_key: str) -> list[d
     return [dict(row) for row in rows]
 
 
+def _skip_if_panel_stale(
+    conn: sqlite3.Connection,
+    user_id: int,
+    result: BuildReport,
+    draft_id: str,
+    set_key: str,
+    plan: FilePlan,
+) -> bool:
+    """True (BuildReport updated) when the draft must not be built."""
+    why = panel_mismatch(conn, user_id, set_key, plan)
+    if why is None:
+        return False
+    result.skipped_panel_stale += 1
+    if why == "legacy":
+        result.legacy_panels += 1
+    note = " (legacy panel records no sizes)" if why == "legacy" else ""
+    result.skip_reasons.append(f"draft {draft_id[:12]}: panel sizes stale{note}: re-render mockups")
+    return True
+
+
+def _copy_stage(
+    conn: sqlite3.Connection, user_id: int, result: BuildReport, draft_id: str, *args, **kwargs
+) -> bool:
+    """generate_copy + report bookkeeping. Returns True when the copy was
+    REFUSED (size/medium guard, or the per-draft refusal cap): the draft is not
+    counted as built and surfaces in the BuildReport."""
+    before = copy_refusals(conn, user_id, draft_id)
+    if generate_copy(conn, user_id, draft_id, *args, **kwargs):
+        result.copy_calls += 1
+        return False
+    n = copy_refusals(conn, user_id, draft_id)
+    if n <= before and n < MAX_COPY_REFUSALS:
+        return False  # soft cap / unparseable response: unchanged behaviour
+    result.copy_refused += 1
+    note = (
+        f"copy refused {n}x: needs operator review (--force rebuild resets)"
+        if n >= MAX_COPY_REFUSALS
+        else f"copy refused ({n}/{MAX_COPY_REFUSALS}); will retry next run"
+    )
+    result.skip_reasons.append(f"draft {draft_id[:12]}: {note}")
+    return True
+
+
 def _existing_draft(conn: sqlite3.Connection, user_id: int, draft_id: str) -> sqlite3.Row | None:
     return conn.execute(
-        "SELECT landing_file_id, photo_id, images_json, title, price, state "
+        "SELECT landing_file_id, photo_id, images_json, title, price, state, etsy_listing_id, "
+        "files_plan_json "
         "FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
         (user_id, draft_id),
     ).fetchone()
@@ -163,6 +224,15 @@ def build_drafts(
         draft_id = hashlib.sha256(f"{landing_file_id}|{cfg_hash}|{set_key}".encode()).hexdigest()
         existing = _existing_draft(conn, user_id, draft_id)
 
+        # A config change re-keys draft_id; never re-draft a photo that already
+        # has a live Etsy listing under an earlier config (duplicate listing).
+        if (
+            existing is None
+            and photo_has_digital_listing(conn, user_id, landing_file_id) is not None
+        ):
+            result.skipped_already_pushed += 1
+            continue
+
         if existing is not None and existing["state"] == "published":
             result.skipped_idempotent += 1
             continue
@@ -176,13 +246,24 @@ def build_drafts(
             # Fill-forward: keep the existing created/images_selected events,
             # only run whichever of copy/price is still missing.
             images = [ListingImage(**img) for img in json.loads(existing["images_json"] or "[]")]
+            ff_plan = (
+                FilePlan.model_validate(json.loads(existing["files_plan_json"]))
+                if cfg.digital_files is not None and existing["files_plan_json"]
+                else None
+            )
+            if ff_plan is not None and _skip_if_panel_stale(
+                conn, user_id, result, draft_id, set_key, ff_plan
+            ):
+                continue
+            refused = False
             if existing["title"] is None:
                 effective_photo_id = (
                     existing["photo_id"] or f"file-{existing['landing_file_id'][:12]}"
                 )
-                ran = generate_copy(
+                refused = _copy_stage(
                     conn,
                     user_id,
+                    result,
                     draft_id,
                     existing["landing_file_id"],
                     effective_photo_id,
@@ -191,15 +272,42 @@ def build_drafts(
                     cfg,
                     live=live_copy,
                     soft_cap_usd=soft_cap_usd,
+                    plan=ff_plan,
                 )
-                if ran:
-                    result.copy_calls += 1
             if existing["price"] is None:
                 _price_draft(conn, user_id, draft_id, "digital_download", cfg)
-            result.drafts_built += 1
+            if not refused:
+                result.drafts_built += 1
             continue
 
         # New draft, or --force rebuild of an existing non-published one.
+        # Freeze the plan once files exist on Etsy: a --force rebuild must not
+        # record a second plan that mixes with the uploaded files.
+        frozen = existing is not None and (
+            existing["etsy_listing_id"] is not None
+            or conn.execute(
+                "SELECT 1 FROM proj_listing_files WHERE user_id=? AND draft_id=? LIMIT 1",
+                (user_id, draft_id),
+            ).fetchone()
+            is not None
+        )
+        plan: FilePlan | None = None
+        plan_is_new = False
+        if cfg.digital_files is not None:
+            if not frozen:
+                plan = plan_files(
+                    photo_dims(row["path"]),
+                    get_crop_focus(conn, user_id, landing_file_id) or (0.5, 0.5),
+                    cfg.digital_files,
+                )
+                plan_is_new = True
+            elif existing["files_plan_json"]:
+                plan = FilePlan.model_validate(json.loads(existing["files_plan_json"]))
+        if plan is not None and _skip_if_panel_stale(
+            conn, user_id, result, draft_id, set_key, plan
+        ):
+            continue
+
         append(
             conn,
             Event(
@@ -236,10 +344,26 @@ def build_drafts(
             ),
         )
 
+        if plan is not None and plan_is_new:
+            assert cfg.digital_files is not None
+            append(
+                conn,
+                Event(
+                    user_id=user_id,
+                    type="listingdraft.files_planned",
+                    payload={
+                        "draft_id": draft_id,
+                        **plan.model_dump(mode="json"),
+                        "digital_files_hash": digital_files_hash(cfg.digital_files),
+                    },
+                ),
+            )
+
         effective_photo_id = row["photo_id"] or f"file-{landing_file_id[:12]}"
-        ran = generate_copy(
+        refused = _copy_stage(
             conn,
             user_id,
+            result,
             draft_id,
             landing_file_id,
             effective_photo_id,
@@ -248,12 +372,12 @@ def build_drafts(
             cfg,
             live=live_copy,
             soft_cap_usd=soft_cap_usd,
+            plan=plan,
         )
-        if ran:
-            result.copy_calls += 1
         _price_draft(conn, user_id, draft_id, "digital_download", cfg)
 
-        result.drafts_built += 1
+        if not refused:
+            result.drafts_built += 1
 
     rebuild_listings(conn)
 

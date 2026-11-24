@@ -35,7 +35,14 @@ def test_sync_appends_listing_images_observed_per_listing(conn):
     assert len(events) == 7
     by_listing = {e.payload["listing_id"]: e.payload["images"] for e in events}
     assert by_listing[111] == [
-        {"listing_image_id": 9001, "rank": 1, "url_570xN": "sample_listing.jpg"}
+        {
+            "listing_image_id": 9001,
+            "rank": 1,
+            "url_570xN": "sample_listing.jpg",
+            "url_fullxfull": None,
+            "full_width": 64,
+            "full_height": 64,
+        }
     ]
     assert by_listing[222] == []  # no fixture row for this listing -- empty is valid
 

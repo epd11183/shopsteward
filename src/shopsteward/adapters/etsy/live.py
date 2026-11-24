@@ -17,6 +17,7 @@ from shopsteward.adapters.etsy.models import (
     EtsyFileRef,
     EtsyImageRef,
     EtsyListing,
+    EtsyListingDetail,
     EtsyListingImage,
     EtsyListingInventory,
     EtsyListingRef,
@@ -26,6 +27,7 @@ from shopsteward.adapters.etsy.models import (
     EtsyShop,
     EtsyShopSection,
     EtsyTaxonomyNode,
+    ListingFile,
 )
 
 BASE = "https://openapi.etsy.com/v3/application"
@@ -66,6 +68,16 @@ def _encode_form_data(model: pydantic.BaseModel) -> dict[str, str | bool | int |
     return {k: ",".join(v) if isinstance(v, list) else v for k, v in raw.items() if v != []}
 
 
+def _retry_delay(resp: httpx.Response, attempt: int) -> float:
+    """Seconds to wait after a 429: numeric Retry-After, else exponential
+    backoff (an HTTP-date or garbage header falls back too), clamped to 0..60."""
+    try:
+        delay = float(resp.headers.get("Retry-After", ""))
+    except ValueError:
+        delay = 2.0 * (2**attempt)
+    return max(0.0, min(delay, 60.0))
+
+
 def _safe_error(resp: httpx.Response) -> str | None:
     try:
         body = resp.json()
@@ -102,9 +114,7 @@ class LiveEtsyAdapter:
                 return resp.json()
             if attempt == max_attempts - 1:
                 resp.raise_for_status()
-            retry_after = resp.headers.get("Retry-After")
-            delay = float(retry_after) if retry_after else 2.0 * (2**attempt)
-            time.sleep(delay)
+            time.sleep(_retry_delay(resp, attempt))
         raise AssertionError("unreachable")  # pragma: no cover
 
     def _paginate(self, path: str, **params: int | str) -> list[dict]:
@@ -233,6 +243,10 @@ class LiveEtsyAdapter:
         return EtsyActiveListingsPage.model_validate(self._get("/listings/active", **params))
 
 
+# Per-request: a 20 MB file can outlast the client's 30 s default on slow links.
+_UPLOAD_TIMEOUT = 300.0
+
+
 class LiveEtsyWriteAdapter:
     """Live Etsy Open API v3 write client (PRD §13 decision 41). A separate
     class from LiveEtsyAdapter -- the read path (M1) and its fixtures stay
@@ -249,7 +263,19 @@ class LiveEtsyWriteAdapter:
         )
 
     def _request(self, method: str, path: str, **kwargs: object) -> dict:
-        resp = self._client.request(method, f"{BASE}{path}", **kwargs)
+        # GET only: retry Etsy's per-second 429 like LiveEtsyAdapter._get does
+        # (a loop of list_listing_files trips it). Writes are never retried.
+        attempts = 4 if method == "GET" else 1
+        for attempt in range(attempts):
+            try:
+                resp = self._client.request(method, f"{BASE}{path}", **kwargs)
+            except httpx.HTTPError as exc:
+                # Transport failure (timeout/connect): surface as a normal write
+                # failure so callers record push_failed instead of crashing.
+                raise EtsyWriteError(0, f"transport error: {type(exc).__name__}") from exc
+            if resp.status_code != 429 or attempt == attempts - 1:
+                break
+            time.sleep(_retry_delay(resp, attempt))
         if resp.status_code >= 400:
             raise EtsyWriteError(resp.status_code, _safe_error(resp))
         return resp.json()
@@ -286,8 +312,30 @@ class LiveEtsyWriteAdapter:
             f"/shops/{self._shop_id}/listings/{listing_id}/images",
             data={"rank": rank},
             files={"image": ("image.jpg", image, "image/jpeg")},
+            timeout=_UPLOAD_TIMEOUT,
         )
         return EtsyImageRef(listing_image_id=body["listing_image_id"], rank=body.get("rank", rank))
+
+    def attach_listing_image(
+        self, listing_id: int, listing_image_id: int, *, rank: int
+    ) -> EtsyImageRef:
+        body = self._request(
+            "POST",
+            f"/shops/{self._shop_id}/listings/{listing_id}/images",
+            data={"listing_image_id": listing_image_id, "rank": rank},
+        )
+        return EtsyImageRef(listing_image_id=body["listing_image_id"], rank=body.get("rank", rank))
+
+    def delete_listing_image(self, listing_id: int, listing_image_id: int) -> None:
+        # 204, no body: same shape as delete_listing_file below.
+        try:
+            resp = self._client.delete(
+                f"{BASE}/shops/{self._shop_id}/listings/{listing_id}/images/{listing_image_id}"
+            )
+        except httpx.HTTPError as exc:
+            raise EtsyWriteError(0, f"transport error: {type(exc).__name__}") from exc
+        if resp.status_code >= 400:
+            raise EtsyWriteError(resp.status_code, _safe_error(resp))
 
     def upload_listing_file(
         self, listing_id: int, file: bytes, *, name: str, rank: int
@@ -297,8 +345,34 @@ class LiveEtsyWriteAdapter:
             f"/shops/{self._shop_id}/listings/{listing_id}/files",
             data={"name": name, "rank": rank},
             files={"file": (name, file, "application/octet-stream")},
+            timeout=_UPLOAD_TIMEOUT,
         )
         return EtsyFileRef(listing_file_id=body["listing_file_id"], rank=body.get("rank"))
+
+    def list_listing_files(self, listing_id: int) -> list[ListingFile]:
+        # getAllListingFiles. `size_bytes` is the integer size; `filesize` is a
+        # human string ("1.2MB") and is ignored. None unless a real integer.
+        body = self._request("GET", f"/shops/{self._shop_id}/listings/{listing_id}/files")
+        out: list[ListingFile] = []
+        for r in body.get("results", []):
+            size = r.get("size_bytes")
+            out.append(
+                ListingFile(
+                    listing_file_id=r["listing_file_id"],
+                    name=r.get("filename"),
+                    rank=r.get("rank"),
+                    size_bytes=size
+                    if isinstance(size, int) and not isinstance(size, bool)
+                    else None,
+                )
+            )
+        return out
+
+    def get_listing(self, listing_id: int) -> EtsyListingDetail:
+        # getListing + includes=Images (read-only). Never exercised against
+        # live Etsy in CI -- fake/fixture only.
+        body = self._request("GET", f"/listings/{listing_id}", params={"includes": "Images"})
+        return EtsyListingDetail.model_validate(body)
 
     def update_listing(self, listing_id: int, fields: EtsyListingUpdate) -> EtsyListing:
         # updateListing is also form-urlencoded (Etsy OpenAPI spec), not
@@ -450,5 +524,17 @@ class LiveEtsyWriteAdapter:
 
     def delete_listing(self, listing_id: int) -> None:
         resp = self._client.delete(f"{BASE}/shops/{self._shop_id}/listings/{listing_id}")
+        if resp.status_code >= 400:
+            raise EtsyWriteError(resp.status_code, _safe_error(resp))
+
+    def delete_listing_file(self, listing_id: int, listing_file_id: int) -> None:
+        # deleteListingFile returns 204 with no body, so _request (which ends in
+        # resp.json()) can't be used; transport errors are mapped the same way.
+        try:
+            resp = self._client.delete(
+                f"{BASE}/shops/{self._shop_id}/listings/{listing_id}/files/{listing_file_id}"
+            )
+        except httpx.HTTPError as exc:
+            raise EtsyWriteError(0, f"transport error: {type(exc).__name__}") from exc
         if resp.status_code >= 400:
             raise EtsyWriteError(resp.status_code, _safe_error(resp))

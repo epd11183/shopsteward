@@ -188,3 +188,19 @@ def live_gelato_error() -> str:
         "SHOPSTEWARD_LIVE_GELATO=1, GELATO_API_KEY, and GELATO_STORE_ID, fill "
         "real Gelato IDs in pod.json, then re-run with --live-gelato."
     )
+
+
+def live_buffer_open() -> bool:
+    """True iff SHOPSTEWARD_LIVE_BUFFER=1 and BUFFER_API_KEY is present. Checks
+    presence only; the value is never read into a message or log."""
+    return os.environ.get("SHOPSTEWARD_LIVE_BUFFER") == "1" and bool(
+        os.environ.get("BUFFER_API_KEY")
+    )
+
+
+def live_buffer_error() -> str:
+    return (
+        "Live Buffer publishing is gated on operator approval: set "
+        "SHOPSTEWARD_LIVE_BUFFER=1 and BUFFER_API_KEY in the environment, "
+        "then re-run with the command's live flag."
+    )

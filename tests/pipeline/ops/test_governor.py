@@ -315,3 +315,40 @@ def test_precedence_budget_beats_daily_cap(conn):
     cap = StubCapability()
     decision = govern(conn, USER_ID, action, cap, cfg, TODAY)
     assert decision.reason == RefusalReason.BUDGET
+
+
+# --- listing fees at gate3.published count toward the monthly spend ----------
+
+
+def _published(conn, created_at: str, user_id: int = USER_ID) -> None:
+    conn.execute(
+        "INSERT INTO events (user_id, type, payload, created_at) VALUES (?,?,?,?)",
+        (user_id, "gate3.published", "{}", created_at),
+    )
+    conn.commit()
+
+
+def test_published_listings_count_fee_times_n_this_month_only(conn):
+    from shopsteward.pipeline.ops.governor import month_spend, month_spend_parts
+
+    cfg = _cfg()
+    fee = cfg.catalog_expansion.listing_fee_usd
+    for day in ("2026-06-01", "2026-06-15", "2026-06-20"):
+        _published(conn, f"{day}T10:00:00+00:00")
+    _published(conn, "2026-05-31T10:00:00+00:00")  # previous month
+    _published(conn, "2026-06-02T10:00:00+00:00", user_id=2)  # other user
+    assert month_spend_parts(conn, USER_ID, "2026-06", cfg) == (0.0, pytest.approx(3 * fee))
+    assert month_spend(conn, USER_ID, "2026-06", cfg) == pytest.approx(3 * fee)
+    assert month_spend(conn, USER_ID, "2026-07", cfg) == 0.0
+
+
+def test_budget_refuses_when_publish_fees_reach_the_cap(conn):
+    cfg = _cfg()
+    cfg.autonomy.monthly_spend_cap_usd = 0.50
+    for _ in range(2):
+        _published(conn, "2026-06-01T10:00:00+00:00")  # $0.40 of fees
+    cap = StubCapability()
+    over = govern(conn, USER_ID, _action(estimated_cost_usd=0.20), cap, cfg, TODAY)
+    assert over.approved is False
+    assert over.reason == RefusalReason.BUDGET
+    assert govern(conn, USER_ID, _action(estimated_cost_usd=0.10), cap, cfg, TODAY).approved

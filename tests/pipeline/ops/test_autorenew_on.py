@@ -537,13 +537,13 @@ def test_materialize_shares_candidates_with_propose_and_rejects_hallucinated(con
 # --- 6. registration + full run/approve pipeline (policy_verified=True) -----
 
 
-def test_register_succeeds_capability_has_undo_and_t1_ceiling():
+def test_register_succeeds_capability_has_undo_and_auto_ceiling():
     cap = ListingAutorenewOn(FakeEtsyWriteAdapter())
 
     register(cap)
 
     assert REGISTRY["listing.autorenew_on"] is cap
-    assert cap.max_tier == Tier.NOTIFY
+    assert cap.max_tier == Tier.AUTO  # 2026-11-22: listing edits need no approval
     assert cap.policy_verified is True
     assert callable(cap.undo)
 
