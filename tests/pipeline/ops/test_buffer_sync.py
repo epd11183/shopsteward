@@ -146,3 +146,20 @@ def test_cli_offline_default_runs_on_the_fake(tmp_path, monkeypatch):
     result = runner.invoke(app, ["ops", "buffer-sync"])
     assert result.exit_code == 0, result.output
     assert "newly recorded: 0 observed, 0 marked posted" in result.output
+
+
+def test_pin_link_reused_in_an_instagram_post_never_marks_the_pin_posted(conn):
+    action_id = _draft_a_real_pin(conn, LISTING_ID)
+    adapter = _adapter()
+    sent_at = datetime.now(UTC)
+    adapter.posts["ig1"] = BufferPost(
+        post_id="ig1",
+        channel_id="ch-ig",
+        status="sent",
+        text=f"new print {_pin_url(action_id)}",
+        sent_at=sent_at,
+        created_at=sent_at - timedelta(hours=1),
+    )
+    result = sync_buffer(conn, USER_ID, adapter)
+    assert result.marked_posted == 0
+    assert read_all(conn, "social.pin_posted") == []

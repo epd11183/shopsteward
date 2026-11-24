@@ -74,9 +74,11 @@ def _find_action(
                 and row["state"] == "executed"
                 and row["action_id"].startswith(prefix_m.group(1))
             ):
-                if row["capability"] == "social.pinterest_post":
+                # The service must match: a pin's link reused in an IG/FB post
+                # must never mark the pin posted (review 2026-11-23).
+                if row["capability"] == "social.pinterest_post" and service == "pinterest":
                     return "pin", row["action_id"]
-                if row["capability"] == "social.caption_draft":
+                if row["capability"] == "social.caption_draft" and service != "pinterest":
                     return "caption", row["action_id"]
     text = post.text.strip()
     if text:
