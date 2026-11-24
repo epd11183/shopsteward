@@ -246,3 +246,28 @@ def test_brief_hides_buffer_drafts_from_hand_post_queue(conn, fake):
     cap, action = _cap_and_action(conn, fake)
     cap.execute(conn, USER_ID, action)
     assert _pin_drafts(conn, USER_ID, datetime.now(UTC).date()) == []
+
+
+def test_runner_refuse_reconcile_reapprove_then_undo(conn, fake, monkeypatch):
+    from shopsteward.pipeline.ops.runner import approve_action, run, undo_action
+
+    cap, action = _cap_and_action(conn, fake)
+    register(cap)
+    cfg = ops_config.get_ops_config(conn, USER_ID)
+    today = datetime.now(UTC).date()
+    run(conn, USER_ID, cfg, [cap], today=today, proposals=[action])
+    real_list = fake.list_posts
+    monkeypatch.setattr(fake, "list_posts", lambda **_: [])
+    fake.fail_after_create_once = True
+    rep = approve_action(conn, USER_ID, action.action_id, [cap], cfg=cfg, today=today)
+    assert rep.refused == 1 and not _types(conn, "action.failed")
+    assert _types(conn, "action.refused") and fake.create_count == 1
+
+    monkeypatch.setattr(fake, "list_posts", real_list)
+    sync_buffer(conn, USER_ID, fake)
+    rep = approve_action(conn, USER_ID, action.action_id, [cap], cfg=cfg, today=today)
+    assert rep.executed == 1 and fake.create_count == 1
+    assert len(_types(conn, "action.executed")) == 1
+
+    undo_action(conn, USER_ID, action.action_id, [cap])
+    assert len(_types(conn, bp.DELETED)) == 1 and "post-1" not in fake.posts
