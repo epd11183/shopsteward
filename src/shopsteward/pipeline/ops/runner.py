@@ -83,6 +83,7 @@ LIVE_GATED_CAPABILITIES = frozenset(
         "listing.seo_edit",
         "listing.size_claims_fix",
         "listing.panel_replace",
+        "listing.file_replace",
         "listing.deactivate",
         "listing.renew",
         "listing.catalog_expand",

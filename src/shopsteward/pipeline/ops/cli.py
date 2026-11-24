@@ -331,6 +331,7 @@ def run_cmd(
     from shopsteward.pipeline.ops.capabilities.autorenew_on import ListingAutorenewOn
     from shopsteward.pipeline.ops.capabilities.caption_draft import SocialCaptionDraft
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
+    from shopsteward.pipeline.ops.capabilities.file_replace import ListingFileReplace
     from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
     from shopsteward.pipeline.ops.capabilities.panel_replace import ListingPanelReplace
     from shopsteward.pipeline.ops.capabilities.pinterest_post import SocialPinterestPost
@@ -358,6 +359,7 @@ def run_cmd(
     register(ListingSeoEdit(adapter))
     register(ListingSizeClaimsFix(adapter))
     register(ListingPanelReplace(adapter))
+    register(ListingFileReplace(adapter))
     register(ListingDeactivate(adapter))
     register(ListingRenew(adapter))
     register(OpsTuneThreshold())  # no adapter -- registers regardless of --live-autonomy
@@ -643,6 +645,7 @@ def _register_autorenew(live_autonomy: bool, *, announce: bool = True) -> None:
     from shopsteward.pipeline.ops.capabilities.autorenew_on import ListingAutorenewOn
     from shopsteward.pipeline.ops.capabilities.caption_draft import SocialCaptionDraft
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
+    from shopsteward.pipeline.ops.capabilities.file_replace import ListingFileReplace
     from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
     from shopsteward.pipeline.ops.capabilities.panel_replace import ListingPanelReplace
     from shopsteward.pipeline.ops.capabilities.pinterest_post import SocialPinterestPost
@@ -662,6 +665,7 @@ def _register_autorenew(live_autonomy: bool, *, announce: bool = True) -> None:
     register(ListingSeoEdit(adapter))
     register(ListingSizeClaimsFix(adapter))
     register(ListingPanelReplace(adapter))
+    register(ListingFileReplace(adapter))
     register(ListingDeactivate(adapter))
     register(ListingRenew(adapter))
     register(OpsTuneThreshold())
@@ -1050,6 +1054,69 @@ def edit_listing_cmd(
         for field, (old, new) in changes.items():
             typer.echo(f"  {field}: {old!r} -> {new!r}")
         typer.echo(f"undo with: shopsteward ops undo {action_id} --live-autonomy")
+    finally:
+        conn.close()
+
+
+@ops_app.command("replace-file")
+def replace_file_cmd(
+    listing_id: Annotated[int, typer.Argument(help="Etsy listing_id whose rank-1 file to replace")],
+    file: Annotated[Path, typer.Option("--file", help="The re-exported full-frame JPEG")],
+    reason: Annotated[str | None, typer.Option("--reason", help="Why (kept in the event)")] = None,
+    live_autonomy: Annotated[
+        bool,
+        typer.Option(
+            "--live-autonomy/--no-live-autonomy", help="Permit real (non-fake) capability writes"
+        ),
+    ] = False,
+) -> None:
+    """Propose replacing a live digital listing's rank-1 file (`listing.file_replace`,
+    PROPOSE tier, no undo). Builds and records the proposal only; execute it with
+    `ops approve <action_id> --live-autonomy`. Reads Etsy's file list, so it is
+    adapter-gated like every other live command."""
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.core.projections import rebuild as rebuild_core
+    from shopsteward.pipeline.live_gate import live_autonomy_error, live_autonomy_open
+    from shopsteward.pipeline.ops import config as ops_config
+    from shopsteward.pipeline.ops.projections import rebuild_ops
+    from shopsteward.pipeline.ops.registry import REGISTRY
+    from shopsteward.pipeline.ops.runner import run
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    if not live_autonomy:
+        typer.secho("replace-file needs --live-autonomy (it reads Etsy's file list)", fg="red")
+        raise typer.Exit(code=1)
+    if not live_autonomy_open():
+        typer.secho(live_autonomy_error(), fg="red")
+        raise typer.Exit(code=1)
+    _register_autorenew(live_autonomy)
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        ops_config.seed(conn, DEFAULT_USER_ID)
+        rebuild_core(conn)
+        rebuild_ops(conn)
+        cfg = ops_config.get_ops_config(conn, DEFAULT_USER_ID)
+        cap = REGISTRY["listing.file_replace"]
+        try:
+            action = cap.build_action(  # type: ignore[attr-defined]
+                conn, DEFAULT_USER_ID, cfg, listing_id, file, reason=reason
+            )
+        except ValueError as exc:
+            typer.secho(f"replace-file refused: {exc}", fg="red")
+            raise typer.Exit(code=1) from exc
+        run(
+            conn,
+            DEFAULT_USER_ID,
+            cfg,
+            [cap],
+            proposals=[action],
+            live_autonomy=live_autonomy,
+        )
+        typer.echo(f"proposed: {action.action_id} ({action.reason})")
+        typer.echo(f"execute with: shopsteward ops approve {action.action_id} --live-autonomy")
     finally:
         conn.close()
 
