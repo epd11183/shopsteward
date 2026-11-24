@@ -26,6 +26,10 @@ adapter and burns the proposal. Check the gate first.
 ## The cycle
 
 1. `uv run shopsteward sync --live`. This pulls listings, receipts and reviews.
+   Optional until the S9 cutover: `SHOPSTEWARD_LIVE_BUFFER=1 uv run shopsteward
+   ops buffer-sync --live` (read-only; needs `BUFFER_API_KEY`). It records Buffer
+   posts and metrics and marks sent pins posted at their real send time. Without
+   `--live` it uses an empty fake and does nothing.
 2. `uv run shopsteward ops run`. This is a **dry run by default**. Read what it
    would do.
 3. `uv run shopsteward ops run --no-dry-run --live-autonomy`. This executes

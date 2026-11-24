@@ -43,7 +43,8 @@ from tests.pipeline.ops.helpers import AS_OF, USER_ID, seed_two_year_shop
 
 _OPS_DIR = Path(brief_module.__file__).parent
 _FORBIDDEN_MODULES = ("httpx", "requests", "shopsteward.adapters")
-_NARRATION_FILES = {"planner.py", "cli.py", "registry.py", "keyword_probe.py"}
+# buffer_sync.py imports only the Buffer read Protocol + models (no transport).
+_NARRATION_FILES = {"planner.py", "cli.py", "registry.py", "keyword_probe.py", "buffer_sync.py"}
 
 
 def _imported_modules(py_file: Path) -> set[str]:

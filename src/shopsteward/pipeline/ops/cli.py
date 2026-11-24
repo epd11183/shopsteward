@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     import sqlite3
     from datetime import date
 
+    from shopsteward.adapters.buffer.interface import BufferAdapter
     from shopsteward.adapters.etsy.interface import EtsyWriteAdapter
     from shopsteward.adapters.etsy.live import LiveEtsyAdapter
     from shopsteward.pipeline.ops.capabilities.catalog_expand import ListingCatalogExpand
@@ -750,6 +751,52 @@ def reject_cmd(
         typer.echo(f"rejected: {action_id}")
     finally:
         conn.close()
+
+
+def _build_buffer_adapter(live: bool) -> "BufferAdapter":
+    if not live:
+        from shopsteward.adapters.buffer.fake import FakeBufferAdapter
+
+        return FakeBufferAdapter()
+    from shopsteward.adapters.buffer.live import LiveBufferAdapter
+
+    return LiveBufferAdapter(os.environ["BUFFER_API_KEY"])
+
+
+@ops_app.command("buffer-sync")
+def buffer_sync_cmd(
+    live: Annotated[
+        bool,
+        typer.Option("--live", help="Read from Buffer (needs SHOPSTEWARD_LIVE_BUFFER=1 + key)."),
+    ] = False,
+    since_days: Annotated[int, typer.Option("--since-days", min=1)] = 35,
+) -> None:
+    """Observe Buffer posts (read-only): record status/metrics changes and
+    mark sent pins/captions posted at their real send time. Offline default
+    uses an empty fake adapter."""
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.pipeline.live_gate import live_buffer_error, live_buffer_open
+    from shopsteward.pipeline.ops.buffer_sync import sync_buffer
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    if live and not live_buffer_open():
+        typer.secho(live_buffer_error(), fg="red")
+        raise typer.Exit(1)
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        res = sync_buffer(conn, DEFAULT_USER_ID, _build_buffer_adapter(live), since_days=since_days)
+    finally:
+        conn.close()
+    typer.echo("buffer-sync (" + ("live" if live else "offline fake") + ")")
+    for key in sorted(res.seen):
+        typer.echo(f"  {key}: {res.seen[key]}")
+    typer.echo(f"  newly recorded: {res.observed_new} observed, {res.marked_posted} marked posted")
+    typer.echo(f"  unmatched (not ShopSteward drafts): {res.unmatched}")
+    for line in res.skipped:
+        typer.secho(f"  skipped {line}", fg="yellow")
 
 
 @ops_app.command("mark-posted")
