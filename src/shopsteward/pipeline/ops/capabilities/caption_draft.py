@@ -82,7 +82,10 @@ SEARCH-INDEX entry that surfaces for months) while a promo caption on this
 capability was originally, deliberately, proof-gated: it spends the shop's
 audience attention on a ONE-SHOT FEED POST that dies in a day.
 
-**Shipped default for both `instagram` and `facebook`: `"proven"`.** The
+**Shipped default for both `instagram` and `facebook` since 2026-11-24:
+`"explore"` with a 30-day cooldown** (operator: only one listing had sold, so
+`proven` repeated it on every caption). The original case for `"proven"`
+follows, kept for context. The
 75%-of-historical-sales evidence is real, but it argues for *how often to
 use this channel*, not for *loosening which listings get shown to it*. On
 every axis §2.1 uses to justify Pinterest's explore policy, the operator's
@@ -220,8 +223,8 @@ def _explore_candidates(
     minus the image requirement -- a caption needs no image): every ACTIVE
     listing not drafted/posted on THIS channel within `cooldown_days`.
     `units`/`revenue_usd` are 0 by construction (this arm makes no sales
-    claim at all) -- `proof_phrase()` already handles a zero-units row
-    honestly."""
+    claim at all), so `_build_action(explore=True)` uses a neutral coverage
+    reason instead of `proof_phrase()`."""
     cutoff = now - timedelta(days=cooldown_days)
     out: dict[str, ListingSales] = {}
     rows = conn.execute(
@@ -379,7 +382,14 @@ def _valid_caption(caption: object, cfg: OpsConfig) -> str | None:
 
 
 def _build_action(
-    target: ListingSales, channel: str, caption: str, cfg_hash: str, today: str, expires_at: str
+    target: ListingSales,
+    channel: str,
+    caption: str,
+    cfg_hash: str,
+    today: str,
+    expires_at: str,
+    *,
+    explore: bool = False,
 ) -> ProposedAction:
     target_id = _target_id(target.listing_id, channel)
     raw = "|".join((target_id, str(target.units), hashlib.sha256(caption.encode()).hexdigest()))
@@ -391,7 +401,14 @@ def _build_action(
         target_type="listing",
         target_id=target_id,
         tier=Tier.PROPOSE,  # overwritten by the runner with the effective tier
-        reason=f"{analytics.proof_phrase(target)} -- promo caption ready to post ({channel}).",
+        # explore rows carry units=0 by construction, NOT a sales/views claim:
+        # proof_phrase() would mislabel them "rising views, no sales yet".
+        reason=(
+            f"catalog coverage, not posted on {channel} in its cooldown"
+            if explore
+            else analytics.proof_phrase(target)
+        )
+        + f" -- promo caption ready to post ({channel}).",
         inputs_hash=inputs_hash,
         estimated_cost_usd=0.0,
         undo_available=False,
@@ -492,7 +509,14 @@ class SocialCaptionDraft:
         today = today_date.isoformat()
         cfg_hash = ops_config_hash(cfg)
         expires_at = (today_date + timedelta(days=cfg.autonomy.proposal_ttl_days)).isoformat()
-        action = _build_action(target, channel, caption, cfg_hash, today, expires_at)
+        explore = (
+            cfg.caption.channels[channel].eligibility == "explore"
+            if channel in cfg.caption.channels
+            else False
+        )
+        action = _build_action(
+            target, channel, caption, cfg_hash, today, expires_at, explore=explore
+        )
         if publishing:
             action.params["publish_via"] = "buffer"
             action.undo_available = True

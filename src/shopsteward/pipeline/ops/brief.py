@@ -507,7 +507,7 @@ def render_text(brief: Brief) -> str:
             f"({len(brief.pin_experiments)})"
         )
         for x in brief.pin_experiments:
-            if x.observed_views_per_day is None and x.days_since_posted <= x.window_days:
+            if x.observed_views_per_day is None and x.days_since_posted < x.window_days:
                 lines.append(
                     f"  {x.title} -- posted {x.days_since_posted}d ago -- too early to measure"
                 )

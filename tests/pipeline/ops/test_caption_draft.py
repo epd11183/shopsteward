@@ -1127,3 +1127,17 @@ def test_brief_captions_show_channel_and_drop_once_marked_posted(conn):
 
     brief_after = generate_brief(conn, USER_ID, cfg_live, as_of=TODAY)
     assert brief_after.caption_drafts == []
+
+
+def test_explore_reason_makes_no_sales_or_views_claim(conn):
+    """explore rows have units=0 by construction; proof_phrase() would call even
+    the shop's one seller "rising views, no sales yet" (review 2026-11-24)."""
+    _seed_seller(conn)
+    cfg = _cfg()
+    _channel_cfg(cfg, "instagram", eligibility="explore")
+    action = SocialCaptionDraft().materialize(
+        conn, USER_ID, cfg, _intent(str(LISTING_SELLER), caption="Hi!")
+    )
+    assert action is not None
+    assert action.reason.startswith("catalog coverage")
+    assert "sold" not in action.reason and "rising views" not in action.reason
