@@ -70,7 +70,7 @@
   },
   "catalog_expansion": {
     "enabled": true,
-    "source_folder": "data/catalog_candidates",
+    "source_folder": "D:/Photos/Etsy/candidates",
     "recursive": true,
     "max_new_per_week": 5,
     "min_long_edge_px": 6000,
