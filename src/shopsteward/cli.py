@@ -299,7 +299,8 @@ def shop_build(
     through provider link + enrich -- one command, unattended (scan_landing
     -> run_vision_copy -> run_mockups -> build_drafts -> build_pod_drafts ->
     link_pod_drafts -> enrich_pod_drafts). --live-gelato refuses up front
-    unless SHOPSTEWARD_LIVE_GELATO=1 and GELATO_API_KEY are set."""
+    unless SHOPSTEWARD_LIVE_GELATO=1 and GELATO_API_KEY are set. Without
+    --live-gelato the POD stages are skipped entirely (no fake-draft events)."""
     from shopsteward.core.db import connect, migrate
     from shopsteward.settings import DEFAULT_USER_ID, db_path
     from shopsteward.shop import LiveGateClosedError, run_shop_build

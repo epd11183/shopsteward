@@ -35,7 +35,7 @@ def _winners_folder(tmp_path: Path) -> Path:
 def test_run_shop_build_builds_pod_drafts(conn, tmp_path):
     folder = _winners_folder(tmp_path)
 
-    result = run_shop_build(conn, USER_ID, folder)
+    result = run_shop_build(conn, USER_ID, folder, run_pod_offline=True)
 
     assert result["pod_drafts"] > 0
 

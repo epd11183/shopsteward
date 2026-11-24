@@ -41,7 +41,7 @@ def _winners_folder(tmp_path: Path) -> Path:
 def test_run_shop_build_links_and_enriches_pod_drafts(conn, tmp_path):
     folder = _winners_folder(tmp_path)
 
-    result = run_shop_build(conn, USER_ID, folder)
+    result = run_shop_build(conn, USER_ID, folder, run_pod_offline=True)
 
     assert result["pod_linked"] > 0
     assert result["pod_enriched"] > 0
@@ -67,7 +67,7 @@ def test_run_shop_build_twice_is_idempotent(conn, tmp_path):
     durable etsy_listing_id instead."""
     folder = _winners_folder(tmp_path)
 
-    result1 = run_shop_build(conn, USER_ID, folder)
+    result1 = run_shop_build(conn, USER_ID, folder, run_pod_offline=True)
     assert result1["pod_linked"] > 0
     assert result1["pod_enriched"] > 0
 
@@ -78,7 +78,7 @@ def test_run_shop_build_twice_is_idempotent(conn, tmp_path):
     enriched_after_1 = {d for d, s in statuses_after_1.items() if s == "enriched"}
     assert enriched_after_1
 
-    result2 = run_shop_build(conn, USER_ID, folder)
+    result2 = run_shop_build(conn, USER_ID, folder, run_pod_offline=True)
 
     # Nothing already linked gets re-created; only a draft that never got a
     # provider_product_id in run 1 (e.g. a catalog gap) legitimately retries.
@@ -156,7 +156,14 @@ def test_pod_stages_never_get_live_etsy_or_copy_without_live_gelato(conn, tmp_pa
     monkeypatch.setattr(shop, "link_pod_drafts", spy_link)
     monkeypatch.setattr(shop, "enrich_pod_drafts", spy_enrich)
 
-    run_shop_build(conn, USER_ID, _winners_folder(tmp_path), live_copy=True, live_etsy_write=True)
+    run_shop_build(
+        conn,
+        USER_ID,
+        _winners_folder(tmp_path),
+        live_copy=True,
+        live_etsy_write=True,
+        run_pod_offline=True,
+    )
 
     assert [live for live, _ in etsy_calls] == [True, False]
     digital, pod = etsy_calls[0][1], etsy_calls[1][1]
