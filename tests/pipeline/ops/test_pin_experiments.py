@@ -524,6 +524,24 @@ def test_brief_marks_a_too_recent_pin_as_too_early_not_zero(conn):
     assert " 0 views/day" not in text
 
 
+def test_brief_says_not_measurable_not_too_early_once_the_window_has_passed(conn):
+    """92 days after posting with no synced views covering the after-window is
+    missing data, not "too early" (brief bug seen 2026-11-24)."""
+    _seed_pin_action(
+        conn,
+        listing_id=824,
+        action_id="act-brief-old",
+        drafted_at=datetime.combine(TODAY - timedelta(days=92), datetime.min.time(), tzinfo=UTC),
+    )
+    ops_config.seed(conn, USER_ID)
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    cfg = ops_config.get_ops_config(conn, USER_ID)
+    text = render_text(generate_brief(conn, USER_ID, cfg, as_of=TODAY))
+    assert "posted 92d ago -- not measurable" in text
+    assert "too early" not in text
+
+
 def test_brief_pin_experiments_section_disabled_by_config(conn):
     listing_id = 823
     drafted_at = datetime.combine(TODAY - timedelta(days=1), datetime.min.time(), tzinfo=UTC)

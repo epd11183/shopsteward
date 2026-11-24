@@ -612,6 +612,7 @@ class PinExperimentResult(BaseModel):
     title: str
     drafted_at: str  # ISO date
     days_since_posted: int
+    window_days: int = 7  # the after-window; past it, None means thin data, not too early
     baseline_views_per_day: float | None
     observed_views_per_day: float | None
     delta_views_per_day: float | None  # None unless both sides are measurable

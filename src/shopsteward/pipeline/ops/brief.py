@@ -507,9 +507,16 @@ def render_text(brief: Brief) -> str:
             f"({len(brief.pin_experiments)})"
         )
         for x in brief.pin_experiments:
-            if x.observed_views_per_day is None:
+            if x.observed_views_per_day is None and x.days_since_posted < x.window_days:
                 lines.append(
                     f"  {x.title} -- posted {x.days_since_posted}d ago -- too early to measure"
+                )
+            elif x.observed_views_per_day is None:
+                # Window elapsed but the synced view history doesn't span it
+                # (analytics._views_rate_per_day): absence, not "too early".
+                lines.append(
+                    f"  {x.title} -- posted {x.days_since_posted}d ago -- not measurable: "
+                    f"synced views don't cover the {x.window_days} days after posting"
                 )
             elif x.baseline_views_per_day is None:
                 lines.append(

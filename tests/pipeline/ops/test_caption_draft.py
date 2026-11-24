@@ -88,6 +88,23 @@ def _seed_rising_zero_sales_listing(conn, listing_id=903, title="Rising Listing,
     rebuild_ops(conn)
 
 
+@pytest.fixture(autouse=True)
+def _proven_caption_policy(tmp_path_factory, monkeypatch, _isolated_catalog_candidates):
+    """These tests were written against the `proven` caption policy; the shipped
+    default became `explore` (30-day cooldown) on 2026-11-24. Pin the old
+    policy here so they keep testing what they test."""
+    import json
+
+    path = ops_config.load_ops_config.__defaults__[0]
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    for ch in cfg["caption"]["channels"].values():
+        ch.update(eligibility="proven", cooldown_days=1)
+    new = tmp_path_factory.mktemp("captioncfg") / "ops.json"
+    new.write_text(json.dumps(cfg), encoding="utf-8")
+    monkeypatch.setattr(ops_config.load_ops_config, "__defaults__", (new,))
+    monkeypatch.setattr(ops_config.seed, "__defaults__", (new,))
+
+
 def _cfg(**autonomy_overrides):
     cfg = ops_config.load_ops_config()
     for k, v in autonomy_overrides.items():
@@ -1110,3 +1127,17 @@ def test_brief_captions_show_channel_and_drop_once_marked_posted(conn):
 
     brief_after = generate_brief(conn, USER_ID, cfg_live, as_of=TODAY)
     assert brief_after.caption_drafts == []
+
+
+def test_explore_reason_makes_no_sales_or_views_claim(conn):
+    """explore rows have units=0 by construction; proof_phrase() would call even
+    the shop's one seller "rising views, no sales yet" (review 2026-11-24)."""
+    _seed_seller(conn)
+    cfg = _cfg()
+    _channel_cfg(cfg, "instagram", eligibility="explore")
+    action = SocialCaptionDraft().materialize(
+        conn, USER_ID, cfg, _intent(str(LISTING_SELLER), caption="Hi!")
+    )
+    assert action is not None
+    assert action.reason.startswith("catalog coverage")
+    assert "sold" not in action.reason and "rising views" not in action.reason
