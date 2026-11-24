@@ -188,6 +188,7 @@ def build_drafts(
     user_id: int,
     *,
     photo_id: str | None = None,
+    file_id: str | None = None,
     force: bool = False,
     live_copy: bool = False,
     live_etsy_write: bool = False,
@@ -215,6 +216,8 @@ def build_drafts(
         return result
 
     for row in _eligible_landing_rows(conn, user_id, photo_id):
+        if file_id is not None and row["file_id"] != file_id:
+            continue  # catalog_expand: only THIS export, never a sibling of the same RAW
         landing_file_id = row["file_id"]
         mockup_set = _completed_mockup_set(conn, user_id, landing_file_id)
         if mockup_set is None:

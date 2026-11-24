@@ -226,9 +226,16 @@ def expand_one(
     )
 
     _score_file(conn, user_id, file_id, vision)
-    mockup_hook("run_mockups")(conn, user_id, photo_id=photo_id)
+    # file_id: a catalog photo_id can cover other exports of the same RAW;
+    # only this file may get mockups and a draft.
+    mockup_hook("run_mockups")(conn, user_id, photo_id=photo_id, file_id=file_id)
     report = build_drafts(
-        conn, user_id, photo_id=photo_id, live_copy=live_copy, etsy_adapter=adapter
+        conn,
+        user_id,
+        photo_id=photo_id,
+        file_id=file_id,
+        live_copy=live_copy,
+        etsy_adapter=adapter,
     )
 
     row = conn.execute(

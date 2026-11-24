@@ -153,6 +153,7 @@ def run_mockups(
     user_id: int,
     *,
     photo_id: str | None = None,
+    file_id: str | None = None,
     force: bool = False,
     extra_template_dirs: list[Path] | None = None,
     output_dir: Path | None = None,
@@ -184,6 +185,8 @@ def run_mockups(
     result = MockupJobResult(templates_invalid=templates_invalid)
 
     for row in _eligible_landing_rows(conn, user_id, photo_id):
+        if file_id is not None and row["file_id"] != file_id:
+            continue  # catalog_expand: only THIS export, never a sibling of the same RAW
         landing_file_id = row["file_id"]
         set_key = hashlib.sha256(
             f"{landing_file_id}|{cfg_hash}|{template_library_hash}".encode()
