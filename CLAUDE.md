@@ -262,6 +262,11 @@ Buffer connector/MCP (runbook "Social posting"). Free; no AI label
 hold for non-listing ones (`social.*`...)" clause above for these two
 capabilities only; `ops.tune_threshold` stays PROPOSE.
 
+**Amended 2026-11-24: `listing.reprice` paused to PROPOSE.** Its
+`tier_floor` AUTO entry is removed, so price cuts wait for operator approval.
+The 11-24 weekly run re-cut five prices the operator had restored, on top of
+the 25% Cyber sale. Re-adding the floor entry is the operator's call.
+
 **Objective — optimize for contribution profit and long-term portfolio
 value, not gross sales or activity.** Trailing-window contribution profit
 (revenue minus Etsy fees, fulfillment cost, and attributed ad spend) is the
