@@ -15,6 +15,7 @@ from typer.testing import CliRunner
 import shopsteward.pipeline.listings.push as push_mod
 from shopsteward.adapters.etsy.fake import FakeEtsyWriteAdapter
 from shopsteward.adapters.planner.interface import ProposalIntent
+from shopsteward.adapters.vision.fake import FixtureCopyChecker
 from shopsteward.cli import app
 from shopsteward.core.db import connect, migrate
 from shopsteward.core.events import Event, append, read_all
@@ -123,10 +124,16 @@ def test_real_listing_capabilities_floor_auto_with_undo_and_gapfill_stays_propos
 
     # no undo -> must stay operator-approved (registry invariant 1 / paid POD SKU)
     gapfill = ListingGapfillReprint(build_print_file_host(live=False))
-    expand = ListingCatalogExpand(fake, live_copy=False)
-    for cap in (gapfill, expand):
-        assert cap.max_tier == Tier.PROPOSE and cap.undo is None
-        assert effective_tier(cap, None, floor) == Tier.PROPOSE
+    assert gapfill.max_tier == Tier.PROPOSE and gapfill.undo is None
+    assert effective_tier(gapfill, None, floor) == Tier.PROPOSE
+
+    # catalog_expand: AUTO since 2026-11-23, behind the read-back gate; undo deactivates
+    expand = ListingCatalogExpand(
+        fake, live_copy=False, checker=FixtureCopyChecker(), live_check=False
+    )
+    register(expand)
+    assert expand.max_tier == Tier.AUTO and callable(expand.undo)
+    assert effective_tier(expand, None, floor) == Tier.AUTO
 
 
 # --- HTML-escaped baselines -> plain text ------------------------------------

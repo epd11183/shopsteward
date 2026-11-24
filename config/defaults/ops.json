@@ -150,7 +150,8 @@
       "listing.reprice": 0,
       "listing.deactivate": 0,
       "listing.renew": 0,
-      "listing.autorenew_off": 0
+      "listing.autorenew_off": 0,
+      "listing.catalog_expand": 0
     },
     "ladder": {
       "promote_approvals": 20,

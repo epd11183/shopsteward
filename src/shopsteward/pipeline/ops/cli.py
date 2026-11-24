@@ -53,7 +53,9 @@ if TYPE_CHECKING:
     import sqlite3
     from datetime import date
 
+    from shopsteward.adapters.etsy.interface import EtsyWriteAdapter
     from shopsteward.adapters.etsy.live import LiveEtsyAdapter
+    from shopsteward.pipeline.ops.capabilities.catalog_expand import ListingCatalogExpand
     from shopsteward.pipeline.ops.models import OpsConfig
     from shopsteward.pipeline.ops.registry import Capability
 
@@ -320,14 +322,12 @@ def run_cmd(
     from shopsteward.pipeline.live_gate import (
         live_autonomy_error,
         live_autonomy_open,
-        live_copy_open,
         live_planner_open,
     )
     from shopsteward.pipeline.ops import config as ops_config
     from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
     from shopsteward.pipeline.ops.capabilities.autorenew_on import ListingAutorenewOn
     from shopsteward.pipeline.ops.capabilities.caption_draft import SocialCaptionDraft
-    from shopsteward.pipeline.ops.capabilities.catalog_expand import ListingCatalogExpand
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
     from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
     from shopsteward.pipeline.ops.capabilities.panel_replace import ListingPanelReplace
@@ -362,7 +362,7 @@ def run_cmd(
     # T11 -- same adapter as the other Etsy-write capabilities above;
     # live_copy resolves independently (SHOPSTEWARD_LIVE_COPY, its own gate)
     # and is the sole precondition_ok control (module docstring).
-    register(ListingCatalogExpand(adapter, live_copy=live_copy_open()))
+    register(_catalog_expand(adapter))
     # Always the offline print-file host -- this capability's execute() never
     # reaches Gelato/Etsy, so it is never gated on --live-autonomy.
     register(ListingGapfillReprint(build_print_file_host(live=False)))
@@ -580,6 +580,31 @@ def status() -> None:
         conn.close()
 
 
+def _catalog_expand(adapter: "EtsyWriteAdapter") -> "ListingCatalogExpand":
+    """`listing.catalog_expand` with its two independent live gates resolved:
+    SHOPSTEWARD_LIVE_COPY (copy generation) and SHOPSTEWARD_LIVE_VISION (the
+    read-back copy-vs-photo check). Either closed -> precondition_ok False, and
+    the fixture checker (which never approves) is wired."""
+    import json
+
+    from shopsteward.pipeline.config import TUNING_PROFILE_PATH
+    from shopsteward.pipeline.live_gate import live_copy_open, live_vision_open
+    from shopsteward.pipeline.models import TuningProfile
+    from shopsteward.pipeline.ops.capabilities.catalog_expand import ListingCatalogExpand
+    from shopsteward.pipeline.vision_factory import build_copy_checker
+
+    profile = TuningProfile.model_validate(
+        json.loads(TUNING_PROFILE_PATH.read_text(encoding="utf-8"))
+    )
+    live_check = profile.vision.provider == "openrouter" and live_vision_open("openrouter")
+    return ListingCatalogExpand(
+        adapter,
+        live_copy=live_copy_open(),
+        checker=build_copy_checker(profile, live_check),
+        live_check=live_check,
+    )
+
+
 def _register_autorenew(live_autonomy: bool, *, announce: bool = True) -> None:
     """Shared by `approve`/`undo`: same fake-vs-live construction as `ops
     run` (module docstring). Registers into the module-global REGISTRY so
@@ -588,11 +613,9 @@ def _register_autorenew(live_autonomy: bool, *, announce: bool = True) -> None:
     gated on `live_autonomy`."""
     from shopsteward.pipeline.listings.pod.factory import build_print_file_host
     from shopsteward.pipeline.listings.push import build_etsy_write_adapter
-    from shopsteward.pipeline.live_gate import live_copy_open
     from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
     from shopsteward.pipeline.ops.capabilities.autorenew_on import ListingAutorenewOn
     from shopsteward.pipeline.ops.capabilities.caption_draft import SocialCaptionDraft
-    from shopsteward.pipeline.ops.capabilities.catalog_expand import ListingCatalogExpand
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
     from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
     from shopsteward.pipeline.ops.capabilities.panel_replace import ListingPanelReplace
@@ -616,7 +639,7 @@ def _register_autorenew(live_autonomy: bool, *, announce: bool = True) -> None:
     register(ListingDeactivate(adapter))
     register(ListingRenew(adapter))
     register(OpsTuneThreshold())
-    register(ListingCatalogExpand(adapter, live_copy=live_copy_open()))
+    register(_catalog_expand(adapter))
     register(ListingGapfillReprint(build_print_file_host(live=False)))
     register(SocialCaptionDraft())
     register(SocialPinterestPost())

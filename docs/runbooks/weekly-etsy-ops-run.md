@@ -31,8 +31,14 @@ adapter and burns the proposal. Check the gate first.
    every AUTO-tier action inside the governor's caps:
    - listing capabilities: `seo_edit`, `size_claims_fix`, `reprice`,
      `deactivate`, `renew`, `autorenew_off`;
+   - `catalog_expand`: up to `max_new_per_week` (5) new listings from
+     `D:/Photos/Etsy/candidates`, each published only if the read-back gate
+     passes. Needs `SHOPSTEWARD_LIVE_COPY=1` and `SHOPSTEWARD_LIVE_VISION=1`
+     too, or nothing is auto-published. Gate failures appear in the brief
+     under NEEDS YOU with their problems: fix the draft with `ops edit-listing`
+     (or `listings` tools) and publish it at Gate 3;
    - capabilities still at PROPOSE stay pending: `gapfill_reprint`,
-     `catalog_expand`, `autorenew_on`, `social.*`.
+     `autorenew_on`, `social.*`.
 4. `uv run shopsteward ops brief`. Its sections are NEEDS YOU, DONE, REFUSED
    and THE SHOP. Report from it.
 5. `uv run shopsteward ops status`. Shows month spend against the $20 cap and

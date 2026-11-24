@@ -8,6 +8,7 @@ from shopsteward.adapters.etsy.models import (
     EtsyFileRef,
     EtsyImageRef,
     EtsyListing,
+    EtsyListingDetail,
     EtsyListingImage,
     EtsyListingInventory,
     EtsyListingRef,
@@ -155,6 +156,12 @@ class EtsyWriteAdapter(Protocol):
         self, listing_id: int, file: bytes, *, name: str, rank: int
     ) -> EtsyFileRef: ...
     def list_listing_files(self, listing_id: int) -> list[ListingFile]: ...
+
+    def get_listing(self, listing_id: int) -> EtsyListingDetail:
+        """getListing with images, read-only: state/title/tags/description/
+        images exactly as Etsy holds them (the read-back gate's source of
+        truth -- never the local DB)."""
+        ...
 
     def delete_listing_file(self, listing_id: int, listing_file_id: int) -> None:
         """deleteListingFile (listings_w; 204, no body). WARNING: deleting the

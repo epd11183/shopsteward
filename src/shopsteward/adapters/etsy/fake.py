@@ -11,6 +11,7 @@ from shopsteward.adapters.etsy.models import (
     EtsyFileRef,
     EtsyImageRef,
     EtsyListing,
+    EtsyListingDetail,
     EtsyListingImage,
     EtsyListingInventory,
     EtsyListingProduct,
@@ -276,6 +277,23 @@ class FakeEtsyWriteAdapter:
             raise EtsyWriteError(404, f"unknown listing_file_id {listing_file_id}")
         self.calls.append(
             ("delete_listing_file", {"listing_id": listing_id, "listing_file_id": listing_file_id})
+        )
+
+    def get_listing(self, listing_id: int) -> EtsyListingDetail:
+        row = self._require(listing_id)
+        self.calls.append(("get_listing", {"listing_id": listing_id}))
+        images = [
+            EtsyListingImage(
+                listing_image_id=i["listing_image_id"],
+                rank=i["rank"],
+                url_570xN=f"fake://image/{i['listing_image_id']}",
+            )
+            for i in row["images"]
+        ]
+        return EtsyListingDetail(
+            **self._to_listing(listing_id, row).model_dump(exclude={"description"}),
+            description=row["description"],
+            images=images,
         )
 
     def update_listing(self, listing_id: int, fields: EtsyListingUpdate) -> EtsyListing:
