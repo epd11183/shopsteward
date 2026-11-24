@@ -197,3 +197,20 @@ def test_per_run_overrides_ship_in_defaults():
         "social.caption_draft": 2,
         "social.pinterest_post": 2,
     }
+
+
+def test_undone_post_already_observed_as_scheduled_stops_counting(conn):
+    # Deleted in Buffer -> never re-observed, so its last `scheduled` observation
+    # would otherwise count for its week forever.
+    _queue(conn, "p1", day="2026-06-05")
+    _observe(conn, "p1", status="scheduled", day="2026-06-05")
+    assert cadence.cadence_deficit(conn, USER_ID, _cfg(4), TODAY)["pinterest"] == 3
+    append(
+        conn,
+        Event(
+            user_id=USER_ID,
+            type="social.buffer_deleted",
+            payload={"action_id": "act-p1", "buffer_post_id": "p1"},
+        ),
+    )
+    assert cadence.cadence_deficit(conn, USER_ID, _cfg(4), TODAY)["pinterest"] == 4

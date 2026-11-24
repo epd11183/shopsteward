@@ -36,19 +36,22 @@ def latest_observed(conn: sqlite3.Connection, user_id: int) -> dict[str, dict]:
 def _posts(conn: sqlite3.Connection, user_id: int) -> list[tuple[str, str, str | None]]:
     """(service, status, when-iso) per distinct live post, any source."""
     observed = latest_observed(conn, user_id)
+    # A deleted (undone) post vanishes from Buffer, so its last `scheduled`
+    # observation is never superseded: drop it from observed counts too.
+    deleted = {
+        e.payload.get("buffer_post_id")
+        for e in read_all(conn, buffer_publish.DELETED)
+        if e.user_id == user_id
+    }
     posts = [
         (
             str(p.get("channel")),
             str(p.get("status")),
             (p.get("sent_at") if p.get("status") == "sent" else p.get("due_at")),
         )
-        for p in observed.values()
+        for pid, p in observed.items()
+        if pid not in deleted
     ]
-    deleted = {
-        e.payload.get("buffer_post_id")
-        for e in read_all(conn, buffer_publish.DELETED)
-        if e.user_id == user_id
-    }
     for e in read_all(conn, buffer_publish.QUEUED):
         pid = e.payload.get("buffer_post_id")
         if e.user_id == user_id and pid not in observed and pid not in deleted:
