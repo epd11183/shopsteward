@@ -489,6 +489,31 @@ def resume_cmd(
         conn.close()
 
 
+@ops_app.command("panel-unblock")
+def panel_unblock_cmd(
+    listing_id: Annotated[int, typer.Argument(help="Etsy listing_id blocked as panel-orphaned")],
+    reason: Annotated[str, typer.Option("--reason", help="How the listing was reconciled")],
+) -> None:
+    """Release a listing `listing.panel_replace` stopped proposing after both
+    panel images went live (append-only: records listingdraft.panel_unorphaned).
+    Reconcile the Etsy gallery by hand FIRST."""
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.pipeline.ops.capabilities.panel_replace import unblock
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        if not unblock(conn, DEFAULT_USER_ID, listing_id, reason):
+            typer.secho(f"listing {listing_id} is not panel-orphaned.", fg="red")
+            raise typer.Exit(code=1)
+        typer.echo(f"listing {listing_id} unblocked for panel_replace.")
+    finally:
+        conn.close()
+
+
 @ops_app.command("heartbeat")
 def heartbeat(
     max_age_days: Annotated[
