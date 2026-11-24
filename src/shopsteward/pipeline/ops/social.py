@@ -33,7 +33,26 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from shopsteward.core.events import Event, append, read_all
+from shopsteward.core.sync import read_live_observed
 from shopsteward.pipeline.ops.timeutil import parse_ts
+
+
+def image_url(conn: sqlite3.Connection, user_id: int, listing_id: int) -> str | None:
+    """Best social image for a listing from the latest
+    `etsy.listing.images.observed` payload: the lowest-rank image with any
+    usable URL, preferring its `url_fullxfull` (S3, additive) and falling
+    back to `url_570xN` -- so events recorded before S3 still resolve to
+    570xN. None if no usable image has ever been observed."""
+    images: list[dict] = []
+    for e in read_live_observed(conn, "etsy.listing.images.observed"):
+        if e.user_id != user_id or e.payload.get("listing_id") != listing_id:
+            continue
+        images = e.payload.get("images") or []
+    usable = sorted(
+        (img for img in images if img.get("url_fullxfull") or img.get("url_570xN")),
+        key=lambda img: img.get("rank", 1),
+    )
+    return (usable[0].get("url_fullxfull") or usable[0]["url_570xN"]) if usable else None
 
 
 def effective_at(e: Event) -> str | None:

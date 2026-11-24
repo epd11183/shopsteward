@@ -117,7 +117,7 @@ def test_unknown_prohibited_and_hallucinated_intents_are_all_dropped(conn):
 # --- a valid intent lands at T2, never auto-executed -------------------------
 
 
-def test_valid_intent_produces_one_proposed_action_that_lands_at_t2(conn):
+def test_valid_intent_produces_one_proposed_action_that_lands_at_auto(conn):
     _seed_dead(conn, LISTING_DEAD_A)
     rebuild_core(conn)
     rebuild_ops(conn)
@@ -148,11 +148,11 @@ def test_valid_intent_produces_one_proposed_action_that_lands_at_t2(conn):
 
     report = run(conn, USER_ID, cfg, [cap], today=TODAY, proposals=proposals)
     assert report.proposed == 1
-    assert report.executed == 0  # T2/PROPOSE -- never auto-executed
+    assert report.executed == 0  # AUTO since 2026-11-22, but no --live-autonomy: gated
 
     proposed_events = read_all(conn, "action.proposed")
     assert len(proposed_events) == 1
-    assert proposed_events[0].payload["tier"] == int(Tier.PROPOSE)
+    assert proposed_events[0].payload["tier"] == int(Tier.AUTO)
 
 
 def test_policy_unverified_intent_is_dropped(conn):

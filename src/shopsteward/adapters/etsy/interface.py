@@ -8,6 +8,7 @@ from shopsteward.adapters.etsy.models import (
     EtsyFileRef,
     EtsyImageRef,
     EtsyListing,
+    EtsyListingDetail,
     EtsyListingImage,
     EtsyListingInventory,
     EtsyListingRef,
@@ -17,6 +18,7 @@ from shopsteward.adapters.etsy.models import (
     EtsyShop,
     EtsyShopSection,
     EtsyTaxonomyNode,
+    ListingFile,
 )
 
 _MAX_ERROR_LEN = 500
@@ -137,9 +139,36 @@ class EtsyWriteAdapter(Protocol):
 
     def create_draft_listing(self, spec: EtsyDraftSpec) -> EtsyListingRef: ...
     def upload_listing_image(self, listing_id: int, image: bytes, *, rank: int) -> EtsyImageRef: ...
+
+    def delete_listing_image(self, listing_id: int, listing_image_id: int) -> None:
+        """deleteListingImage (listings_w; 204). Etsy keeps the image
+        server-side, so attach_listing_image can bring it back."""
+        ...
+
+    def attach_listing_image(
+        self, listing_id: int, listing_image_id: int, *, rank: int
+    ) -> EtsyImageRef:
+        """uploadListingImage with only `listing_image_id`: re-attaches a
+        previously deleted image at `rank` (the undo path)."""
+        ...
+
     def upload_listing_file(
         self, listing_id: int, file: bytes, *, name: str, rank: int
     ) -> EtsyFileRef: ...
+    def list_listing_files(self, listing_id: int) -> list[ListingFile]: ...
+
+    def get_listing(self, listing_id: int) -> EtsyListingDetail:
+        """getListing with images, read-only: state/title/tags/description/
+        images exactly as Etsy holds them (the read-back gate's source of
+        truth -- never the local DB)."""
+        ...
+
+    def delete_listing_file(self, listing_id: int, listing_file_id: int) -> None:
+        """deleteListingFile (listings_w; 204, no body). WARNING: deleting the
+        FINAL file of a digital listing makes Etsy convert it to a physical
+        listing. The adapter is unopinionated; the caller must guard that."""
+        ...
+
     def update_listing(self, listing_id: int, fields: EtsyListingUpdate) -> EtsyListing: ...
     def update_listing_price(self, listing_id: int, price: float) -> None: ...
     def update_listing_state(self, listing_id: int, state: str) -> None: ...

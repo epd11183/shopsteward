@@ -15,7 +15,7 @@ USER = 1
 _MONTH = datetime.now(UTC).strftime("%Y-%m")
 
 
-def _landing_winner(conn, file_id="abc123def456", path="/w/A.jpg"):
+def _landing_winner(conn, file_id="abc123def456", path="/w/A.jpg", photo_id=None):
     append(
         conn,
         Event(
@@ -25,7 +25,7 @@ def _landing_winner(conn, file_id="abc123def456", path="/w/A.jpg"):
                 "file_id": file_id,
                 "path": path,
                 "base_name": "A",
-                "photo_id": None,
+                "photo_id": photo_id,
                 "format": "JPEG",
                 "width": 4000,
                 "height": 3000,
@@ -113,3 +113,25 @@ def test_soft_cap_stops_scoring_without_raising(monkeypatch):
         month_prefix=_MONTH,
     )
     assert out["scored"] == 0 and out["cap_hit"] is True
+
+
+def test_scores_catalog_matched_winner_under_its_photo_id(monkeypatch):
+    """A file matched to a catalog photo used to be skipped, so copy saw
+    subject "unspecified" and wrote a generic landscape."""
+    c = _conn()
+    _landing_winner(c, photo_id="photo-42")
+    monkeypatch.setattr("shopsteward.pipeline.listings.vision_copy._read_bytes", lambda p: b"jpg")
+    out = run_vision_copy(
+        c,
+        USER,
+        adapter=FakeVisionAdapter([_verdict_result()]),
+        model="m",
+        soft_cap_usd=5.0,
+        month_prefix="2026-08",
+    )
+    assert out["scored"] == 1
+    rebuild_pipeline(c)
+    row = c.execute(
+        "SELECT subject FROM proj_scores WHERE user_id=? AND photo_id=?", (USER, "photo-42")
+    ).fetchone()
+    assert row["subject"] == "trail runner"

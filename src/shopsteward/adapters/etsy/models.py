@@ -108,8 +108,16 @@ class EtsyListingImage(BaseModel):
     listing_image_id: int
     rank: int = 1
     url_570xN: str
+    url_fullxfull: str | None = None
     full_width: int | None = None
     full_height: int | None = None
+
+
+class EtsyListingDetail(EtsyListing):
+    """getListing with `includes=Images` -- the read-back view of a (draft)
+    listing as Etsy itself holds it, used by the pre-publish read-back gate."""
+
+    images: list[EtsyListingImage] = Field(default_factory=list)
 
 
 class EtsyTransaction(BaseModel):
@@ -186,6 +194,16 @@ class EtsyImageRef(BaseModel):
 class EtsyFileRef(BaseModel):
     listing_file_id: int
     rank: int | None = None
+
+
+class ListingFile(BaseModel):
+    """One digital file on a listing (getAllListingFiles). size_bytes is None
+    when Etsy returns a non-integer filesize (e.g. "1.2MB")."""
+
+    listing_file_id: int
+    name: str | None = None
+    rank: int | None = None
+    size_bytes: int | None = None
 
 
 class EtsyListingUpdate(BaseModel):

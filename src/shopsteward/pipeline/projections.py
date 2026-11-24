@@ -36,7 +36,7 @@ CREATE TABLE proj_scores (
     user_id INTEGER NOT NULL, photo_id TEXT NOT NULL,
     technical REAL, commercial REAL, catalog_gap REAL, historical_conversion REAL,
     composite REAL NOT NULL, escalated INTEGER NOT NULL DEFAULT 0,
-    subject TEXT, strongest_room_style TEXT, one_risk TEXT, rationale TEXT,
+    subject TEXT, strongest_room_style TEXT, one_risk TEXT, rationale TEXT, scene TEXT,
     model_used TEXT, scored_at TEXT,
     PRIMARY KEY (user_id, photo_id)
 );
@@ -102,7 +102,7 @@ def _fold_photo_scored(
     verdict = chosen.get("verdict") or {}
     scores = p.get("scores", {})
     conn.execute(
-        "INSERT OR REPLACE INTO proj_scores VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT OR REPLACE INTO proj_scores VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             user_id,
             p["photo_id"],
@@ -116,6 +116,7 @@ def _fold_photo_scored(
             verdict.get("strongest_room_style"),
             verdict.get("one_risk"),
             verdict.get("rationale"),
+            verdict.get("scene"),
             chosen.get("model"),
             created_at,
         ),

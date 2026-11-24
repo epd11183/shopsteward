@@ -25,6 +25,10 @@ class VisionConfig(BaseModel):
     provider: str = "openrouter"
     triage_model: str
     rescore_model: str
+    # Read-back copy-vs-photo checker (catalog_expand gate). Defaulted so profiles
+    # stored before 2026-11-23 parse. Eval 11-23 on 10 bad/10 good batch-2 pairs:
+    # gemini-2.5-pro missed a chipmunk/ground-squirrel mix-up; sonnet-5 caught 10/10.
+    copy_check_model: str = "anthropic/claude-sonnet-5"
     max_long_edge_px: int
     est_cost_per_mtok: dict[str, dict[str, float]]
     monthly_soft_cap_usd: float

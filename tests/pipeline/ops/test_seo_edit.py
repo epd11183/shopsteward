@@ -26,6 +26,7 @@ from shopsteward.pipeline.ops.models import ProposedAction, Tier
 from shopsteward.pipeline.ops.projections import capability_states, rebuild_ops
 from shopsteward.pipeline.ops.registry import REGISTRY, register
 from shopsteward.pipeline.ops.runner import approve_action, run, undo_action
+from shopsteward.pipeline.ops.tiers import effective_tier
 from tests.pipeline.ops.helpers import seed_listing_observed_on, seed_sale_observed
 
 USER_ID = 1
@@ -925,13 +926,13 @@ def test_materialize_drops_when_no_fields_present_at_all(conn):
 # --- registration: T2 ceiling, has undo -------------------------------------
 
 
-def test_register_is_t2_and_has_undo():
+def test_register_is_auto_and_has_undo():
     cap = ListingSeoEdit(FakeEtsyWriteAdapter())
 
     register(cap)
 
     assert REGISTRY["listing.seo_edit"] is cap
-    assert cap.max_tier == Tier.PROPOSE
+    assert cap.max_tier == Tier.AUTO  # operator decision 2026-11-22: no approval
     assert callable(cap.undo)
 
 
@@ -1079,10 +1080,10 @@ def test_e2e_valid_intent_lands_at_t2_approve_sends_only_changed_fields_undo_res
     assert rerun.skipped_idempotent == 1
 
 
-# --- T2 ceiling: never promotable --------------------------------------------
+# --- AUTO floor (2026-11-22): demotion on undo/rejection cannot drop it ------
 
 
-def test_never_promoted_above_t2_even_with_enough_approvals_and_elapsed_days(conn):
+def test_undo_demotes_the_ladder_state_but_effective_tier_stays_auto(conn):
     _seed_listing(conn, LISTING_DIGITAL, "Loon at Dusk", tags=["loon"])
     rebuild_core(conn)
     rebuild_ops(conn)
@@ -1092,24 +1093,24 @@ def test_never_promoted_above_t2_even_with_enough_approvals_and_elapsed_days(con
     fake.seed_listing(LISTING_DIGITAL, state="active", title="Loon at Dusk", tags=["loon"])
     cap = ListingSeoEdit(fake)
     cfg = _cfg(enabled=True, weekly_catalog_pct_cap=1.0)
-    cfg.autonomy.ladder.promote_approvals = 1
-    cfg.autonomy.ladder.promote_min_days = 1
 
     action = cap.materialize(
         conn, USER_ID, cfg, _intent(str(LISTING_DIGITAL), title="Loon at Dusk Fine Art Print")
     )
     assert action is not None
     run(conn, USER_ID, cfg, [cap], today=TODAY, proposals=[action])
-    action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
+    proposed = read_all(conn, "action.proposed")[0].payload
+    assert proposed["tier"] == int(Tier.AUTO)  # starts at AUTO via autonomy.tier_floor
+    action_id = proposed["action_id"]
 
-    later = TODAY + timedelta(days=2)
-    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=later, live_autonomy=True)
+    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True)
+    undo_action(conn, USER_ID, action_id, [cap], live_autonomy=True)
 
-    promoted = [e for e in read_all(conn, "capability.") if e.type == "capability.promoted"]
-    assert promoted == []
-
+    assert [e for e in read_all(conn, "capability.") if e.type == "capability.demoted"]
     state = capability_states(conn, USER_ID)["listing.seo_edit"]
-    assert state.tier == Tier.PROPOSE
+    assert state.tier == Tier.PROPOSE  # the raw ladder state DID demote...
+    # ...but the configured AUTO floor means it can never execute below AUTO.
+    assert effective_tier(cap, state, cfg.autonomy.tier_floor) == Tier.AUTO
 
 
 # --- execute() re-validation: a hand-forged/stale action never sends junk ---

@@ -1,15 +1,17 @@
 """`listing.catalog_expand` -- T11 (2026-08-25 design doc, "Design: paced
 digital listings from the photo archive"): the operator's own /autoplan gate
 answer, verbatim -- "a new capability proposing paced digital listings from
-your archive, Gate-3 approval per listing, fees within the $20 cap." Policy:
+your archive, Gate-3 approval per listing, fees within the $20 cap" (publish
+authority later moved to the read-back gate, see below). Policy:
 VERIFIED -- docs/policy/2026-08-11-autonomy-platform-policy.md entry E16
 (PERMITTED; listing our own original work is the core permitted seller act,
-mechanically identical to E5 gap-fill -- ends in an unpublished Etsy draft,
-Gate 3 is the publish authority), subject to E16's three accuracy
-conditions: (1) the photograph is ours and never AI-generated/AI-edited --
+mechanically identical to E5 gap-fill), subject to E16's three accuracy
+conditions: (1) the photograph is ours, never AI-generated, and AI never adds to it
+(operator-directed distraction removal is allowed, amended 2026-11-22) --
 the only image transform anywhere in this chain is `images._load_sellable`'s
-deterministic max-quality sRGB JPEG re-encode: no resize, no upscale, no
-fill, no generative step, ever; (2) the advertised print sizes must be
+deterministic max-quality sRGB JPEG re-encode (plus deterministic ratio
+crops for multi-file digital listings): no upscale, no fill, no generative
+step, ever; (2) the advertised print sizes must be
 deliverable by the source file -- enforced by `min_long_edge_px` (design §6);
 (3) AI-assisted copy carries the existing disclosure line -- the copy stage
 (`copy.py`) is unchanged.
@@ -27,23 +29,35 @@ four-call chain --
 
 -- a plain function, not a method, so a future CLI backfill can call it
 directly without going through the autonomy chassis at all (design §2C
-synthesis). `execute()` below is a two-line wrapper around it.
+synthesis). `execute()` below wraps it with the read-back gate + publish.
 
-**`max_tier = Tier.PROPOSE` is a Python pin, never promotable** -- same class
-as `gapfill_reprint`: it creates catalog and commits real money, and Etsy has
-no "un-list without a trace." `registry.register()`'s invariant 2 plus
-`runner._maybe_promote`'s `int(to_tier) < int(cap.max_tier)` check mean no
-config path can ever raise it. **`undo = None`** -- allowed because max_tier
-is not below PROPOSE (registry.py invariant 1); there is nothing to reverse
-programmatically anyway (gapfill.py precedent) -- the reversal is the
-operator declining to publish at Gate 3.
+**2026-11-23 operator decision (explicit): "full auto + gate".** The old
+`max_tier = Tier.PROPOSE` pin and Gate-3-per-listing approval are gone:
+`max_tier = Tier.AUTO` (config `autonomy.tier_floor` starts it at AUTO).
+`execute()` runs `expand_one()`, then the read-back gate
+(`pipeline/listings/readback.py`: structural checks read back from Etsy plus a
+vision copy-vs-photo check). Pass -> `gate3.publish` (still the sole
+`publish_listing` call site). Fail -> the draft stays a draft, the
+`listingdraft.readback` event carries the problems, and the brief lists it
+under NEEDS YOU. Pace stays `max_new_per_week`.
 
-**`precondition_ok`** is the single control preventing the worst realistic
-failure mode here: a `FixtureCopyAdapter` run putting canned fixture copy on
-a REAL Etsy listing (design §12.6). It is set once at construction from the
-`live_copy` bool the caller (cli.py) resolves via `live_gate.live_copy_open()`
--- not re-evaluated per governor call, matching how `execute()`/`expand_one`
-thread the same flag through to `drafts.build_drafts(live_copy=...)`.
+**Gate failure counts as EXECUTED, not refused.** By the time the gate runs,
+`expand_one` has landed the file, so (a) a retry of a "refused" action would
+fail `_candidates()` re-validation and terminalize as `StaleTargetError`, and
+(b) pace counts `action.executed`: a refused failure would push another real
+draft to Etsy every run. Executed (cost $0, `after.published=False`) burns one
+pace slot -- real work happened -- and the landed file is never re-proposed.
+
+**Undo** deactivates the published listing (`update_listing_state(...,
+"inactive")`); the $0.20 fee is not refunded. A draft that was never published
+has nothing to undo.
+
+**`precondition_ok`** is the control preventing the worst realistic failure
+mode here: fixture copy, or an unverifiable copy check, reaching a REAL Etsy
+listing (design §12.6). It requires BOTH `live_copy` (live_gate.live_copy_open())
+and `live_check` (the live copy checker is available). Independently, the
+fixture checker never approves, so even a direct `execute()` cannot publish
+unverified copy.
 
 **`_candidates()` is the ONE grounding function shared by propose()/
 materialize()/execute()** (M8b slice-2 planner-safety contract, every
@@ -92,13 +106,12 @@ which is this function:
   review reversed that call, and this module's docstring is corrected to
   match).
 
-**Cost accounting -- the honest version** (design §3): Etsy actually charges
-the $0.20 at Gate-3 publish, outside this chassis -- `execute()` does not
-actually spend. `estimated_cost_usd`/`ExecutionResult.cost_usd` still carry
-`0.20` anyway, a deliberate OVER-reserve, because it is the only point the
-governor's `month_spend()` can see. A declined draft is over-counted, which
-fails safe; under-counting would let listings publish against a governor
-that saw $0 spent.
+**Cost accounting** (design §3): Etsy charges the $0.20 at publish --
+`execute()` books `cost_usd` 0 and `governor.month_spend()` counts the fee
+once, from the `gate3.published` event. `estimated_cost_usd` still carries the
+fee so the governor's pre-execution budget check reserves it. Drafts that fail
+the gate are never published, so they are never charged. Copy-check LLM spend
+goes to the `llm.call` ledger, not the $20 cap.
 
 **Holdout: no change needed, by construction.**
 `governor._pin_event_dates` does `int(target_id)` and returns `[]` on
@@ -115,11 +128,14 @@ from PIL import Image
 
 from shopsteward.adapters.etsy.interface import EtsyWriteAdapter
 from shopsteward.adapters.planner.interface import ProposalIntent
-from shopsteward.core.events import read_all
+from shopsteward.adapters.vision.interface import CopyChecker
+from shopsteward.core.events import Event, append, read_all
 from shopsteward.mockups.jobs import run_mockups
-from shopsteward.pipeline.listings import adopt, archive, asset_store_config
+from shopsteward.pipeline import tuning
+from shopsteward.pipeline.listings import adopt, archive, asset_store_config, gate3
 from shopsteward.pipeline.listings.drafts import build_drafts
 from shopsteward.pipeline.listings.photo_match import hamming_distance, phash_bytes
+from shopsteward.pipeline.listings.readback import run_readback
 from shopsteward.pipeline.ops.config import ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
 from shopsteward.pipeline.ops.registry import StaleTargetError, compute_action_id
@@ -146,7 +162,6 @@ def expand_one(
     silently skips -- a caller that got this far already decided this photo
     should become a listing) or if, unexpectedly, the build chain completes
     with no draft row for it."""
-    from shopsteward.pipeline import tuning
     from shopsteward.pipeline.config import TUNING_PROFILE_PATH
     from shopsteward.pipeline.landing import _SUFFIX_FORMATS
 
@@ -182,15 +197,34 @@ def expand_one(
     )
 
     run_mockups(conn, user_id, photo_id=photo_id)
-    build_drafts(conn, user_id, photo_id=photo_id, live_copy=live_copy, etsy_adapter=adapter)
+    report = build_drafts(
+        conn, user_id, photo_id=photo_id, live_copy=live_copy, etsy_adapter=adapter
+    )
 
     row = conn.execute(
-        "SELECT draft_id FROM proj_listing_drafts WHERE user_id=? AND landing_file_id=?",
+        "SELECT draft_id, title FROM proj_listing_drafts WHERE user_id=? AND landing_file_id=?",
         (user_id, file_id),
     ).fetchone()
-    if row is None:  # pragma: no cover - defensive, the chain above always builds one
+    # A skipped draft (stale "what you get" panel) or one whose generated copy
+    # was refused (undelivered size / refusal cap) says WHY instead of a bare
+    # "no draft was built" -- these are fixed by re-rendering / operator review,
+    # not by retrying blindly.
+    if row is not None and row["title"] is None:
+        from shopsteward.pipeline.listings.copy import MAX_COPY_REFUSALS, copy_refusals
+
+        if copy_refusals(conn, user_id, row["draft_id"]) >= MAX_COPY_REFUSALS:
+            # Terminal: the LLM is no longer called for this draft, so re-running
+            # archive/mockups/build every cycle cannot help.
+            raise StaleTargetError(
+                f"{path}: copy refused {MAX_COPY_REFUSALS}x: needs operator review"
+            )
+    # No title for any reason (refused, or skipped for want of a vision score) is
+    # retryable: never record a titleless draft as an executed expansion.
+    if row is None or row["title"] is None:
+        reasons = "; ".join(report.skip_reasons) or "no reason reported"
         raise RuntimeError(
-            f"{path}: catalog-expand chain completed but no draft was built (file_id={file_id!r})"
+            f"{path}: catalog-expand chain completed but no usable draft was built "
+            f"(file_id={file_id!r}): {reasons}"
         )
     return row["draft_id"]
 
@@ -337,12 +371,13 @@ def _candidates(
             target_id=file_id,
             tier=Tier.PROPOSE,  # overwritten by the runner with the effective tier
             reason=(
-                f"archive photo {path.name} -- new digital listing "
-                f"(${ce.listing_fee_usd:.2f} at Gate-3 publish, non-refundable)."
+                f"archive photo {path.name} -- new digital listing, auto-published if "
+                f"it passes the read-back gate (${ce.listing_fee_usd:.2f} at publish, "
+                "non-refundable)."
             ),
             inputs_hash=inputs_hash,
             estimated_cost_usd=ce.listing_fee_usd,
-            undo_available=False,
+            undo_available=True,
             expires_at=expires_at,
             params={"path": str(path)},
         )
@@ -351,23 +386,26 @@ def _candidates(
 
 class ListingCatalogExpand:
     key = _CAPABILITY
-    # T11 hard ceiling -- NEVER promotable (creates catalog + real money;
-    # registry.py's invariant 2 enforces there is no config path that can
-    # raise this Python ceiling). See module docstring.
-    max_tier = Tier.PROPOSE
+    # 2026-11-23 operator decision: AUTO behind the read-back gate; the undo
+    # below (deactivate) satisfies registry.py invariant 1.
+    max_tier = Tier.AUTO
     policy_verified = True  # E16 -- docs/policy/2026-08-11-autonomy-platform-policy.md
-    # No undo path: allowed because max_tier is not below PROPOSE (registry.py
-    # invariant 1) -- reversal is Gate 3 (decline to publish), same as
-    # gapfill_reprint (draft #16 precedent).
-    undo = None
 
-    def __init__(self, adapter: EtsyWriteAdapter, *, live_copy: bool) -> None:
+    def __init__(
+        self,
+        adapter: EtsyWriteAdapter,
+        *,
+        live_copy: bool,
+        checker: CopyChecker,
+        live_check: bool,
+    ) -> None:
         self._adapter = adapter
         self._live_copy = live_copy
-        # The single control preventing fixture copy from landing on a real
-        # Etsy listing (module docstring) -- governor.py's own
+        self._checker = checker
+        # The control preventing fixture copy / an unverifiable copy check from
+        # reaching a real Etsy listing (module docstring) -- governor.py's own
         # `getattr(cap, "precondition_ok", True)` -> RefusalReason.PRECONDITION.
-        self.precondition_ok = live_copy
+        self.precondition_ok = live_copy and live_check
 
     def propose(
         self, conn: sqlite3.Connection, user_id: int, cfg: OpsConfig
@@ -414,12 +452,60 @@ class ListingCatalogExpand:
 
         path = Path(str(action.params["path"]))
         draft_id = expand_one(conn, user_id, path, adapter=self._adapter, live_copy=self._live_copy)
+
+        # From here a draft exists on Etsy: nothing below may raise (the file
+        # is landed, so a raise could never be retried -- module docstring).
+        model = tuning.get_profile(conn, user_id).vision.copy_check_model
+        gate = run_readback(
+            conn, user_id, draft_id, adapter=self._adapter, checker=self._checker, model=model
+        )
+        problems = list(gate.problems)
+        published = False
+        if gate.ok:
+            card = gate3.publish(conn, user_id, draft_id, self._adapter)  # sole publish site
+            published = card.state == "published"
+            if not published:
+                problems = [f"publish failed: {card.retry_error or card.state}"]
+                append(
+                    conn,
+                    Event(
+                        user_id=user_id,
+                        type="listingdraft.readback",
+                        payload={"draft_id": draft_id, "ok": False, "problems": problems},
+                    ),
+                )
+        row = conn.execute(
+            "SELECT etsy_listing_id FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
+            (user_id, draft_id),
+        ).fetchone()
         return ExecutionResult(
             before={"draft_id": None},
-            after={"draft_id": draft_id},
-            cost_usd=action.estimated_cost_usd,
+            after={
+                "draft_id": draft_id,
+                "etsy_listing_id": row["etsy_listing_id"] if row else None,
+                "published": published,
+                "problems": problems,
+            },
+            # ponytail: executed cost is 0 -- the fee is booked once, at
+            # gate3.published (governor.month_spend_parts); estimated_cost_usd
+            # reserves it beforehand. Unpublished drafts are never charged.
+            cost_usd=0.0,
             duration_ms=0,
         )
+
+    def undo(self, conn: sqlite3.Connection, user_id: int, action: ProposedAction) -> None:
+        """Deactivate the published listing (fee not refunded); a draft that
+        was never published has nothing to undo."""
+        after: dict = {}
+        for e in read_all(conn, "action.executed"):
+            if e.user_id == user_id and e.payload.get("action_id") == action.action_id:
+                after = e.payload.get("after") or {}
+        if not after.get("published"):
+            return
+        if after.get("etsy_listing_id") is None:
+            # Published but no id recorded: never report a live listing as undone.
+            raise RuntimeError(f"action {action.action_id}: published listing has no etsy id")
+        self._adapter.update_listing_state(int(after["etsy_listing_id"]), "inactive")
 
     def estimate_cost_usd(self, action: ProposedAction) -> float:
         return action.estimated_cost_usd

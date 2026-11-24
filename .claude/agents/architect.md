@@ -16,7 +16,7 @@ Hard rules:
   before designing anything. Your design must respect every architecture
   rule in CLAUDE.md: monolithic core / pluggable adapters, editing-module
   boundary, landing-folder handoff, event-sourced SQLite, configuration
-  over code, POD-first listing creation, AI never touches the photograph,
+  over code, POD-first listing creation, AI never adds to the photograph,
   user_id on every major table.
 - Every external system gets an adapter interface in
   `src/shopsteward/adapters/`; core code never imports an SDK directly.

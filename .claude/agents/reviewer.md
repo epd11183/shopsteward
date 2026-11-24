@@ -19,7 +19,8 @@ Review every diff against, in order:
    SDK), editing-module boundary violations (editing importing Etsy/POD/IG
    or pipeline code), event-row UPDATE/DELETE, hardcoded tuning/config
    that belongs in the database, provider-set SKU/variation mutation,
-   generative edits to photographs.
+   generative edits that ADD content to photographs (operator-directed
+   removal of distractions is allowed; see CLAUDE.md).
 3. **Milestone scope** — does the change belong to the current milestone
    per `docs/PRD_v2.1.md` §10? Scope creep into a later milestone is a
    finding, however tempting the code.

@@ -10,7 +10,7 @@ from datetime import date
 from enum import IntEnum, StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 __all__ = [
     "Brief",
@@ -364,6 +364,21 @@ class _OpsAutonomy(BaseModel):
     # Per-capability cap on materialized proposals per `plan_proposals()` run
     # (design §10 CPO improvement) -- keeps NEEDS YOU short and high-signal.
     planner_max_per_capability_per_run: int = Field(gt=0, default=1)
+    # Capability key -> the LEAST-autonomous tier its ladder may sit at
+    # (0=AUTO, 1=NOTIFY, 2=PROPOSE; default PROPOSE when absent). A fresh
+    # capability starts at its floor and demotion can never push it below.
+    # Still clamped by the capability's Python `max_tier` (tiers.effective_
+    # tier), so config can never exceed that ceiling. 2026-11-22 operator
+    # decision: every `listing.*` capability with a working undo is floored
+    # at AUTO (no approvals). Default-empty so stored configs still validate.
+    tier_floor: dict[str, int] = Field(default_factory=dict)
+
+    @field_validator("tier_floor")
+    @classmethod
+    def _tier_floor_in_ladder(cls, v: dict[str, int]) -> dict[str, int]:
+        if any(t not in (0, 1, 2) for t in v.values()):
+            raise ValueError("tier_floor values must be 0 (AUTO), 1 (NOTIFY) or 2 (PROPOSE)")
+        return v
 
 
 class OpsConfig(BaseModel):
@@ -466,6 +481,9 @@ class RefusalReason(StrEnum):
     # per-target eligibility check re-derived from current config/state.
     INELIGIBLE = "ineligible"
     PORTFOLIO_CAP = "portfolio_cap"
+    # Another action already executed on this listing earlier in the same
+    # run() (deactivate is ordered first, so it wins).
+    LISTING_CONFLICT = "listing_conflict"
 
 
 class CapabilityState(BaseModel):
@@ -613,6 +631,17 @@ class BriefProposal(BaseModel):
     expires_at: str  # ISO date
 
 
+class BriefReadbackFailure(BaseModel):
+    """A pushed draft whose pre-publish read-back failed (latest
+    `listingdraft.readback` not ok, never published since): it stays a draft
+    until the operator fixes it at Gate 3."""
+
+    draft_id: str
+    etsy_listing_id: int | None = None
+    title: str | None = None
+    problems: list[str] = Field(default_factory=list)
+
+
 class BriefAction(BaseModel):
     """One action.executed in the recent window, not since undone."""
 
@@ -684,6 +713,9 @@ class BriefAutonomy(BaseModel):
     enabled: bool
     halted: bool
     month_spend_usd: float
+    month_actions_usd: float = 0.0
+    month_listing_fees_usd: float = 0.0
+    month_llm_usd: float = 0.0
     monthly_spend_cap_usd: float
     ladder: list[BriefLadderRow] = Field(default_factory=list)
 
@@ -704,6 +736,7 @@ class Brief(BaseModel):
     # (generate_brief() with brief_sections.autonomy=False, or any caller
     # that never touches these) stays valid without passing them.
     needs_you: list[BriefProposal] = Field(default_factory=list)
+    readback_failed: list[BriefReadbackFailure] = Field(default_factory=list)
     done_recent: list[BriefAction] = Field(default_factory=list)
     refused_recent: list[BriefRefusal] = Field(default_factory=list)
     autonomy: BriefAutonomy | None = None

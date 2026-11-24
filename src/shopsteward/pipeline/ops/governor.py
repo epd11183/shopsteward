@@ -40,7 +40,13 @@ proposed in the same `run()` call) is instead resolved upstream, at
 PROPOSE time, in `runner.run()`: a pin proposal for a target that also has
 a same-run seo_edit/renew proposal is dropped before either ever reaches
 `govern()`, so the priority is deterministic regardless of capability
-registration order and never depends on this same-day exception."""
+registration order and never depends on this same-day exception.
+
+2026-11-22: `listing.seo_edit` (and every other `listing.*` capability with an
+undo) now runs at AUTO with no operator approval (operator decision), so the
+"approved LATER THE SAME DAY by the operator" scenario above no longer
+occurs -- the symmetric holdout, the cooldown and the budget/cap checks here
+are unchanged and are what still gate those executions."""
 
 import sqlite3
 from datetime import date
@@ -84,13 +90,29 @@ def is_halted(conn: sqlite3.Connection, user_id: int) -> bool:
 # wall-clock vs. the `today` a caller pins for testing) would mis-bucket.
 # Upgrade: derive every window from `created_at` directly instead of a
 # passed-in `today`, if this chassis ever needs backfill/near-midnight runs.
-def month_spend(conn: sqlite3.Connection, user_id: int, month_prefix: str) -> float:
-    total = 0.0
+def month_spend_parts(
+    conn: sqlite3.Connection, user_id: int, month_prefix: str, cfg: OpsConfig
+) -> tuple[float, float]:
+    """(action spend, new-listing fees) for the month. Etsy charges the
+    listing fee once, at Gate-3 publish, so each `gate3.published` event
+    counts one `catalog_expansion.listing_fee_usd` (the config value the code
+    already calls the publish fee). LLM tokens are a separate ledger
+    (`llm_ledger.monthly_spend`) and deliberately not folded in here."""
+    actions = 0.0
     for e in read_all(conn, "action.executed"):
         if e.user_id != user_id or not (e.created_at or "").startswith(month_prefix):
             continue
-        total += e.payload.get("cost_usd", 0.0)
-    return total
+        actions += e.payload.get("cost_usd", 0.0)
+    published = sum(
+        1
+        for e in read_all(conn, "gate3.published")
+        if e.user_id == user_id and (e.created_at or "").startswith(month_prefix)
+    )
+    return actions, published * cfg.catalog_expansion.listing_fee_usd
+
+
+def month_spend(conn: sqlite3.Connection, user_id: int, month_prefix: str, cfg: OpsConfig) -> float:
+    return sum(month_spend_parts(conn, user_id, month_prefix, cfg))
 
 
 def _capability_of_action_id(conn: sqlite3.Connection, user_id: int) -> dict[str, str]:
@@ -332,7 +354,7 @@ def _refusal_reason(
         return RefusalReason.HOLDOUT
 
     month_prefix = today.isoformat()[:7]
-    if month_spend(conn, user_id, month_prefix) + action.estimated_cost_usd > (
+    if month_spend(conn, user_id, month_prefix, cfg) + action.estimated_cost_usd > (
         cfg.autonomy.monthly_spend_cap_usd
     ):
         return RefusalReason.BUDGET

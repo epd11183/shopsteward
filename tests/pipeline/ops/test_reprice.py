@@ -24,6 +24,7 @@ from shopsteward.pipeline.ops.models import ProposedAction, Tier
 from shopsteward.pipeline.ops.projections import capability_states, rebuild_ops
 from shopsteward.pipeline.ops.registry import REGISTRY, register
 from shopsteward.pipeline.ops.runner import approve_action, run, undo_action
+from shopsteward.pipeline.ops.tiers import effective_tier
 from tests.pipeline.ops.helpers import seed_listing_observed_on
 
 USER_ID = 1
@@ -469,13 +470,13 @@ def test_materialize_on_a_pod_target_is_none_even_with_an_in_bounds_price(conn):
 # --- registration: T2 ceiling, has undo -----------------------------------
 
 
-def test_register_is_t2_and_has_undo():
+def test_register_is_auto_and_has_undo():
     cap = ListingReprice(FakeEtsyWriteAdapter())
 
     register(cap)
 
     assert REGISTRY["listing.reprice"] is cap
-    assert cap.max_tier == Tier.PROPOSE
+    assert cap.max_tier == Tier.AUTO  # operator decision 2026-11-22: no approval
     assert callable(cap.undo)
 
 
@@ -579,7 +580,7 @@ def test_e2e_valid_intent_lands_at_t2_approve_calls_update_listing_price_undo_re
 # --- T2 ceiling: never promotable ------------------------------------------
 
 
-def test_never_promoted_above_t2_even_with_enough_approvals_and_elapsed_days(conn):
+def test_undo_demotes_the_ladder_state_but_effective_tier_stays_auto(conn):
     _seed_listing(conn, LISTING_DIGITAL, "Loon Digital Download", price_usd=50.0)
     _seed_listing(conn, 805, "Second Digital Download", price_usd=50.0)
     rebuild_core(conn)
@@ -591,21 +592,18 @@ def test_never_promoted_above_t2_even_with_enough_approvals_and_elapsed_days(con
     fake.seed_listing(805, state="active", price=50.0)
     cap = ListingReprice(fake)
     cfg = _cfg(enabled=True, weekly_catalog_pct_cap=1.0)
-    cfg.autonomy.ladder.promote_approvals = 1
-    cfg.autonomy.ladder.promote_min_days = 1
 
     run(conn, USER_ID, cfg, [cap], today=TODAY)
-    action_ids = [e.payload["action_id"] for e in read_all(conn, "action.proposed")]
+    proposed = [e.payload for e in read_all(conn, "action.proposed")]
+    assert {p["tier"] for p in proposed} == {int(Tier.AUTO)}  # starts at AUTO (tier_floor)
+    action_id = proposed[0]["action_id"]
 
-    later = TODAY + timedelta(days=2)
-    for action_id in action_ids:
-        approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=later, live_autonomy=True)
-
-    promoted = [e for e in read_all(conn, "capability.") if e.type == "capability.promoted"]
-    assert promoted == []  # ladder would promote a T1-ceiling stub here; T2 ceiling refuses it
+    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True)
+    undo_action(conn, USER_ID, action_id, [cap], live_autonomy=True)
 
     state = capability_states(conn, USER_ID)["listing.reprice"]
-    assert state.tier == Tier.PROPOSE
+    assert state.tier == Tier.PROPOSE  # raw ladder state demoted...
+    assert effective_tier(cap, state, cfg.autonomy.tier_floor) == Tier.AUTO  # ...floor holds
 
 
 # --- no secret in any payload, append-only ---------------------------------

@@ -53,8 +53,10 @@ class OpenRouterCopyAdapter:
         pricing: dict[str, dict[str, float]] | None = None,
         temperature: float = 0.4,
         timeout: float = 60.0,
+        sizes_wording: dict[str, str] | None = None,
     ):
         self._prompt_template = prompt_template
+        self._sizes_wording = sizes_wording or {}
         self._pricing = pricing
         self._temperature = temperature
         self._client = httpx.Client(
@@ -99,34 +101,61 @@ class OpenRouterCopyAdapter:
             verdict = CopyVerdict.model_validate(verdict_json)
         except (KeyError, IndexError, json.JSONDecodeError, ValidationError) as exc:
             raw = payload if payload is not None else resp.text
+            # The provider answered (and billed) even though we can't use it.
+            billed = self._build_usage(payload, model)
             raise CopyParseError(
-                f"could not parse OpenRouter response: {raw!r:.{_MAX_ERROR_LEN}}"
+                f"could not parse OpenRouter response: {raw!r:.{_MAX_ERROR_LEN}}",
+                usage=billed,
             ) from exc
 
         usage = self._build_usage(payload, model)
         return CopyResult(verdict=verdict, usage=usage)
 
     def _render_prompt(self, inputs: CopyInputs) -> str:
+        w = self._sizes_wording
+        sizes = ", ".join(inputs.sizes)
         return self._prompt_template.format(
             house_style=inputs.house_style,
             subject=inputs.subject or "unspecified",
             strongest_room_style=inputs.strongest_room_style or "unspecified",
             one_risk=inputs.one_risk or "unspecified",
             rationale=inputs.rationale or "unspecified",
+            scene=inputs.scene or "not available; stay general",
             orientation=inputs.orientation,
             format=inputs.format,
-            sizes=", ".join(inputs.sizes),
+            sizes=sizes,
+            # Wording comes from config (prompts/digital_copy_wording.json). No sizes
+            # => the shop appends the exact file list itself; the model must not
+            # invent any (design 2026-11-21 §7).
+            sizes_clause=w.get("sizes_clause", "").format(sizes=sizes) if sizes else "",
+            sizes_rule=w.get("sizes_rule_listed" if sizes else "sizes_rule_none", "").format(
+                sizes=sizes
+            ),
             formats=", ".join(inputs.formats),
         )
 
-    def _build_usage(self, payload: dict, model: str) -> CopyUsage:
-        meta = payload.get("usage", {})
-        input_tokens = meta.get("prompt_tokens")
-        output_tokens = meta.get("completion_tokens")
+    def _build_usage(self, payload: object, model: str) -> CopyUsage | None:
+        """Usage from a provider payload of ANY shape; never raises (it runs
+        inside the parse-error path). None when no token counts are present,
+        so callers never record a null-token llm.call."""
+        meta = payload.get("usage") if isinstance(payload, dict) else None
+        meta = meta if isinstance(meta, dict) else {}
+
+        def count(key: str) -> int | None:
+            v = meta.get(key)
+            return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+        input_tokens, output_tokens = count("prompt_tokens"), count("completion_tokens")
+        if input_tokens is None and output_tokens is None:
+            return None
 
         est_cost_usd = None
-        have_tokens = input_tokens is not None and output_tokens is not None
-        if self._pricing and model in self._pricing and have_tokens:
+        if (
+            self._pricing
+            and model in self._pricing
+            and input_tokens is not None
+            and output_tokens is not None
+        ):
             rates = self._pricing[model]
             est_cost_usd = (input_tokens / 1e6) * rates["in"] + (output_tokens / 1e6) * rates["out"]
 

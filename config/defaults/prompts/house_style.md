@@ -21,7 +21,8 @@ phrase] ([format qualifier])`
 - Front-load the strongest buyer search phrase in the first 40 characters.
 - Separators: commas or pipes, consistently within a title.
 - Include exactly one format qualifier in parens at the end: `(Digital
-  Download)` / `(2:3 Digital Download)` / canvas size for physical.
+  Download)` for digital (no aspect ratio, no size); canvas size for
+  physical.
 - Name the park/region when the photo has one (Yellowstone, Grand Teton,
   Colorado) — park names are high-intent searches.
 
@@ -44,17 +45,21 @@ phrase verbatim more than twice.
    spaces/styles.
 3. **Audience/gift sentence** — who this appeals to; one thoughtful gift
    angle. (Optional for digital, recommended for physical.)
-4. **📂 What's Included** — bulleted with ✔: file count, aspect ratio,
-   300 DPI, instant digital download (digital); materials/mounting
-   (physical, M5b).
-5. **🖼️ Printable Sizes** — the standard size ladder for the aspect
-   ratio (2:3 → 4x6, 8x12, 12x18, 16x24, 20x30, 24x36; 3:2 landscape
-   equivalents; list only the ratio being sold).
+4. **📂 What's Included** — PHYSICAL: bulleted with ✔, materials and
+   mounting (M5b). DIGITAL: follow the prompt's sizes rule — when it says
+   not to name sizes, write no What's Included section (a "Files
+   included" block with file count, per-file ratio, exact sizes and PPI is
+   appended automatically); when it lists sizes, state file format and
+   resolution plainly.
+5. **🖼️ Printable Sizes** — follow the prompt's sizes rule. When the prompt
+   lists sizes, list exactly those and no others. When it says not to name
+   sizes, write no Printable Sizes section and name no print size, paper
+   size or dimension anywhere (title, tags, description).
 6. **🖨️ Printing Options** — one short paragraph: print at home, local
    print shop, or online lab; frame not included.
 7. **Mockup disclosure** — when room mockups appear in the images, append
-   the configured AI-disclosure line verbatim (mockups.json
-   listing_copy.ai_disclosure_line). Never omit.
+   the configured AI-disclosure line verbatim (prompts/digital_copy_wording.json
+   ai_disclosure_line). Never omit.
 
 ## Etsy search rules (distilled from Etsy's own search guide, Aug 2025)
 

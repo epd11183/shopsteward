@@ -195,9 +195,9 @@ per-photo signals read from proj_scores: subject, strongest_room_style,
 one_risk, rationale; plus orientation, format="digital_download", digital
 sizes[] + formats[] (from mockups.json whatyougot). Prompt template
 (listing_copy.txt) frames the task and enumerates Etsy limits; the strict
-schema enforces them. After generation, copy.py appends mockups.json
-listing_copy.ai_disclosure_line (config mockups.json is the single source of
-the line, per M4) to description whenever the listing carries room mockups --
+schema enforces them. After generation, copy.py appends the
+ai_disclosure_line (since 2026-11-22 sourced from prompts/digital_copy_wording.json;
+the mockups.json copy is inert, kept for the mockup config_hash) to description whenever the listing carries room mockups --
 always true for M5a -- and sets disclosure_appended=true (gated on listing.json
 copy.append_disclosure). temperature from config (default 0.4). Cost logged to
 llm.call; live copy refused past the shared vision.monthly_soft_cap_usd $10/mo

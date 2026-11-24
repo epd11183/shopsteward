@@ -1,0 +1,9 @@
+{"data": {"channels": [
+  {"id": "fx-channel-1", "service": "pinterest", "name": "fx-name-1", "displayName": "fx-display-1",
+   "isDisconnected": false, "isLocked": false, "isQueuePaused": false,
+   "metadata": {"__typename": "PinterestMetadata",
+                "boards": [{"name": "fx-board-name-1", "serviceId": "fx-board-1"}]}},
+  {"id": "fx-channel-2", "service": "instagram", "name": "fx-name-2", "displayName": "fx-display-2",
+   "isDisconnected": true, "isLocked": false, "isQueuePaused": true,
+   "metadata": {"__typename": "InstagramMetadata"}}
+]}}

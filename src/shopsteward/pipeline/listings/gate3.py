@@ -43,12 +43,17 @@ from shopsteward.pipeline.listings.models import (
 from shopsteward.pipeline.listings.pricing import compute_economics, enforce_floor
 from shopsteward.pipeline.listings.projections import rebuild_listings
 from shopsteward.pipeline.listings.push import (
+    FilePlanDriftError,
     _create_stage,
     _emit_push_failed,
     _file_stage,
     _images_stage,
     _landing_path,
+    _prepare_files,
+    _reconcile_files,
     _update_stage,
+    check_sizes_fresh,
+    photo_has_digital_listing,
 )
 
 _QUEUE_STATES = ("pushed", "push_failed", "publish_failed")
@@ -107,7 +112,8 @@ def _row_to_card(
 def _fetch_row(conn: sqlite3.Connection, user_id: int, draft_id: str) -> sqlite3.Row | None:
     return conn.execute(
         "SELECT draft_id, etsy_listing_id, title, tags_json, description, price, currency, "
-        "margin_floor, images_json, file_source, landing_file_id, state, pod_status, format "
+        "margin_floor, images_json, file_source, landing_file_id, state, pod_status, format, "
+        "files_plan_json, set_key "
         "FROM proj_listing_drafts WHERE user_id=? AND draft_id=?",
         (user_id, draft_id),
     ).fetchone()
@@ -200,6 +206,21 @@ def edit(
     return _card_for(conn, user_id, draft_id, cfg)
 
 
+def check_publishable(conn: sqlite3.Connection, user_id: int, draft_id: str) -> sqlite3.Row:
+    """publish()'s eligibility rules, callable without publishing (the
+    `listings publish` dry run). Raises ValueError when not publishable."""
+    rebuild_listings(conn)
+    row = _fetch_row(conn, user_id, draft_id)
+    if row is None:
+        raise ValueError(f"unknown draft_id {draft_id!r}")
+    is_pod_enriched = row["pod_status"] == "enriched" and row["state"] == "built"
+    if row["state"] not in ("pushed", "publish_failed") and not is_pod_enriched:
+        raise ValueError(f"draft {draft_id!r} is not publishable (state={row['state']!r})")
+    if row["etsy_listing_id"] is None:
+        raise ValueError(f"draft {draft_id!r} has no Etsy listing id yet")
+    return row
+
+
 def publish(
     conn: sqlite3.Connection, user_id: int, draft_id: str, adapter: EtsyWriteAdapter
 ) -> Gate3Card:
@@ -212,16 +233,7 @@ def publish(
     draft with pod_status='enriched' while state is still 'built' (design:
     pod-publish -- POD drafts never advance state past 'built' via push.py,
     their lifecycle lives in the separate pod_status column instead)."""
-    rebuild_listings(conn)
-    row = _fetch_row(conn, user_id, draft_id)
-    if row is None:
-        raise ValueError(f"unknown draft_id {draft_id!r}")
-    is_pod_enriched = row["pod_status"] == "enriched" and row["state"] == "built"
-    if row["state"] not in ("pushed", "publish_failed") and not is_pod_enriched:
-        raise ValueError(f"draft {draft_id!r} is not publishable (state={row['state']!r})")
-    if row["etsy_listing_id"] is None:
-        raise ValueError(f"draft {draft_id!r} has no Etsy listing id yet")
-
+    row = check_publishable(conn, user_id, draft_id)
     listing_id = int(row["etsy_listing_id"])
     cfg = listing_config.get_config(conn, user_id)
 
@@ -274,6 +286,18 @@ def publish(
     return _card_for(conn, user_id, draft_id, cfg)
 
 
+def _attached_here(e: Event, user_id: int, draft_id: str, listing_id: int | None) -> bool:
+    """An attach event for THIS draft on THIS Etsy listing. A reset re-keys the
+    same draft_id onto a new listing; attachments to the old (often fake) one
+    must not count as done on the new one."""
+    return (
+        e.user_id == user_id
+        and e.payload.get("draft_id") == draft_id
+        and listing_id is not None
+        and int(e.payload.get("etsy_listing_id", -1)) == listing_id
+    )
+
+
 def retry_push(
     conn: sqlite3.Connection, user_id: int, draft_id: str, adapter: EtsyWriteAdapter
 ) -> Gate3Card:
@@ -309,12 +333,39 @@ def retry_push(
     already_attached_ranks = {
         img["rank"]
         for e in read_all(conn, "listingdraft.images_attached")
-        if e.user_id == user_id and e.payload.get("draft_id") == draft_id
+        if _attached_here(e, user_id, draft_id, listing_id)
         for img in e.payload.get("images", [])
     }
 
+    # Plan keys already attached by prior attempts (legacy events: "full").
+    skip_keys = {
+        e.payload.get("key", "full")
+        for e in read_all(conn, "listingdraft.file_attached")
+        if _attached_here(e, user_id, draft_id, listing_id)
+    }
+
+    if listing_id is None:
+        # A superseded draft must not create a second digital listing for a
+        # photo that already has one (config change re-keyed draft_id).
+        blocker = photo_has_digital_listing(conn, user_id, row["landing_file_id"])
+        if blocker is not None:
+            raise ValueError(f"photo already has a digital listing (draft {blocker})")
+
     stage = resume_stage
     try:
+        prepared = None
+        if listing_id is None:
+            check_sizes_fresh(conn, user_id, cfg, row)
+        if listing_id is None or resume_stage in ("create", "image", "file"):
+            # Encode every not-yet-attached file before touching Etsy. A failure
+            # here keeps stage = resume_stage so the next retry still re-runs
+            # every stage from where the push really stopped.
+            if listing_id is not None:
+                _reconcile_files(
+                    conn, user_id, adapter, draft_id, listing_id, cfg,
+                    row["files_plan_json"], landing_path, skip_keys,
+                )  # fmt: skip
+            prepared = _prepare_files(cfg, row["files_plan_json"], landing_path, skip_keys)
         if listing_id is None:
             stage = "create"
             listing_id = _create_stage(conn, user_id, adapter, cfg, draft_id, row, tags)
@@ -341,11 +392,14 @@ def retry_push(
                 listing_id,
                 landing_path,
                 cfg.etsy.sellable_max_bytes,
+                prepared=prepared,
+                file_source=row["file_source"],
+                skip_keys=skip_keys,
             )
 
         stage = "update"
         _update_stage(adapter, listing_id, row, tags)
-    except (EtsyWriteError, OSError) as exc:
+    except (EtsyWriteError, OSError, FilePlanDriftError) as exc:
         _emit_push_failed(conn, user_id, draft_id, listing_id, stage, exc)
         rebuild_listings(conn)
         return _card_for(conn, user_id, draft_id, cfg)

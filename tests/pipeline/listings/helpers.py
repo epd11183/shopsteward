@@ -10,10 +10,62 @@ from PIL import Image
 from shopsteward.core.events import Event, append
 from shopsteward.mockups.projections import rebuild_mockups
 from shopsteward.pipeline.listings import config as listing_config
+from shopsteward.pipeline.listings.digital_files import photo_dims, plan_files, plan_sizes
 from shopsteward.pipeline.listings.projections import rebuild_listings
 from shopsteward.pipeline.projections import rebuild_pipeline
 
 USER_ID = 1
+
+
+def _plan_panel_params(conn: sqlite3.Connection, user_id: int, path: str) -> dict:
+    rebuild_listings(conn)
+    try:
+        digital_files = listing_config.get_config(conn, user_id).digital_files
+    except KeyError:  # not seeded yet: the shipped defaults are what build will seed
+        digital_files = listing_config.load_listing_config().digital_files
+    if digital_files is None or not Path(path).exists():
+        return {}
+    plan = plan_files(photo_dims(path), None, digital_files)
+    return {"sizes": plan_sizes(plan)}
+
+
+def seed_score(conn: sqlite3.Connection, photo_id: str, user_id: int = USER_ID) -> None:
+    """A photo.scored event so digital copy has a vision signal (copy is
+    refused without one). Caller rebuilds the pipeline projection."""
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="photo.scored",
+            payload={
+                "photo_id": photo_id,
+                "composite": 0.0,
+                "vision": {
+                    "triage": {
+                        "verdict": {
+                            "commercial_score": 70,
+                            "subject": "osprey",
+                            "strongest_room_style": "coastal",
+                            "one_risk": "glare",
+                            "rationale": "well composed",
+                            "scene": "An osprey perched on a bare branch against a clear sky.",
+                        }
+                    }
+                },
+            },
+        ),
+    )
+
+
+def seed_scores_for_landing(conn: sqlite3.Connection, user_id: int = USER_ID) -> None:
+    """Score every landing photo (flows that scan files rather than seed them)."""
+    rebuild_pipeline(conn)
+    for row in conn.execute(
+        "SELECT file_id, photo_id FROM proj_landing_files WHERE user_id=?", (user_id,)
+    ).fetchall():
+        # drafts name a photo without a photo_id `file-<sha[:12]>`
+        seed_score(conn, row["photo_id"] or f"file-{row['file_id'][:12]}", user_id)
+    rebuild_pipeline(conn)
 
 
 def seed_landing_file_with_mockup_set(
@@ -26,13 +78,20 @@ def seed_landing_file_with_mockup_set(
     intents: list[str],
     mockups_dir: Path,
     user_id: int = USER_ID,
+    panel_params: dict | None = None,
 ) -> None:
     """Appends a valid landing.file_observed + a completed mockup set (one
     mockup.generated per intent, in the given order, then
     mockupset.completed) and rebuilds the pipeline/mockups projections the
     listings build stage reads via raw SQL. Writes a real tiny JPEG at each
     mockup path (under mockups_dir) -- the push stage (M5a slice 3) reads
-    these bytes off disk, so a placeholder path is no longer enough."""
+    these bytes off disk, so a placeholder path is no longer enough.
+
+    The digital_whatyougot panel records the sizes the photo's file plan
+    delivers (what mockups.run records), unless `panel_params` overrides it
+    (None -> {}, a legacy panel, is spelled panel_params={})."""
+    if panel_params is None:
+        panel_params = _plan_panel_params(conn, user_id, path)
     append(
         conn,
         Event(
@@ -66,7 +125,7 @@ def seed_landing_file_with_mockup_set(
                     "intent": intent,
                     "template_id": None,
                     "path": str(mockup_path),
-                    "params": {},
+                    "params": panel_params if intent == "digital_whatyougot" else {},
                 },
             ),
         )
@@ -85,6 +144,7 @@ def seed_landing_file_with_mockup_set(
             },
         ),
     )
+    seed_score(conn, photo_id, user_id)
     rebuild_pipeline(conn)
     rebuild_mockups(conn)
 

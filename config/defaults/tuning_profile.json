@@ -6,10 +6,12 @@
     "provider": "openrouter",
     "triage_model": "google/gemini-2.5-flash-lite",
     "rescore_model": "google/gemini-2.5-pro",
+    "copy_check_model": "anthropic/claude-sonnet-5",
     "max_long_edge_px": 1024,
     "est_cost_per_mtok": {
       "google/gemini-2.5-flash-lite": { "in": 0.10, "out": 0.40 },
-      "google/gemini-2.5-pro": { "in": 1.25, "out": 10.00 }
+      "google/gemini-2.5-pro": { "in": 1.25, "out": 10.00 },
+      "anthropic/claude-sonnet-5": { "in": 2.0, "out": 10.0 }
     },
     "monthly_soft_cap_usd": 10.0
   },
