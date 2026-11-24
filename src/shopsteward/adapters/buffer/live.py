@@ -4,6 +4,7 @@ installed @bufferapp/cli 2.3.1 generated documents; nothing here has been run
 against the network. Construction is gated by `live_buffer_open()` at the
 call site; this module never reads the environment and never logs the key."""
 
+import re
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -100,11 +101,16 @@ def _retry_after_s(resp: httpx.Response) -> int | None:
             return None
 
 
+def _metric_key(label: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")
+
+
 def _parse_post(n: dict[str, Any]) -> BufferPost:
     meta = n.get("metadata") or {}
     # Absent != 0: only metrics Buffer actually reported with a value.
+    # Buffer sends display labels ("Pin Clicks", "Eng. Rate"); key by snake_case.
     metrics = {
-        m["name"]: float(m["value"])
+        _metric_key(m["name"]): float(m["value"])
         for m in (n.get("metrics") or [])
         if m.get("name") and m.get("value") is not None
     }

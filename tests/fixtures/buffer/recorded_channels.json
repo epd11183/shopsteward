@@ -1,0 +1,50 @@
+{
+ "data": {
+  "channels": [
+   {
+    "id": "fx-id-2",
+    "service": "facebook",
+    "name": "fx-name-3",
+    "displayName": "fx-displayname-4",
+    "isDisconnected": false,
+    "isLocked": false,
+    "isQueuePaused": false,
+    "metadata": null
+   },
+   {
+    "id": "fx-id-5",
+    "service": "pinterest",
+    "name": "fx-name-6",
+    "displayName": "fx-displayname-7",
+    "isDisconnected": false,
+    "isLocked": false,
+    "isQueuePaused": false,
+    "metadata": {
+     "__typename": "PinterestMetadata",
+     "boards": [
+      {
+       "name": "fx-name-8",
+       "serviceId": "fx-board-9"
+      },
+      {
+       "name": "fx-name-10",
+       "serviceId": "fx-board-11"
+      }
+     ]
+    }
+   },
+   {
+    "id": "fx-id-12",
+    "service": "instagram",
+    "name": "fx-name-13",
+    "displayName": "fx-displayname-14",
+    "isDisconnected": false,
+    "isLocked": false,
+    "isQueuePaused": false,
+    "metadata": {
+     "__typename": "InstagramMetadata"
+    }
+   }
+  ]
+ }
+}
