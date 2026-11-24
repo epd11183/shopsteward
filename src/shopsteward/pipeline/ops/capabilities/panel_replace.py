@@ -21,7 +21,8 @@ upload at the old rank, delete the old image (Etsy keeps it server-side), append
 `listingdraft.panel_replaced` so the projection carries the new id. If deleting
 the old image fails and removing the new one also fails, both panels are live:
 `listingdraft.panel_orphaned` is recorded and the listing is never proposed again
-(no re-upload over an unknown state) until reconciled by hand.
+(no re-upload over an unknown state) until reconciled by hand and released with
+`ops panel-unblock` (appends `listingdraft.panel_unorphaned`; the newest event wins).
 undo: re-attach the old id at its rank FIRST, then delete the new image (a 404 there
 means already gone), so the listing never lacks a panel; then append the event
 reversed. A listing with an undone action of this capability is not re-proposed.
@@ -35,10 +36,10 @@ from datetime import UTC, datetime, timedelta
 from shopsteward.adapters.etsy.interface import EtsyWriteAdapter, EtsyWriteError
 from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.core.events import Event, append, read_all
-from shopsteward.mockups.panel import render_panel_jpeg
 from shopsteward.pipeline.listings.backfill import PLANNED, _events, _snapshots
 from shopsteward.pipeline.listings.digital_files import FilePlan, plan_sizes
 from shopsteward.pipeline.listings.source_assets import resolve_source
+from shopsteward.pipeline.mockup_hooks import get as mockup_hook
 from shopsteward.pipeline.ops.capabilities.size_claims_fix import _delivered_plan, _refresh
 from shopsteward.pipeline.ops.config import ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
@@ -49,6 +50,32 @@ KEY = "listing.panel_replace"
 INTENT = "digital_whatyougot"
 EVENT = "listingdraft.panel_replaced"
 ORPHANED = "listingdraft.panel_orphaned"
+UNORPHANED = "listingdraft.panel_unorphaned"  # operator reconciled by hand (`ops panel-unblock`)
+
+
+def orphaned_listings(conn: sqlite3.Connection, user_id: int) -> set[int]:
+    """Listings whose NEWEST orphaned/unorphaned event is `orphaned` (events are
+    append-only, so an unblock is a later event, never a delete)."""
+    state: dict[int, bool] = {}
+    for e in read_all(conn, "listingdraft.panel_"):
+        if e.user_id == user_id and e.type in (ORPHANED, UNORPHANED):
+            state[int(e.payload["etsy_listing_id"])] = e.type == ORPHANED
+    return {lid for lid, blocked in state.items() if blocked}
+
+
+def unblock(conn: sqlite3.Connection, user_id: int, listing_id: int, reason: str) -> bool:
+    """Append `panel_unorphaned`; False (and no event) if the listing is not blocked."""
+    if listing_id not in orphaned_listings(conn, user_id):
+        return False
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type=UNORPHANED,
+            payload={"etsy_listing_id": listing_id, "reason": reason},
+        ),
+    )
+    return True
 
 
 def _recorded_sizes(conn: sqlite3.Connection, user_id: int, img: dict) -> list[str] | None:
@@ -94,9 +121,7 @@ def _candidates(
         int(r["target_id"])
         for r in action_rows(conn)
         if r["user_id"] == user_id and r["capability"] == KEY and r["state"] == "undone"
-    } | {
-        int(e.payload["etsy_listing_id"]) for e in read_all(conn, ORPHANED) if e.user_id == user_id
-    }
+    } | orphaned_listings(conn, user_id)
     today = datetime.now(UTC).date()
     cfg_hash = ops_config_hash(cfg)
     expires_at = (today + timedelta(days=cfg.autonomy.proposal_ttl_days)).isoformat()
@@ -212,6 +237,7 @@ class ListingPanelReplace:
         if ref is None or not ref.on_disk_present or ref.on_disk_path is None:
             raise ValueError(f"listing {lid}: source photo not on disk -- cannot render the panel")
 
+        render_panel_jpeg = mockup_hook("render_panel_jpeg")
         new = self._adapter.upload_listing_image(
             lid, render_panel_jpeg(ref.on_disk_path, p["new_sizes"]), rank=rank
         )

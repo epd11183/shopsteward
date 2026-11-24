@@ -31,6 +31,20 @@ def _winners_folder(tmp_path: Path) -> Path:
     return folder
 
 
+def test_offline_shop_build_skips_pod_stages_and_writes_no_pod_events(conn, tmp_path):
+    result = run_shop_build(conn, USER_ID, _winners_folder(tmp_path))
+
+    assert result["pod_stages"] == "POD stages skipped: --live-gelato not set"
+    assert result["pod_drafts"] == result["pod_linked"] == result["pod_enriched"] == 0
+    n = conn.execute(
+        "SELECT COUNT(*) AS n FROM events WHERE type IN ("
+        "'listingdraft.provider_created','listingdraft.provider_linked',"
+        "'listingdraft.print_file_hosted','listingdraft.pod_skipped',"
+        "'listingdraft.enrich_failed','listingdraft.enriched')"
+    ).fetchone()["n"]
+    assert n == 0
+
+
 def test_run_shop_build_end_to_end(conn, tmp_path):
     folder = _winners_folder(tmp_path)
 

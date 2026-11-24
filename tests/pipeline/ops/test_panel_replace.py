@@ -287,3 +287,25 @@ def test_undo_completes_when_new_image_already_gone(conn, tmp_path):
     adapter.delete_fail = {new_id: 404}  # a prior undo already removed it
     undo_action(conn, USER_ID, action_id, [cap], live_autonomy=True)
     assert old_id in _gallery(adapter)
+
+
+def test_panel_unblock_releases_orphaned_listing_newest_event_wins(conn, tmp_path):
+    from shopsteward.pipeline.ops.capabilities.panel_replace import orphaned_listings, unblock
+
+    adapter, cfg = _setup(conn, tmp_path, adapter=Flaky())
+    old_id = _panel(conn)["etsy_image_id"]
+    cap = ListingPanelReplace(adapter)
+    a = _action(conn, cap, cfg)
+    adapter.delete_fail = {old_id: 500, adapter._next_image_id: 500}
+    with pytest.raises(StaleTargetError, match="BOTH live"):
+        cap.execute(conn, USER_ID, a)
+    lid = int(a.target_id)
+    assert cap.propose(conn, USER_ID, cfg) == []
+
+    assert unblock(conn, USER_ID, lid, "deleted extra image by hand")
+    assert not unblock(conn, USER_ID, lid, "again")  # no longer blocked: no event
+    assert orphaned_listings(conn, USER_ID) == set()
+    [ev] = read_all(conn, "listingdraft.panel_unorphaned")
+    assert ev.payload["reason"] == "deleted extra image by hand"
+    assert len(read_all(conn, "listingdraft.panel_orphaned")) == 1  # never deleted
+    assert cap.propose(conn, USER_ID, cfg)  # proposable again

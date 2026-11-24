@@ -75,19 +75,6 @@ source_modules = ["shopsteward.core", "shopsteward.editing", "shopsteward.pipeli
                   "shopsteward.adapters.lightroom", "shopsteward.adapters.vision",
                   "shopsteward.adapters.etsy"]
 forbidden_modules = ["shopsteward.mockups"]
-# Three known pipeline->mockups call sites, pinned exactly (any new one still fails).
-# Injecting the callable does not help: both are built inside shopsteward.pipeline
-# (ops/cli.py registers ListingCatalogExpand; the backfill command is a pipeline
-# Typer command), and the only layer above them that may import mockups is
-# shopsteward.cli/shop.py, which would need the whole ops/listings CLI re-plumbed.
-# This is debt, not design: catalog_expand's top-level import also forms a real
-# pipeline <-> mockups cycle (mockups/jobs.py imports pipeline.listings).
-# TODO: move both call sites to the shop.py composition root, then drop these.
-ignore_imports = [
-  "shopsteward.pipeline.listings.cli -> shopsteward.mockups.projections",
-  "shopsteward.pipeline.ops.capabilities.catalog_expand -> shopsteward.mockups.jobs",
-  "shopsteward.pipeline.ops.capabilities.panel_replace -> shopsteward.mockups.panel",
-]
 
 [tool.ruff]
 target-version = "py312"

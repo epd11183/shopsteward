@@ -2,7 +2,18 @@ import json
 
 import pytest
 
+from shopsteward.mockups.jobs import run_mockups
+from shopsteward.mockups.panel import render_panel_jpeg
+from shopsteward.mockups.projections import rebuild_mockups
+from shopsteward.pipeline import mockup_hooks
 from shopsteward.pipeline.ops import config as ops_config
+
+# Same wiring shopsteward.cli does at the composition root.
+mockup_hooks.install(
+    run_mockups=run_mockups,
+    render_panel_jpeg=render_panel_jpeg,
+    rebuild_mockups=rebuild_mockups,
+)
 
 
 @pytest.fixture(autouse=True)

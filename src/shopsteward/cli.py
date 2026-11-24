@@ -14,10 +14,21 @@ if TYPE_CHECKING:
 from shopsteward.editing.cli import edit_app
 from shopsteward.etsy_cli import etsy_app
 from shopsteward.mockups.cli import mockups_app
+from shopsteward.mockups.jobs import run_mockups
+from shopsteward.mockups.panel import render_panel_jpeg
+from shopsteward.mockups.projections import rebuild_mockups
+from shopsteward.pipeline import mockup_hooks
 from shopsteward.pipeline.cli import pipeline_app
 from shopsteward.pipeline.listings.cli import archive_app, listings_app
 from shopsteward.pipeline.listings.pod.cli import pod_app
 from shopsteward.pipeline.ops.cli import ops_app
+
+# Composition root: pipeline may not import mockups, so hand it the callables.
+mockup_hooks.install(
+    run_mockups=run_mockups,
+    render_panel_jpeg=render_panel_jpeg,
+    rebuild_mockups=rebuild_mockups,
+)
 
 app = typer.Typer(no_args_is_help=True, help="ShopSteward — photography workflow tool.")
 shop_app = typer.Typer(no_args_is_help=True, help="One-command winners-folder shop build.")
@@ -288,7 +299,8 @@ def shop_build(
     through provider link + enrich -- one command, unattended (scan_landing
     -> run_vision_copy -> run_mockups -> build_drafts -> build_pod_drafts ->
     link_pod_drafts -> enrich_pod_drafts). --live-gelato refuses up front
-    unless SHOPSTEWARD_LIVE_GELATO=1 and GELATO_API_KEY are set."""
+    unless SHOPSTEWARD_LIVE_GELATO=1 and GELATO_API_KEY are set. Without
+    --live-gelato the POD stages are skipped entirely (no fake-draft events)."""
     from shopsteward.core.db import connect, migrate
     from shopsteward.settings import DEFAULT_USER_ID, db_path
     from shopsteward.shop import LiveGateClosedError, run_shop_build

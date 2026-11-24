@@ -41,6 +41,8 @@ from shopsteward.pipeline.live_gate import (
 from shopsteward.pipeline.llm_ledger import current_month_prefix
 from shopsteward.pipeline.vision_factory import build_vision_adapter
 
+POD_SKIPPED_MESSAGE = "POD stages skipped: --live-gelato not set"
+
 
 class LiveGateClosedError(RuntimeError):
     """Raised when a --live-* flag is set but its operator gate is closed."""
@@ -57,6 +59,7 @@ def run_shop_build(
     live_printfile: bool = False,
     live_gelato: bool = False,
     regenerate: bool = False,
+    run_pod_offline: bool = False,  # test seam only (not on the CLI): fake POD chain
 ) -> dict:
     tuning.seed(conn, user_id, TUNING_PROFILE_PATH)
     profile = tuning.get_profile(conn, user_id)
@@ -110,49 +113,55 @@ def run_shop_build(
         etsy_adapter=etsy_adapter,
     )
 
-    # POD link+enrich share ONE adapter so fake link seeds the dict enrich
-    # reads. Unless --live-gelato, that adapter (and copy) must be FAKE: the
-    # fake link mints placeholder Etsy ids that must never reach live Etsy,
-    # and copy for never-live drafts must not spend LLM tokens.
-    pod_live = live_gelato
-    pod_etsy_adapter = etsy_adapter if pod_live else build_etsy_write_adapter(live=False)
+    # Without --live-gelato the POD stages would run on fake adapters and append
+    # events for fake drafts (placeholder Etsy ids 5001+) to the real DB, so they
+    # are skipped outright. `run_pod_offline` is the tests' seam into the fake chain.
+    pod_ran = live_gelato or run_pod_offline
+    pod = link = enriched = None
+    if pod_ran:
+        # POD link+enrich share ONE adapter so fake link seeds the dict enrich
+        # reads. Unless --live-gelato, that adapter (and copy) must be FAKE: the
+        # fake link mints placeholder Etsy ids that must never reach live Etsy,
+        # and copy for never-live drafts must not spend LLM tokens.
+        pod_live = live_gelato
+        pod_etsy_adapter = etsy_adapter if pod_live else build_etsy_write_adapter(live=False)
 
-    # Costed physical POD drafts (variant selection + pricing + print-file
-    # hosting, design §13 slice 1-2) for every eligible winner -- stops at
-    # print_file_hosted; provider create/Etsy push/enrichment is Phase C.
-    host = build_print_file_host(live=live_printfile)
-    pod = build_pod_drafts(conn, user_id, print_file_host=host)
+        # Costed physical POD drafts (variant selection + pricing + print-file
+        # hosting, design §13 slice 1-2) for every eligible winner -- stops at
+        # print_file_hosted; provider create/Etsy push/enrichment is Phase C.
+        host = build_print_file_host(live=live_printfile)
+        pod = build_pod_drafts(conn, user_id, print_file_host=host)
 
-    # Provider link (C1) then enrich (C2) for every POD draft build_pod_drafts
-    # just reached print_file_hosted on -- fakes by default, exactly like the
-    # digital push above; --live-gelato already refused up front.
-    pod_cfg = pod_config.get_pod_config(conn, user_id)
-    link = link_pod_drafts(
-        conn,
-        user_id,
-        adapter=build_pod_adapter(
-            live=live_gelato,
-            etsy_listings=getattr(pod_etsy_adapter, "listings", None),
-            store_id=pod_config.resolve_store_id(pod_cfg),
-        ),
-        print_file_host=host,
-        cfg=pod_cfg,
-    )
+        # Provider link (C1) then enrich (C2) for every POD draft build_pod_drafts
+        # just reached print_file_hosted on -- fakes by default, exactly like the
+        # digital push above; --live-gelato already refused up front.
+        pod_cfg = pod_config.get_pod_config(conn, user_id)
+        link = link_pod_drafts(
+            conn,
+            user_id,
+            adapter=build_pod_adapter(
+                live=live_gelato,
+                etsy_listings=getattr(pod_etsy_adapter, "listings", None),
+                store_id=pod_config.resolve_store_id(pod_cfg),
+            ),
+            print_file_host=host,
+            cfg=pod_cfg,
+        )
 
-    # enrich_pod_drafts wants the DIGITAL listing config (see its docstring):
-    # copy generation + image ordering are the same machinery build_drafts
-    # used above, and pod.json carries no image_order/image_cap of its own.
-    listing_cfg = listing_config.get_config(conn, user_id)
-    pod_copy_live = live_copy and pod_live
-    enriched = enrich_pod_drafts(
-        conn,
-        user_id,
-        etsy_adapter=pod_etsy_adapter,
-        copy_adapter=build_copy_adapter(listing_cfg, live=pod_copy_live),
-        cfg=listing_cfg,
-        live=pod_copy_live,
-        soft_cap_usd=profile.vision.monthly_soft_cap_usd,
-    )
+        # enrich_pod_drafts wants the DIGITAL listing config (see its docstring):
+        # copy generation + image ordering are the same machinery build_drafts
+        # used above, and pod.json carries no image_order/image_cap of its own.
+        listing_cfg = listing_config.get_config(conn, user_id)
+        pod_copy_live = live_copy and pod_live
+        enriched = enrich_pod_drafts(
+            conn,
+            user_id,
+            etsy_adapter=pod_etsy_adapter,
+            copy_adapter=build_copy_adapter(listing_cfg, live=pod_copy_live),
+            cfg=listing_cfg,
+            live=pod_copy_live,
+            soft_cap_usd=profile.vision.monthly_soft_cap_usd,
+        )
 
     return {
         "observed": landing.observed,
@@ -166,14 +175,15 @@ def run_shop_build(
         "mockups_written": mockups.mockups_written,
         "drafts": drafts.drafts_built,
         "pushed": drafts.pushed,
-        "pod_drafts": pod.drafts_built,
-        "pod_variants_priced": pod.variants_priced,
-        "pod_print_files_hosted": pod.print_files_hosted,
-        "pod_skipped": pod.pod_skipped,
-        "pod_linked": link.linked,
-        "pod_link_created": link.created,
-        "pod_link_failed": link.failed,
-        "pod_enriched": enriched.enriched,
-        "pod_enrich_skipped": enriched.skipped,
-        "pod_enrich_failed": enriched.failed,
+        "pod_stages": "ran" if pod_ran else POD_SKIPPED_MESSAGE,
+        "pod_drafts": pod.drafts_built if pod else 0,
+        "pod_variants_priced": pod.variants_priced if pod else 0,
+        "pod_print_files_hosted": pod.print_files_hosted if pod else 0,
+        "pod_skipped": pod.pod_skipped if pod else 0,
+        "pod_linked": link.linked if link else 0,
+        "pod_link_created": link.created if link else 0,
+        "pod_link_failed": link.failed if link else 0,
+        "pod_enriched": enriched.enriched if enriched else 0,
+        "pod_enrich_skipped": enriched.skipped if enriched else 0,
+        "pod_enrich_failed": enriched.failed if enriched else 0,
     }
