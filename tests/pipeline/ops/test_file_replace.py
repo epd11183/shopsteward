@@ -184,3 +184,54 @@ def test_encoding_is_the_pipeline_rank1_encoding(conn, tmp_path):
     assert kw["size"] == len(data) and kw["rank"] == 1 and kw["size"] <= dcfg.max_bytes
     done = [e.payload for e in read_all(conn, "action.executed")][-1]
     assert done["after"]["sha256"] == sha
+
+
+def test_one_file_listing_with_max_files_1_never_deletes_first(conn, tmp_path):
+    adapter = _world(conn, tmp_path, adapter=Hook())
+    listing_config.set_value(conn, USER_ID, "digital_files.max_files", 1)
+    adapter.calls.clear()
+    ops_config.seed(conn, USER_ID)
+    rebuild_ops(conn)
+    _refresh(conn)
+    healed = tmp_path / "healed.jpg"
+    Image.new("RGB", (600, 400), (200, 100, 50)).save(healed, "JPEG")
+    cap = ListingFileReplace(adapter)
+    register(cap)
+    cfg = ops_config.get_ops_config(conn, USER_ID)
+    assert _go(conn, cfg, cap, healed).executed == 1
+    assert _kinds(adapter) == ["upload_listing_file", "delete_listing_file"]
+    assert len(adapter.list_listing_files(LID)) == 1
+
+
+def test_resume_is_keyed_on_file_id_so_a_renumbered_crop_survives(conn, tmp_path):
+    adapter, cfg, cap, healed = _setup(conn, tmp_path, backfill=True)
+    crops = {f.listing_file_id for f in adapter.list_listing_files(LID) if f.rank > 1}
+    adapter.fail_upload_after_delete = True
+    assert _go(conn, cfg, cap, healed).refused == 1
+    adapter.fail_upload_after_delete = False
+    adapter.fail_on = None
+    for f in adapter.listings[LID]["files"]:  # Etsy renumbers: a crop is now rank 1
+        f["rank"] -= 1
+    assert {f.rank for f in adapter.list_listing_files(LID)} == {1, 2, 3, 4}
+    action = cap.build_action(conn, USER_ID, cfg, LID, healed)
+    assert action.params["old_file_id"] == 0
+    adapter.calls.clear()
+    run(conn, USER_ID, cfg, [cap], proposals=[action], live_autonomy=True)
+    approve_action(conn, USER_ID, action.action_id, [cap], cfg=cfg, live_autonomy=True)
+    assert "delete_listing_file" not in _kinds(adapter)
+    ids = {f.listing_file_id for f in adapter.list_listing_files(LID)}
+    assert crops <= ids and len(ids) == 5
+
+
+def test_rank1_changed_since_proposal_is_stale(conn, tmp_path):
+    adapter, cfg, cap, healed = _setup(conn, tmp_path)
+    action = cap.build_action(conn, USER_ID, cfg, LID, healed)
+    run(conn, USER_ID, cfg, [cap], proposals=[action], live_autonomy=True)
+    adapter.delete_listing_file(LID, action.params["old_file_id"])
+    adapter.upload_listing_file(LID, b"other", name="other.jpg", rank=1)
+    adapter.calls.clear()
+    approve_action(conn, USER_ID, action.action_id, [cap], cfg=cfg, live_autonomy=True)
+    assert not read_all(conn, "listingfile.replaced")
+    assert _kinds(adapter) == [] and [f.name for f in adapter.list_listing_files(LID)] == [
+        "other.jpg"
+    ]

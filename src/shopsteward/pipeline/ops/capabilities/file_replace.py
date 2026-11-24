@@ -86,9 +86,22 @@ def _events(conn: sqlite3.Connection, user_id: int, lid: int) -> list[Event]:
     )
 
 
-def _rank1(adapter: EtsyWriteAdapter, lid: int) -> tuple[int, list]:
-    files = adapter.list_listing_files(lid)
-    return len(files), [f for f in files if f.rank == 1]
+ETSY_MAX_FILES = 5  # Etsy's hard per-listing cap (not the configurable digital_files.max_files)
+
+
+def _target(files: list, evs: list[Event]) -> tuple[int, str | None]:
+    """(old_file_id, name) to replace; old_file_id 0 = resume (upload only).
+    Resume is keyed on FILE ID, checked before any rank lookup: if the newest event
+    is `replace_old_deleted` and that id is gone, a crop that Etsy renumbered to
+    rank 1 must never be taken for the full frame."""
+    if evs and evs[-1].type == OLD_DELETED:
+        pend = evs[-1].payload
+        if int(pend["old_file_id"]) not in {f.listing_file_id for f in files}:
+            return 0, pend.get("name")
+    rank1 = [f for f in files if f.rank == 1]
+    if len(rank1) != 1:
+        raise ValueError(f"expected exactly one rank-1 file, found {len(rank1)}")
+    return rank1[0].listing_file_id, rank1[0].name
 
 
 class ListingFileReplace:
@@ -141,19 +154,10 @@ class ListingFileReplace:
             raise ValueError(f"listing {listing_id}: not a known digital listing")
         dcfg = _dcfg(conn, user_id)
         try:
-            _, rank1 = _rank1(self._adapter, listing_id)
-            data, sha = _full_file(path, dcfg)
+            old_id, name = _target(self._adapter.list_listing_files(listing_id), evs)
+            _, sha = _full_file(path, dcfg)
         except (EtsyWriteError, OSError, ValueError) as exc:
             raise ValueError(f"listing {listing_id}: {exc}") from exc
-        del data
-        if len(rank1) == 1:
-            old_id, name = rank1[0].listing_file_id, rank1[0].name
-        elif not rank1 and evs and evs[-1].type == OLD_DELETED:
-            old_id, name = 0, evs[-1].payload.get("name")  # resume: old already deleted
-        else:
-            raise ValueError(
-                f"listing {listing_id}: expected exactly one rank-1 file, found {len(rank1)}"
-            )
         name = name or _file_name(
             _slug(path), plan_files(photo_dims(path), (0.5, 0.5), dcfg).files[0]
         )
@@ -191,14 +195,17 @@ class ListingFileReplace:
         data, sha = _full_file(str(p["path"]), dcfg)
         if sha != p["sha256"]:
             raise StaleTargetError(f"listing {lid}: replacement file changed since proposal")
-        n_files, rank1 = _rank1(self._adapter, lid)
-        if [f.listing_file_id for f in rank1] != ([old_id] if old_id else []):
-            raise StaleTargetError(f"listing {lid}: rank-1 file changed since proposal -- refusing")
+        files = self._adapter.list_listing_files(lid)
+        n_files = len(files)
         evs = _events(conn, user_id, lid)
-        if any(e.type == ORPHANED for e in evs) or (
-            not old_id and not (evs and evs[-1].type == OLD_DELETED)
-        ):
-            raise StaleTargetError(f"listing {lid}: not eligible (orphaned, or nothing to resume)")
+        try:
+            current = _target(files, evs)[0]
+        except ValueError as exc:
+            raise StaleTargetError(f"listing {lid}: {exc} -- refusing") from exc
+        if current != old_id:
+            raise StaleTargetError(f"listing {lid}: rank-1 file changed since proposal -- refusing")
+        if any(e.type == ORPHANED for e in evs):
+            raise StaleTargetError(f"listing {lid}: orphaned; reconcile by hand")
 
         def done(new_id: int) -> ExecutionResult:
             append(
@@ -216,7 +223,8 @@ class ListingFileReplace:
                 duration_ms=0,
             )
 
-        if old_id and n_files >= dcfg.max_files:  # at the cap: no room to upload first
+        # At Etsy's cap there is no room to upload first. Never delete the last file.
+        if old_id and n_files >= ETSY_MAX_FILES and n_files > 1:
             append(
                 conn,
                 Event(
