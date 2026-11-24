@@ -631,6 +631,17 @@ class BriefProposal(BaseModel):
     expires_at: str  # ISO date
 
 
+class BriefReadbackFailure(BaseModel):
+    """A pushed draft whose pre-publish read-back failed (latest
+    `listingdraft.readback` not ok, never published since): it stays a draft
+    until the operator fixes it at Gate 3."""
+
+    draft_id: str
+    etsy_listing_id: int | None = None
+    title: str | None = None
+    problems: list[str] = Field(default_factory=list)
+
+
 class BriefAction(BaseModel):
     """One action.executed in the recent window, not since undone."""
 
@@ -725,6 +736,7 @@ class Brief(BaseModel):
     # (generate_brief() with brief_sections.autonomy=False, or any caller
     # that never touches these) stays valid without passing them.
     needs_you: list[BriefProposal] = Field(default_factory=list)
+    readback_failed: list[BriefReadbackFailure] = Field(default_factory=list)
     done_recent: list[BriefAction] = Field(default_factory=list)
     refused_recent: list[BriefRefusal] = Field(default_factory=list)
     autonomy: BriefAutonomy | None = None

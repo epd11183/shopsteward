@@ -7,6 +7,7 @@ still PURE, no LLM, no network, exactly like THE SHOP's analytics.py reads.
 generate_brief() is deterministic (PURE, no LLM, no network -- design §7).
 render_text() is a template, not a model."""
 
+import contextlib
 import sqlite3
 from datetime import UTC, date, datetime
 
@@ -21,6 +22,7 @@ from shopsteward.pipeline.ops.models import (
     BriefLadderRow,
     BriefPin,
     BriefProposal,
+    BriefReadbackFailure,
     BriefRefusal,
     OpsConfig,
     ProposedAction,
@@ -75,6 +77,40 @@ def _needs_you(conn: sqlite3.Connection, user_id: int, as_of: date) -> list[Brie
                 tier=Tier(row["tier"]),
                 reason=row["reason"],
                 expires_at=p.expires_at,
+            )
+        )
+    return out
+
+
+def _readback_failed(conn: sqlite3.Connection, user_id: int) -> list[BriefReadbackFailure]:
+    """Drafts whose LATEST read-back failed and that were never published
+    since (event-derived, so the brief needs no projection rebuild)."""
+    latest: dict[str, list[str] | None] = {}
+    for e in read_all(conn, "listingdraft.readback"):
+        if e.user_id == user_id:
+            p = e.payload
+            latest[p["draft_id"]] = None if p["ok"] else list(p["problems"])
+    published = {
+        e.payload["draft_id"] for e in read_all(conn, "gate3.published") if e.user_id == user_id
+    }
+    out = []
+    for draft_id, problems in latest.items():
+        if problems is None or draft_id in published:
+            continue
+        row = None
+        # listings projection may not be built in this conn -- id/title are cosmetic
+        with contextlib.suppress(sqlite3.OperationalError):
+            row = conn.execute(
+                "SELECT etsy_listing_id, title FROM proj_listing_drafts "
+                "WHERE user_id=? AND draft_id=?",
+                (user_id, draft_id),
+            ).fetchone()
+        out.append(
+            BriefReadbackFailure(
+                draft_id=draft_id,
+                etsy_listing_id=row["etsy_listing_id"] if row else None,
+                title=row["title"] if row else None,
+                problems=problems,
             )
         )
     return out
@@ -282,6 +318,7 @@ def generate_brief(
     )
 
     needs_you = _needs_you(conn, user_id, as_of) if sections.autonomy else []
+    readback_failed = _readback_failed(conn, user_id) if sections.autonomy else []
     done_recent = _done_recent(conn, user_id, as_of) if sections.autonomy else []
     refused_recent = _refused_recent(conn, user_id, as_of) if sections.autonomy else []
     autonomy = _autonomy_section(conn, user_id, cfg, as_of) if sections.autonomy else None
@@ -306,6 +343,7 @@ def generate_brief(
         shoot_more=shoot,
         data_quality_notes=notes,
         needs_you=needs_you,
+        readback_failed=readback_failed,
         done_recent=done_recent,
         refused_recent=refused_recent,
         autonomy=autonomy,
@@ -327,11 +365,16 @@ def render_text(brief: Brief) -> str:
     # bundle is omitted together, never shown half-populated.
     if brief.autonomy is not None:
         lines.append("")
-        lines.append(f"NEEDS YOU ({len(brief.needs_you)})")
+        lines.append(f"NEEDS YOU ({len(brief.needs_you) + len(brief.readback_failed)})")
         for p in brief.needs_you:
             lines.append(
                 f"  [{p.action_id}] {p.capability} -> {p.target_type}:{p.target_id} : "
                 f"{p.reason} (expires {p.expires_at})"
+            )
+        for f in brief.readback_failed:
+            lines.append(
+                f"  DRAFT NOT PUBLISHED (read-back failed) {f.draft_id} "
+                f"(etsy {f.etsy_listing_id}) {f.title or ''}: " + "; ".join(f.problems)
             )
 
         lines.append("")

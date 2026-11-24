@@ -113,6 +113,13 @@ class EtsyListingImage(BaseModel):
     full_height: int | None = None
 
 
+class EtsyListingDetail(EtsyListing):
+    """getListing with `includes=Images` -- the read-back view of a (draft)
+    listing as Etsy itself holds it, used by the pre-publish read-back gate."""
+
+    images: list[EtsyListingImage] = Field(default_factory=list)
+
+
 class EtsyTransaction(BaseModel):
     transaction_id: int
     listing_id: int

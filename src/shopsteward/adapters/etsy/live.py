@@ -17,6 +17,7 @@ from shopsteward.adapters.etsy.models import (
     EtsyFileRef,
     EtsyImageRef,
     EtsyListing,
+    EtsyListingDetail,
     EtsyListingImage,
     EtsyListingInventory,
     EtsyListingRef,
@@ -366,6 +367,12 @@ class LiveEtsyWriteAdapter:
                 )
             )
         return out
+
+    def get_listing(self, listing_id: int) -> EtsyListingDetail:
+        # getListing + includes=Images (read-only). Never exercised against
+        # live Etsy in CI -- fake/fixture only.
+        body = self._request("GET", f"/listings/{listing_id}", params={"includes": "Images"})
+        return EtsyListingDetail.model_validate(body)
 
     def update_listing(self, listing_id: int, fields: EtsyListingUpdate) -> EtsyListing:
         # updateListing is also form-urlencoded (Etsy OpenAPI spec), not

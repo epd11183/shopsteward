@@ -17,6 +17,8 @@ from PIL import Image
 from pydantic import ValidationError
 
 from shopsteward.adapters.vision.interface import (
+    CopyCheckResult,
+    CopyCheckVerdict,
     VisionParseError,
     VisionResult,
     VisionUsage,
@@ -43,6 +45,16 @@ _VERDICT_SCHEMA = {
         "rationale",
         "scene",
     ],
+    "additionalProperties": False,
+}
+
+_COPY_CHECK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "problems": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["ok", "problems"],
     "additionalProperties": False,
 }
 
@@ -133,6 +145,45 @@ class OpenRouterVisionAdapter:
 
         usage = self._build_usage(payload, model)
         return VisionResult(verdict=verdict, usage=usage)
+
+    def check_copy(
+        self, jpeg_bytes: bytes, *, title: str, tags: list[str], description: str, model: str
+    ) -> CopyCheckResult:
+        """Copy-vs-photo check (the prompt is the constructor's `prompt`)."""
+        listing = json.dumps({"title": title, "tags": tags, "description": description})
+        image = base64.b64encode(_downscale_jpeg(jpeg_bytes)).decode("ascii")
+        body = {
+            "model": model,
+            "temperature": 0,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{image}"},
+                        },
+                        {"type": "text", "text": f"{self._prompt}\n\nLISTING (JSON):\n{listing}"},
+                    ],
+                }
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "copy_check", "strict": True, "schema": _COPY_CHECK_SCHEMA},
+            },
+        }
+        resp = self._client.post(BASE, json=body)
+        resp.raise_for_status()
+        payload = resp.json()
+        try:
+            verdict = CopyCheckVerdict.model_validate(
+                json.loads(payload["choices"][0]["message"]["content"])
+            )
+        except (KeyError, IndexError, json.JSONDecodeError, ValidationError) as exc:
+            raise VisionParseError(
+                f"could not parse OpenRouter response: {payload!r:.{_MAX_ERROR_LEN}}"
+            ) from exc
+        return CopyCheckResult(verdict=verdict, usage=self._build_usage(payload, model))
 
     def _build_usage(self, payload: dict, model: str) -> VisionUsage:
         meta = payload.get("usage", {})
