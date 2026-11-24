@@ -113,3 +113,26 @@ def test_already_published_refused(env, monkeypatch):
     assert again.exit_code == 1
     assert "not publishable" in again.output
     assert _publishes(adapter) == 1
+
+
+def test_refuses_when_the_fee_would_exceed_the_monthly_cap(env, monkeypatch):
+    from shopsteward.core.events import Event, append
+
+    conn, adapter, draft_id = env
+    _gate(monkeypatch, True)
+    for i in range(100):  # 100 x $0.20 = the whole $20 cap already spent this month
+        append(conn, Event(user_id=1, type="gate3.published", payload={"draft_id": f"x{i}"}))
+    result = runner.invoke(app, ["listings", "publish", "--draft-id", draft_id, "--live"])
+    assert result.exit_code == 1 and "cap" in result.output
+    assert _publishes(adapter) == 0
+
+
+def test_refuses_when_autonomy_is_halted(env, monkeypatch):
+    from shopsteward.pipeline.ops.runner import halt
+
+    conn, adapter, draft_id = env
+    _gate(monkeypatch, True)
+    halt(conn, 1, "test")
+    result = runner.invoke(app, ["listings", "publish", "--draft-id", draft_id, "--live"])
+    assert result.exit_code == 1 and "halted" in result.output
+    assert _publishes(adapter) == 0

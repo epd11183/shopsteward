@@ -658,6 +658,28 @@ def publish_cmd(
             )
             return
 
+        # The $20 cap is a hard ceiling (CLAUDE.md): reserve this listing's fee
+        # like the governor does for catalog_expand, and honour `ops halt`.
+        from datetime import UTC, datetime
+
+        from shopsteward.pipeline.ops import config as ops_config
+        from shopsteward.pipeline.ops.governor import is_halted, month_spend
+        from shopsteward.pipeline.ops.projections import rebuild_ops
+
+        ops_config.seed(conn, DEFAULT_USER_ID)
+        rebuild_ops(conn)
+        cfg = ops_config.get_ops_config(conn, DEFAULT_USER_ID)
+        if is_halted(conn, DEFAULT_USER_ID):
+            raise _fail("autonomy is halted (`ops resume` to lift); not publishing")
+        month = datetime.now(UTC).strftime("%Y-%m")
+        spend = month_spend(conn, DEFAULT_USER_ID, month, cfg)
+        fee = cfg.catalog_expansion.listing_fee_usd
+        if spend + fee > cfg.autonomy.monthly_spend_cap_usd:
+            raise _fail(
+                f"month spend ${spend:.2f} + ${fee:.2f} fee would exceed the "
+                f"${cfg.autonomy.monthly_spend_cap_usd:.2f} cap; not publishing"
+            )
+
         adapter = build_etsy_write_adapter(live=True)
         gate = run_readback(
             conn,
@@ -672,7 +694,7 @@ def publish_cmd(
             for problem in gate.problems:
                 typer.echo(f"  - {problem}")
             raise typer.Exit(code=1)
-        card = gate3.publish(conn, DEFAULT_USER_ID, draft_id, adapter)  # sole publish site
+        card = gate3.publish(conn, DEFAULT_USER_ID, draft_id, adapter)
         if card.state != "published":
             raise _fail(f"publish failed: {card.retry_error or card.state}")
         typer.echo(f"published {draft_id} (etsy listing {card.etsy_listing_id}).")
