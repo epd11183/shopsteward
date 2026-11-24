@@ -500,8 +500,12 @@ class ListingCatalogExpand:
         for e in read_all(conn, "action.executed"):
             if e.user_id == user_id and e.payload.get("action_id") == action.action_id:
                 after = e.payload.get("after") or {}
-        if after.get("published") and after.get("etsy_listing_id") is not None:
-            self._adapter.update_listing_state(int(after["etsy_listing_id"]), "inactive")
+        if not after.get("published"):
+            return
+        if after.get("etsy_listing_id") is None:
+            # Published but no id recorded: never report a live listing as undone.
+            raise RuntimeError(f"action {action.action_id}: published listing has no etsy id")
+        self._adapter.update_listing_state(int(after["etsy_listing_id"]), "inactive")
 
     def estimate_cost_usd(self, action: ProposedAction) -> float:
         return action.estimated_cost_usd
