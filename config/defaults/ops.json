@@ -100,6 +100,19 @@
       "wall_art": "Nature & Landscape Wall Art"
     }
   },
+  "buffer": {
+    "tag_name": "shopsteward",
+    "min_long_edge_px": 1000,
+    "reconcile_window_minutes": 60,
+    "max_retry_after_s": 60,
+    "sync_lookback_days": 35,
+    "min_lead_hours": 4,
+    "channels": {
+      "pinterest": {"service": "pinterest", "posts_per_week": 7, "max_queue_depth": 8, "post_times_utc": ["14:00"]},
+      "instagram": {"service": "instagram", "posts_per_week": 4, "max_queue_depth": 8, "post_times_utc": ["16:00"], "aspect_min": 0.8, "aspect_max": 1.91},
+      "facebook": {"service": "facebook", "posts_per_week": 4, "max_queue_depth": 8, "post_times_utc": ["17:00"], "append_link": true}
+    }
+  },
   "social": {
     "staleness_days": 14
   },

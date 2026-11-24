@@ -48,6 +48,7 @@ from datetime import UTC, datetime, timedelta
 
 from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.core.events import Event, append, read_all
+from shopsteward.pipeline.ops import buffer_publish as _bp
 from shopsteward.pipeline.ops import social as _social
 from shopsteward.pipeline.ops.config import get_ops_config, ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
@@ -84,7 +85,12 @@ def _last_pinned_at(conn: sqlite3.Connection, user_id: int, listing_id: int) -> 
 
 
 def _candidates(
-    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, *, now: datetime | None = None
+    conn: sqlite3.Connection,
+    user_id: int,
+    cfg: OpsConfig,
+    *,
+    now: datetime | None = None,
+    publishing: bool = False,
 ) -> dict[str, _Target]:
     """target_id (`str(listing_id)`) -> pin-eligible facts -- the ONE
     grounding function shared by materialize()/execute() so a hallucinated,
@@ -104,10 +110,20 @@ def _candidates(
     ).fetchall()
     now = now or datetime.now(UTC)
     cutoff = now - timedelta(days=cfg.pinterest.cooldown_days)
+    # A listing with an UNRESOLVED Buffer publish intent is never a candidate,
+    # whatever the cooldown says (buffer_publish module docstring).
+    blocked = _bp.blocked_listings(conn, user_id)
     for r in rows:
+        if r["listing_id"] in blocked:
+            continue
         image_url = _social.image_url(conn, user_id, r["listing_id"])
         if image_url is None:
             continue
+        if publishing:
+            # Drop, never crop: unknown dimensions are dropped too.
+            edge = _social.image_long_edge(conn, user_id, r["listing_id"])
+            if edge is None or edge < cfg.buffer.min_long_edge_px:
+                continue
         last_pinned = _last_pinned_at(conn, user_id, r["listing_id"])
         if last_pinned is not None and parse_ts(last_pinned) >= cutoff:
             continue
@@ -235,14 +251,24 @@ def mark_posted(
 
 class SocialPinterestPost:
     key = "social.pinterest_post"
-    # T2 ceiling, matching social.caption_draft's current setting for
-    # consistency (module docstring) -- Variant B's Tier.NOTIFY
-    # recommendation applies only to the not-yet-built live variant.
+    # Publisher None (Variant A): T2 ceiling, no undo, draft-only. With a
+    # publisher (Variant B, design 2026-11-22 §4) `__init__` raises the
+    # ceiling to NOTIFY and sets a real undo (deletePost while still queued).
     max_tier = Tier.PROPOSE
-    policy_verified = True  # draft-only, never published -- see module docstring.
-    # No undo path: allowed because max_tier is not below PROPOSE
-    # (registry.py invariant 1) -- the reversal is "don't post it".
+    policy_verified = True  # A: never published. B: needs policy rows B1/B2.
+    # No undo path in Variant A: allowed because max_tier is not below
+    # PROPOSE (registry.py invariant 1) -- the reversal is "don't post it".
     undo = None
+
+    def __init__(self, publisher: _bp.BufferPublisherAdapter | None = None) -> None:
+        self._publisher = publisher
+        if publisher is not None:
+            self.max_tier = Tier.NOTIFY
+            self.undo = self._undo_buffer  # type: ignore[assignment]
+
+    def _undo_buffer(self, conn: sqlite3.Connection, user_id: int, action: ProposedAction) -> None:
+        assert self._publisher is not None
+        _bp.undo_pin(conn, user_id, action, self._publisher, get_ops_config(conn, user_id))
 
     def propose(
         self, conn: sqlite3.Connection, user_id: int, cfg: OpsConfig
@@ -252,7 +278,9 @@ class SocialPinterestPost:
     def materialize(
         self, conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, intent: ProposalIntent
     ) -> ProposedAction | None:
-        target = _candidates(conn, user_id, cfg).get(intent.target_id)
+        target = _candidates(conn, user_id, cfg, publishing=self._publisher is not None).get(
+            intent.target_id
+        )
         if target is None:
             return None  # ungrounded (hallucinated, inactive, imageless, or cooling down)
 
@@ -264,14 +292,30 @@ class SocialPinterestPost:
         today = today_date.isoformat()
         cfg_hash = ops_config_hash(cfg)
         expires_at = (today_date + timedelta(days=cfg.autonomy.proposal_ttl_days)).isoformat()
-        return _build_action(target, valid, cfg_hash, today, expires_at)
+        action = _build_action(target, valid, cfg_hash, today, expires_at)
+        if self._publisher is not None:
+            action.params["publish_via"] = "buffer"
+            action.undo_available = True
+        return action
 
     def execute(
         self, conn: sqlite3.Connection, user_id: int, action: ProposedAction
     ) -> ExecutionResult:
         listing_id = int(action.target_id)
+        via_buffer = action.params.get("publish_via") == "buffer"
+        if via_buffer:
+            if self._publisher is None:
+                # Never silently execute a publish-intent action as a draft.
+                raise ValueError(
+                    f"action {action.action_id}: publish_via=buffer needs --live-autonomy "
+                    "and the Buffer live gate -- refusing"
+                )
+            # FIRST, before revalidation: a re-run returns the recorded result.
+            queued = _bp.find_queued(conn, user_id, action.action_id)
+            if queued is not None:
+                return _bp.result_of(queued)
         cfg = get_ops_config(conn, user_id)
-        target = _candidates(conn, user_id, cfg).get(action.target_id)
+        target = _candidates(conn, user_id, cfg, publishing=via_buffer).get(action.target_id)
         if target is None:
             # H2b (guardrail review, 2026-08-25): deliberately plain
             # ValueError, NOT StaleTargetError -- `_candidates()` still
@@ -295,6 +339,19 @@ class SocialPinterestPost:
         # Always recomputed, never read from action.params -- the LLM must
         # never be able to steer the destination URL (review finding).
         destination_url = _destination_url(listing_id, action.action_id)
+
+        if via_buffer:
+            assert self._publisher is not None
+            return _bp.publish_pin(
+                conn,
+                user_id,
+                action,
+                self._publisher,
+                cfg,
+                copy=valid,
+                destination_url=destination_url,
+                image_url=target.image_url,
+            )
 
         append(
             conn,

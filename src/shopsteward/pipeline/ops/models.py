@@ -381,6 +381,33 @@ class _OpsAutonomy(BaseModel):
         return v
 
 
+class _OpsBufferChannel(BaseModel):
+    """One Buffer channel's cadence config, keyed by service name (never an
+    id -- ids resolve at runtime from `list_channels`)."""
+
+    service: str
+    posts_per_week: int = Field(gt=0)
+    max_queue_depth: int = Field(gt=0)
+    post_times_utc: list[str] = Field(min_length=1)  # "HH:MM"
+    aspect_min: float | None = None
+    aspect_max: float | None = None
+    append_link: bool = False
+
+
+class _OpsBuffer(BaseModel):
+    """Buffer social adapter config (design 2026-11-22 §7). Additive with
+    defaults, so a stored config seeded before this field still validates;
+    an empty `channels` map makes publishing a PRECONDITION refusal."""
+
+    tag_name: str = "shopsteward"
+    min_long_edge_px: int = Field(default=1000, gt=0)
+    reconcile_window_minutes: int = Field(default=60, gt=0)
+    max_retry_after_s: int = Field(default=60, ge=0)
+    sync_lookback_days: int = Field(default=35, gt=0)
+    min_lead_hours: int = Field(default=4, ge=0)
+    channels: dict[str, _OpsBufferChannel] = Field(default_factory=dict)
+
+
 class OpsConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -403,6 +430,7 @@ class OpsConfig(BaseModel):
     catalog_expansion: _OpsCatalogExpansion
     caption: _OpsCaption
     pinterest: _OpsPinterest
+    buffer: _OpsBuffer = Field(default_factory=_OpsBuffer)
     social: _OpsSocial = Field(default_factory=_OpsSocial)
     # Additive/default-factory (same precedent as `social` above) -- a
     # stored config seeded before this field existed must still validate.

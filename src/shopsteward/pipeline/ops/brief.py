@@ -233,6 +233,8 @@ def _pin_drafts(conn: sqlite3.Connection, user_id: int, as_of: date) -> list[Bri
             e.created_at, as_of, _DONE_REFUSED_WINDOW_DAYS
         ):
             continue
+        if e.payload.get("publish_via") == "buffer":
+            continue  # queued in Buffer, not a hand-post item (double-post guard)
         listing_id = e.payload["listing_id"]
         prefix = _action_id_from_destination_url(e.payload.get("destination_url"))
         action_id = next(
