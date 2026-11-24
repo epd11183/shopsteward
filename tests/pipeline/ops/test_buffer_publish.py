@@ -271,3 +271,17 @@ def test_runner_refuse_reconcile_reapprove_then_undo(conn, fake, monkeypatch):
 
     undo_action(conn, USER_ID, action.action_id, [cap])
     assert len(_types(conn, bp.DELETED)) == 1 and "post-1" not in fake.posts
+
+
+def test_read_gate_alone_never_builds_a_publisher(monkeypatch):
+    """buffer-sync runs live with SHOPSTEWARD_LIVE_BUFFER=1; posting needs the
+    separate WRITE gate too (stays off until the S9 cutover)."""
+    from shopsteward.pipeline.ops.cli import _build_buffer_publisher
+
+    monkeypatch.setenv("SHOPSTEWARD_LIVE_BUFFER", "1")
+    monkeypatch.setenv("BUFFER_API_KEY", "fx-key")
+    monkeypatch.delenv("SHOPSTEWARD_LIVE_BUFFER_WRITE", raising=False)
+    assert _build_buffer_publisher(True) is None
+    monkeypatch.setenv("SHOPSTEWARD_LIVE_BUFFER_WRITE", "1")
+    assert _build_buffer_publisher(False) is None
+    assert _build_buffer_publisher(True) is not None

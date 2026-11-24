@@ -198,6 +198,13 @@ def live_buffer_open() -> bool:
     )
 
 
+def live_buffer_write_open() -> bool:
+    """Posting is a separate gate from reading (like Etsy read/write):
+    SHOPSTEWARD_LIVE_BUFFER_WRITE=1 on top of live_buffer_open(), so
+    `buffer-sync` can run live while posting stays off until the S9 cutover."""
+    return live_buffer_open() and os.environ.get("SHOPSTEWARD_LIVE_BUFFER_WRITE") == "1"
+
+
 def live_buffer_error() -> str:
     return (
         "Live Buffer publishing is gated on operator approval: set "

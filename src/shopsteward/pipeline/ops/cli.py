@@ -764,12 +764,12 @@ def _build_buffer_adapter(live: bool) -> "BufferAdapter":
 
 
 def _build_buffer_publisher(live_autonomy: bool) -> "BufferPublisherAdapter | None":
-    """The live Buffer adapter only under `--live-autonomy` AND the Buffer gate
-    (SHOPSTEWARD_LIVE_BUFFER=1 + key); otherwise None, i.e. draft-only Variant
-    A. Never a fake: no fake adapter is wired in production code."""
-    from shopsteward.pipeline.live_gate import live_buffer_open
+    """The live Buffer adapter only under `--live-autonomy` AND the Buffer WRITE
+    gate (SHOPSTEWARD_LIVE_BUFFER=1 + SHOPSTEWARD_LIVE_BUFFER_WRITE=1 + key);
+    otherwise None, i.e. draft-only Variant A. Never a fake in production code."""
+    from shopsteward.pipeline.live_gate import live_buffer_write_open
 
-    if not (live_autonomy and live_buffer_open()):
+    if not (live_autonomy and live_buffer_write_open()):
         return None
     from shopsteward.adapters.buffer.live import LiveBufferAdapter
 

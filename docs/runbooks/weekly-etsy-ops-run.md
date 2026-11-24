@@ -129,7 +129,8 @@ the photo by a vision model. A pass publishes it ($0.20, counted in the cap).
   merge PRs unless the operator says so.
 - **Social:** the Buffer API adapter (`src/shopsteward/adapters/buffer/`,
   design `docs/designs/2026-11-22-buffer-social-adapter.md`) exists, and
-  `social.pinterest_post` can post through it (Variant B). It stays off for the
+  `social.pinterest_post` can post through it (Variant B) behind a separate
+  write gate, `SHOPSTEWARD_LIVE_BUFFER_WRITE=1`. It stays off for the
   weekly run until the cutover (design slice S9): keep using the existing
   Buffer connector for posts until then.
 
