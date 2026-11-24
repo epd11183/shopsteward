@@ -372,8 +372,8 @@ def run_cmd(
     register(ListingGapfillReprint(build_print_file_host(live=False)))
     # No adapter at all -- execute() only ever appends an event, so this is
     # never gated on --live-autonomy either (no Meta/IG/FB call anywhere).
-    register(SocialCaptionDraft())
-    # Variant A (draft-only) unless live-autonomy AND the Buffer gate are open.
+    # Variant A (draft-only) unless live-autonomy AND the Buffer gates are open.
+    register(SocialCaptionDraft(_build_buffer_publisher(live_autonomy)))
     register(SocialPinterestPost(_build_buffer_publisher(live_autonomy)))
 
     db = db_path()
@@ -671,7 +671,7 @@ def _register_autorenew(live_autonomy: bool, *, announce: bool = True) -> None:
     register(OpsTuneThreshold())
     register(_catalog_expand(adapter))
     register(ListingGapfillReprint(build_print_file_host(live=False)))
-    register(SocialCaptionDraft())
+    register(SocialCaptionDraft(_build_buffer_publisher(live_autonomy)))
     register(SocialPinterestPost(_build_buffer_publisher(live_autonomy)))
 
 

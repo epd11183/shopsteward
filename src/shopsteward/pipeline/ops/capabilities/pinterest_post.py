@@ -268,7 +268,8 @@ class SocialPinterestPost:
 
     def _undo_buffer(self, conn: sqlite3.Connection, user_id: int, action: ProposedAction) -> None:
         assert self._publisher is not None
-        _bp.undo_pin(conn, user_id, action, self._publisher, get_ops_config(conn, user_id))
+        cfg = get_ops_config(conn, user_id)
+        _bp.undo(conn, user_id, action, self._publisher, cfg, platform="Pinterest")
 
     def propose(
         self, conn: sqlite3.Connection, user_id: int, cfg: OpsConfig
@@ -342,15 +343,27 @@ class SocialPinterestPost:
 
         if via_buffer:
             assert self._publisher is not None
-            return _bp.publish_pin(
+            return _bp.publish(
                 conn,
                 user_id,
                 action,
                 self._publisher,
                 cfg,
-                copy=valid,
-                destination_url=destination_url,
+                kind="pin",
+                service="pinterest",
+                listing_id=listing_id,
+                drafted_fields={
+                    "title": valid["title"],
+                    "description": valid["description"],
+                    "alt_text": valid["alt_text"],
+                    "board_key": valid["board_key"],
+                    "destination_url": destination_url,
+                },
+                text=valid["description"],
                 image_url=target.image_url,
+                board_name=cfg.pinterest.boards[valid["board_key"]],
+                pin_title=valid["title"],
+                pin_url=destination_url,
             )
 
         append(

@@ -141,6 +141,7 @@ from datetime import UTC, datetime, timedelta
 from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.core.events import Event, append, read_all
 from shopsteward.pipeline.ops import analytics
+from shopsteward.pipeline.ops import buffer_publish as _bp
 from shopsteward.pipeline.ops import social as _social
 from shopsteward.pipeline.ops.config import get_ops_config, ops_config_hash
 from shopsteward.pipeline.ops.models import (
@@ -262,8 +263,40 @@ def _proven_candidates(
     return out
 
 
+def _publish_image(
+    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, listing_id: int, channel: str
+) -> str | None:
+    """Image URL for a Buffer post on `channel`, or None when the listing can't
+    be published there. Drop, never crop: no image, unknown or too-small
+    dimensions, and (Instagram) an aspect outside the configured range are all
+    dropped, never transformed."""
+    url = _social.image_url(conn, user_id, listing_id)
+    if url is None:
+        return None
+    edge = _social.image_long_edge(conn, user_id, listing_id)
+    if edge is None or edge < cfg.buffer.min_long_edge_px:
+        return None
+    ch_cfg = cfg.buffer.channels.get(channel)
+    if ch_cfg is None:
+        return None
+    if ch_cfg.aspect_min is not None or ch_cfg.aspect_max is not None:
+        aspect = _social.image_aspect(conn, user_id, listing_id)
+        if aspect is None:
+            return None
+        if ch_cfg.aspect_min is not None and aspect < ch_cfg.aspect_min:
+            return None
+        if ch_cfg.aspect_max is not None and aspect > ch_cfg.aspect_max:
+            return None
+    return url
+
+
 def _candidates(
-    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, *, now: datetime | None = None
+    conn: sqlite3.Connection,
+    user_id: int,
+    cfg: OpsConfig,
+    *,
+    now: datetime | None = None,
+    publishing: bool = False,
 ) -> dict[str, ListingSales]:
     """target_id (`"{listing_id}:{channel}"`) -> the grounding facts for it
     -- the ONE grounding function shared by materialize()/execute() (M8b
@@ -281,7 +314,28 @@ def _candidates(
             out.update(
                 _proven_candidates(conn, user_id, cfg, channel, channel_cfg.cooldown_days, now)
             )
-    return out
+    # A (listing, channel) with an UNRESOLVED Buffer publish intent is never a
+    # candidate, whatever the cooldown says (buffer_publish module docstring).
+    blocked = _bp.blocked_captions(conn, user_id)
+    kept: dict[str, ListingSales] = {}
+    for target_id, sales in out.items():
+        listing_id, channel = _parse_target_id(target_id) or (0, "")
+        if (listing_id, channel) in blocked:
+            continue
+        if publishing and _publish_image(conn, user_id, cfg, listing_id, channel) is None:
+            continue
+        kept[target_id] = sales
+    return kept
+
+
+def _listing_url(listing_id: int, action_id: str, channel: str) -> str:
+    """Deterministic UTM listing URL (never LLM-written); `utm_content` is the
+    join key `buffer_publish.match_posts` reconciles on."""
+    return (
+        f"https://www.etsy.com/listing/{listing_id}"
+        f"?utm_source={channel}&utm_medium=social&utm_campaign=shopsteward"
+        f"&utm_content={action_id[:12]}"
+    )
 
 
 def _stale_check(
@@ -392,11 +446,26 @@ class SocialCaptionDraft:
     # registry.py's invariant 2 enforces there is no config path that can
     # raise this Python ceiling.
     max_tier = Tier.PROPOSE
-    policy_verified = True  # same approved LLM use as listing.seo_edit copy; nothing is published.
+    policy_verified = True  # A: nothing published. B: policy rows B1/B3 + operator Q1 (resolved).
     # No undo path: allowed because max_tier is not below PROPOSE
     # (registry.py invariant 1) -- the reversal is "don't post it", never a
     # programmatic undo (listing.gapfill_reprint's own precedent).
     undo = None
+
+    def __init__(self, publisher: _bp.BufferPublisherAdapter | None = None) -> None:
+        # Publisher None (Variant A) is exactly the class defaults above. With
+        # a publisher (Variant B, design 2026-11-22 §4) the ceiling rises to
+        # NOTIFY and undo is deletePost while still queued.
+        self._publisher = publisher
+        if publisher is not None:
+            self.max_tier = Tier.NOTIFY
+            self.undo = self._undo_buffer  # type: ignore[assignment]
+
+    def _undo_buffer(self, conn: sqlite3.Connection, user_id: int, action: ProposedAction) -> None:
+        assert self._publisher is not None
+        cfg = get_ops_config(conn, user_id)
+        channel = (_parse_target_id(action.target_id) or (0, "the channel"))[1]
+        _bp.undo(conn, user_id, action, self._publisher, cfg, platform=channel)
 
     def propose(
         self, conn: sqlite3.Connection, user_id: int, cfg: OpsConfig
@@ -406,7 +475,8 @@ class SocialCaptionDraft:
     def materialize(
         self, conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, intent: ProposalIntent
     ) -> ProposedAction | None:
-        target = _candidates(conn, user_id, cfg).get(intent.target_id)
+        publishing = self._publisher is not None
+        target = _candidates(conn, user_id, cfg, publishing=publishing).get(intent.target_id)
         if target is None:
             return None  # ungrounded (hallucinated, non-selling, cooling down, or malformed)
         parsed = _parse_target_id(intent.target_id)
@@ -422,7 +492,11 @@ class SocialCaptionDraft:
         today = today_date.isoformat()
         cfg_hash = ops_config_hash(cfg)
         expires_at = (today_date + timedelta(days=cfg.autonomy.proposal_ttl_days)).isoformat()
-        return _build_action(target, channel, caption, cfg_hash, today, expires_at)
+        action = _build_action(target, channel, caption, cfg_hash, today, expires_at)
+        if publishing:
+            action.params["publish_via"] = "buffer"
+            action.undo_available = True
+        return action
 
     def execute(
         self, conn: sqlite3.Connection, user_id: int, action: ProposedAction
@@ -441,6 +515,18 @@ class SocialCaptionDraft:
                 "refusing caption draft"
             )
         listing_id, channel = parsed
+        via_buffer = action.params.get("publish_via") == "buffer"
+        if via_buffer:
+            if self._publisher is None:
+                # Never silently execute a publish-intent action as a draft.
+                raise ValueError(
+                    f"action {action.action_id}: publish_via=buffer needs --live-autonomy "
+                    "and the Buffer live gate -- refusing"
+                )
+            # FIRST, before revalidation: a re-run returns the recorded result.
+            queued = _bp.find_queued(conn, user_id, action.action_id)
+            if queued is not None:
+                return _bp.result_of(queued)
         cfg = get_ops_config(conn, user_id)
         # H2a: `_stale_check()`, NOT `_candidates()` -- genuine per-target
         # staleness only (listing gone/inactive, channel removed). Cooldown/
@@ -466,6 +552,44 @@ class SocialCaptionDraft:
             raise ValueError(
                 f"action {action.action_id}: params.caption is no longer valid -- "
                 "refusing caption draft"
+            )
+
+        if via_buffer:
+            assert self._publisher is not None
+            if (listing_id, channel) in _bp.blocked_captions(conn, user_id):
+                raise ValueError(
+                    f"listing {listing_id} ({channel}): an earlier Buffer publish is unresolved "
+                    "-- buffer-sync must reconcile it first"
+                )
+            image_url = _publish_image(conn, user_id, cfg, listing_id, channel)
+            if image_url is None:
+                raise ValueError(
+                    f"listing {listing_id} ({channel}): no publishable image (missing, too "
+                    "small, or outside the channel's aspect range) -- refusing"
+                )
+            fields: dict = {
+                "channel": channel,
+                "caption": caption,
+                "title": target.title,
+                "action_id": action.action_id,
+            }
+            text = caption
+            if cfg.buffer.channels[channel].append_link:
+                url = _listing_url(listing_id, action.action_id, channel)
+                fields["destination_url"] = url
+                text = f"{caption}\n\n{url}"  # the URL is the LAST thing in the text
+            return _bp.publish(
+                conn,
+                user_id,
+                action,
+                self._publisher,
+                cfg,
+                kind="caption",
+                service=channel,
+                listing_id=listing_id,
+                drafted_fields=fields,
+                text=text,
+                image_url=image_url,
             )
 
         # The ONLY effect of this capability: an assist artifact for the

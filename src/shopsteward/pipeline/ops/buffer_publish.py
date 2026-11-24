@@ -43,6 +43,8 @@ from shopsteward.pipeline.ops.timeutil import parse_ts
 QUEUED = "social.buffer_queued"
 DELETED = "social.buffer_deleted"
 LOST = "social.buffer_lost"
+PIN_DRAFTED = "social.pin_drafted"
+CAPTION_DRAFTED = "social.caption_drafted"
 _UTM = re.compile(r"utm_content=([0-9a-f]{12})")
 _RECONCILE_LOOKBACK = timedelta(minutes=5)
 _SLOT_HORIZON_DAYS = 60
@@ -59,6 +61,15 @@ class Intent:
     @property
     def action_id(self) -> str:
         return self.event.payload["action_id"]
+
+    @property
+    def kind(self) -> str:
+        return "caption" if self.event.type == CAPTION_DRAFTED else "pin"
+
+    @property
+    def exact_text(self) -> str | None:
+        """A caption's own text, for channels whose post carries no UTM link."""
+        return self.event.payload.get("caption") if self.kind == "caption" else None
 
     @property
     def drafted_at(self) -> datetime:
@@ -85,7 +96,8 @@ def unresolved_intents(conn: sqlite3.Connection, user_id: int) -> list[Intent]:
     }
     return [
         Intent(e)
-        for e in read_all(conn, "social.pin_drafted")
+        for t in (PIN_DRAFTED, CAPTION_DRAFTED)
+        for e in read_all(conn, t)
         if e.user_id == user_id
         and e.payload.get("publish_via") == "buffer"
         and e.payload.get("action_id") not in resolved
@@ -93,22 +105,46 @@ def unresolved_intents(conn: sqlite3.Connection, user_id: int) -> list[Intent]:
 
 
 def blocked_listings(conn: sqlite3.Connection, user_id: int) -> set[int]:
-    return {i.event.payload["listing_id"] for i in unresolved_intents(conn, user_id)}
+    """Listings with an unresolved PIN intent (captions block per channel, below)."""
+    return {
+        i.event.payload["listing_id"] for i in unresolved_intents(conn, user_id) if i.kind == "pin"
+    }
 
 
-def match_posts(posts: list[BufferPost], action_id: str) -> list[BufferPost]:
-    """Posts whose pin_url/text carries `utm_content == action_id[:12]`."""
+def blocked_captions(conn: sqlite3.Connection, user_id: int) -> set[tuple[int, str]]:
+    """(listing_id, channel) pairs with an unresolved caption intent."""
+    return {
+        (i.event.payload["listing_id"], i.event.payload["channel"])
+        for i in unresolved_intents(conn, user_id)
+        if i.kind == "caption"
+    }
+
+
+def match_posts(
+    posts: list[BufferPost], action_id: str, exact_text: str | None = None
+) -> list[BufferPost]:
+    """Posts whose pin_url/text carries `utm_content == action_id[:12]`, or (a
+    caption with no link, i.e. Instagram) whose text equals `exact_text`."""
     prefix = action_id[:12]
-    return [p for p in posts if prefix in _UTM.findall(f"{p.pin_url or ''} {p.text}")]
+    return [
+        p
+        for p in posts
+        if prefix in _UTM.findall(f"{p.pin_url or ''} {p.text}")
+        or (exact_text is not None and p.text == exact_text)
+    ]
 
 
 def _find_post(
-    adapter: BufferAdapter, channel_id: str, action_id: str, drafted_at: datetime
+    adapter: BufferAdapter,
+    channel_id: str,
+    action_id: str,
+    drafted_at: datetime,
+    exact_text: str | None = None,
 ) -> BufferPost | None:
     posts = adapter.list_posts(
         channel_ids=[channel_id], created_since=drafted_at - _RECONCILE_LOOKBACK
     )
-    hits = match_posts(posts, action_id)
+    hits = match_posts(posts, action_id, exact_text)
     return hits[0] if len(hits) == 1 else None  # ambiguous == not found: never create
 
 
@@ -118,6 +154,7 @@ def _queued_event(
     intent_payload: dict,
     post: BufferPost,
     *,
+    kind: str,
     reconciled: bool,
 ) -> Event:
     return append(
@@ -128,7 +165,7 @@ def _queued_event(
             payload={
                 "action_id": intent_payload["action_id"],
                 "listing_id": intent_payload["listing_id"],
-                "kind": "pin",
+                "kind": kind,
                 "buffer_post_id": post.post_id,
                 "channel_id": intent_payload["channel_id"],
                 "channel": intent_payload["channel"],
@@ -162,9 +199,9 @@ def reconcile(
         posts = adapter.list_posts(
             channel_ids=[p["channel_id"]], created_since=intent.drafted_at - _RECONCILE_LOOKBACK
         )
-        hits = match_posts(posts, intent.action_id)
+        hits = match_posts(posts, intent.action_id, intent.exact_text)
         if len(hits) == 1:
-            _queued_event(conn, user_id, p, hits[0], reconciled=True)
+            _queued_event(conn, user_id, p, hits[0], kind=intent.kind, reconciled=True)
             resolved += 1
         elif not hits and now - intent.drafted_at > window:
             append(
@@ -206,34 +243,41 @@ def result_of(queued: Event) -> ExecutionResult:
     )
 
 
-def publish_pin(
+def publish(
     conn: sqlite3.Connection,
     user_id: int,
     action: ProposedAction,
     publisher: BufferPublisherAdapter,
     cfg: OpsConfig,
     *,
-    copy: dict[str, str],
-    destination_url: str,
+    kind: str,  # "pin" | "caption"
+    service: str,  # key into cfg.buffer.channels
+    listing_id: int,
+    drafted_fields: dict,  # the capability's own copy record (+ join keys)
+    text: str,
     image_url: str,
+    board_name: str | None = None,  # pinterest only
+    pin_title: str | None = None,
+    pin_url: str | None = None,
     now: datetime | None = None,
 ) -> ExecutionResult:
     """Steps 2-4 of the module docstring (step 1, the queued check, and the
     eligibility revalidation are done by the caller, in that order)."""
     now = now or datetime.now(UTC)
-    ch_cfg = cfg.buffer.channels.get("pinterest")
+    ch_cfg = cfg.buffer.channels.get(service)
     if ch_cfg is None:
-        raise ValueError("no buffer.channels.pinterest config -- refusing to publish")
+        raise ValueError(f"no buffer.channels.{service} config -- refusing to publish")
     mine = [c for c in publisher.list_channels() if c.service == ch_cfg.service]
     if len(mine) != 1:
         raise ValueError(f"expected exactly one {ch_cfg.service} channel, found {len(mine)}")
     channel = mine[0]
     if channel.is_disconnected or channel.is_locked or channel.is_queue_paused:
         raise ValueError(f"{ch_cfg.service} channel is disconnected, locked or paused")
-    board_name = cfg.pinterest.boards[copy["board_key"]]
-    board_id = channel.boards.get(board_name)
-    if board_id is None:
-        raise ValueError(f"board {copy['board_key']!r} not found on the Pinterest channel")
+    board_id = None
+    if board_name is not None:
+        board_id = channel.boards.get(board_name)
+        if board_id is None:
+            raise ValueError(f"board {board_name!r} not found on the {ch_cfg.service} channel")
 
     scheduled = publisher.list_posts(
         channel_ids=[channel.channel_id],
@@ -241,7 +285,7 @@ def publish_pin(
         statuses=["scheduled"],
     )
     if len(scheduled) >= ch_cfg.max_queue_depth:
-        raise ValueError("Buffer queue is full for the Pinterest channel")
+        raise ValueError(f"Buffer queue is full for the {ch_cfg.service} channel")
     taken = {parse_ts(p.due_at.isoformat()) for p in scheduled if p.due_at}
     taken |= {
         parse_ts(e.payload["due_at"])
@@ -255,51 +299,52 @@ def publish_pin(
     intent_payload = {
         "action_id": action.action_id,
         "publish_via": "buffer",
-        "listing_id": int(action.target_id),
-        "title": copy["title"],
-        "description": copy["description"],
-        "alt_text": copy["alt_text"],
-        "board_key": copy["board_key"],
-        "destination_url": destination_url,
+        "listing_id": listing_id,
+        **drafted_fields,
         "image_url": image_url,
         "channel_id": channel.channel_id,
         "channel": ch_cfg.service,
         "due_at": due_at.isoformat(),
         "drafted_at": now.isoformat(),
     }
-    append(conn, Event(user_id=user_id, type="social.pin_drafted", payload=intent_payload))
+    drafted_type = CAPTION_DRAFTED if kind == "caption" else PIN_DRAFTED
+    append(conn, Event(user_id=user_id, type=drafted_type, payload=intent_payload))
 
     spec = BufferPostSpec(
         channel_id=channel.channel_id,
-        text=copy["description"],
+        text=text,
         image_url=image_url,
         mode="customScheduled",
         due_at=due_at,
         scheduling_type="automatic",
-        pin_title=copy["title"],
-        pin_url=destination_url,
+        pin_title=pin_title,
+        pin_url=pin_url,
         pin_board_service_id=board_id,
         ai_assisted=True,  # true of the copy; isAiGenerated stays false (operator Q1)
     )
     try:
         post = publisher.create_post(spec)
     except BufferUnknownOutcome as exc:
-        found = _find_post(publisher, channel.channel_id, action.action_id, now)
+        exact = drafted_fields.get("caption") if kind == "caption" else None
+        found = _find_post(publisher, channel.channel_id, action.action_id, now, exact)
         if found is None:
             raise ValueError(
                 f"Buffer create outcome unknown and the post was not found; intent left "
                 f"unresolved for buffer-sync to reconcile ({exc})"
             ) from exc
         post = found
-    return result_of(_queued_event(conn, user_id, intent_payload, post, reconciled=False))
+    queued = _queued_event(conn, user_id, intent_payload, post, kind=kind, reconciled=False)
+    return result_of(queued)
 
 
-def undo_pin(
+def undo(
     conn: sqlite3.Connection,
     user_id: int,
     action: ProposedAction,
     publisher: BufferPublisherAdapter,
     cfg: OpsConfig,
+    *,
+    platform: str,
 ) -> None:
     """deletePost only while the post is still queued; after send Buffer's
     delete would not remove it from the network, so refuse clearly."""
@@ -315,8 +360,8 @@ def undo_pin(
     if post is None or post.status != "scheduled":
         state = "not found" if post is None else post.status
         raise ValueError(
-            f"Buffer post is {state}, not queued -- remove it on Pinterest directly "
-            "(deleting in Buffer does not remove a sent pin)"
+            f"Buffer post is {state}, not queued -- remove it on {platform} directly "
+            "(deleting in Buffer does not remove a sent post)"
         )
     publisher.delete_post(post.post_id)
     append(
