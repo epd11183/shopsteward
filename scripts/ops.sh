@@ -5,6 +5,10 @@
 # .claude/settings.local.json, and the 2026-11-24 run missed three gates.
 # Usage (from the repo root): scripts/ops.sh sync --live
 set -euo pipefail
+if [ "${1:-}" = "serve" ]; then
+  echo "scripts/ops.sh refuses serve: the UI's publish endpoints would write live. Use uv run shopsteward serve." >&2
+  exit 2
+fi
 cd "$(dirname "$0")/.."
 export PYTHONIOENCODING=utf-8
 export SHOPSTEWARD_LIVE_ETSY_READ=1
