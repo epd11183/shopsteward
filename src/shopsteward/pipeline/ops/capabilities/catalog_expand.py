@@ -53,9 +53,10 @@ pace slot -- real work happened -- and the landed file is never re-proposed.
 has nothing to undo.
 
 **`precondition_ok`** is the control preventing the worst realistic failure
-mode here: fixture copy, or an unverifiable copy check, reaching a REAL Etsy
-listing (design §12.6). It requires BOTH `live_copy` (live_gate.live_copy_open())
-and `live_check` (the live copy checker is available). Independently, the
+mode here: fixture copy, a fixture photo score, or an unverifiable copy check,
+reaching a REAL Etsy listing (design §12.6). It requires `live_copy`
+(live_gate.live_copy_open()), `live_check` (the live copy checker is
+available) and `live_vision` (the live scorer `expand_one` runs first). Independently, the
 fixture checker never approves, so even a direct `execute()` cannot publish
 unverified copy.
 
@@ -65,8 +66,9 @@ capability here follows it), per design §3's steps:
 
 1. `{}` if disabled or the folder is missing.
 2. Scan the folder (`adopt.scan_local_files` -- sorted, JPEG/TIFF).
-3. Skip anything already a landing file (`landing._known_file_ids`) --
-   permanent execution idempotency for free (`adopt`'s own trick).
+3. Skip a landing file only once its expansion is finished (titled draft, or
+   copy refused MAX_COPY_REFUSALS times). A file ingested by a failed attempt
+   stays a candidate and is retried.
 4. Skip anything with a prior `action.rejected` for THIS capability
    (`adopt._revoked` precedent) -- **load-bearing** (design §7): for every
    OTHER capability here, rejection means "the agent proposed something
@@ -81,8 +83,15 @@ capability here follows it), per design §3's steps:
 6. Near-duplicate guard: pHash against other candidates this run and every
    already-registered landing file, both local, zero network.
 
-Sorted by path (already true of step 2's output) -- deterministic ordering,
-no truncation.
+7. Attempt cap: a file with MAX_ATTEMPTS failed attempts (`action.failed`, or
+   `action.refused` with reason `execute_revalidation_error`, for this
+   capability and this file) is no longer a candidate -- **needs operator:
+   move it out of the folder or fix it.** Without the cap a file that keeps
+   failing is never executed, so it never counts toward pace and, sorted by
+   path, could hold every weekly slot forever.
+
+Sorted by failed-attempt count (never-attempted files first), then path (step
+2's order) -- deterministic ordering, no truncation.
 
 **Pace is deliberately NOT step 7 here anymore** (H1, guardrail review
 2026-08-25, third instance of this failure class): this function doubles as
@@ -128,13 +137,15 @@ from PIL import Image
 
 from shopsteward.adapters.etsy.interface import EtsyWriteAdapter
 from shopsteward.adapters.planner.interface import ProposalIntent
-from shopsteward.adapters.vision.interface import CopyChecker
+from shopsteward.adapters.vision.interface import CopyChecker, VisionAdapter
 from shopsteward.core.events import Event, append, read_all
 from shopsteward.pipeline import tuning
 from shopsteward.pipeline.listings import adopt, archive, asset_store_config, gate3
 from shopsteward.pipeline.listings.drafts import build_drafts
 from shopsteward.pipeline.listings.photo_match import hamming_distance, phash_bytes
 from shopsteward.pipeline.listings.readback import run_readback
+from shopsteward.pipeline.listings.vision_copy import already_scored, score_photo
+from shopsteward.pipeline.llm_ledger import current_month_prefix, monthly_spend
 from shopsteward.pipeline.mockup_hooks import get as mockup_hook
 from shopsteward.pipeline.ops.config import ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
@@ -147,6 +158,7 @@ _CAPABILITY = "listing.catalog_expand"
 # protocol), so this is a plain constant rather than a tuning-profile read
 # that could raise on an unseeded profile.
 _ALLOWED_FORMATS = ("JPEG", "TIFF")
+MAX_ATTEMPTS = 3
 
 
 def expand_one(
@@ -156,8 +168,13 @@ def expand_one(
     *,
     adapter: EtsyWriteAdapter,
     live_copy: bool,
+    vision: VisionAdapter,
 ) -> str:
-    """The four-call chain (module docstring / design §0/§2C). Returns the
+    """The chain (module docstring / design §0/§2C), preceded by scoring this
+    one file (digital copy needs a `photo.scored` verdict; nothing else on the
+    ops path produces one). Idempotent on retry: a known file is re-used,
+    `archive_master` no-ops on the same sha256, `run_mockups` skips an existing
+    set_key, `build_drafts` fills forward an untitled draft. Returns the
     resulting `draft_id`. Raises if the file fails landing validation (never
     silently skips -- a caller that got this far already decided this photo
     should become a listing) or if, unexpectedly, the build chain completes
@@ -196,6 +213,7 @@ def expand_one(
         height=height,
     )
 
+    _score_file(conn, user_id, file_id, vision)
     mockup_hook("run_mockups")(conn, user_id, photo_id=photo_id)
     report = build_drafts(
         conn, user_id, photo_id=photo_id, live_copy=live_copy, etsy_adapter=adapter
@@ -227,6 +245,33 @@ def expand_one(
             f"(file_id={file_id!r}): {reasons}"
         )
     return row["draft_id"]
+
+
+def _score_file(
+    conn: sqlite3.Connection, user_id: int, file_id: str, vision: VisionAdapter
+) -> None:
+    """Vision-score this ONE landing file unless already scored or over the
+    monthly soft cap. A failure/cap leaves it unscored: build_drafts then skips
+    copy and expand_one raises its retryable "no usable draft"."""
+    from shopsteward.pipeline.projections import rebuild_pipeline
+
+    profile = tuning.get_profile(conn, user_id)
+    rebuild_pipeline(conn)
+    row = conn.execute(
+        "SELECT path, photo_id FROM proj_landing_files WHERE user_id=? AND file_id=?",
+        (user_id, file_id),
+    ).fetchone()
+    if row is None:
+        return
+    sid = row["photo_id"] or f"file-{file_id[:12]}"
+    if sid in already_scored(conn, user_id):
+        return
+    if monthly_spend(conn, user_id, current_month_prefix()) >= profile.vision.monthly_soft_cap_usd:
+        return
+    if score_photo(
+        conn, user_id, sid, row["path"], adapter=vision, model=profile.vision.triage_model
+    ):
+        rebuild_pipeline(conn)
 
 
 def _rejected_file_ids(conn: sqlite3.Connection, user_id: int) -> set[str]:
@@ -285,23 +330,67 @@ def _executed_this_iso_week(conn: sqlite3.Connection, user_id: int, today: date)
 # listings (this shop's scale); upgrade to a stored-hash projection column
 # if the archive/landing catalog ever grows enough for this to show up in
 # `ops run`'s wall-clock time.
-def _existing_landing_hashes(conn: sqlite3.Connection, user_id: int) -> list[int]:
+def _existing_landing_hashes(conn: sqlite3.Connection, user_id: int) -> list[tuple[str, int]]:
+    """(file_id, pHash) per registered landing file; the id lets a retried file
+    skip its OWN landing row in the duplicate guard."""
     try:
         rows = conn.execute(
-            "SELECT path FROM proj_landing_files WHERE user_id=?", (user_id,)
+            "SELECT file_id, path FROM proj_landing_files WHERE user_id=?", (user_id,)
         ).fetchall()
     except sqlite3.OperationalError:
         # proj_landing_files (core pipeline) hasn't been rebuilt yet in this
         # conn -- governor._active_listing_count precedent: no catalog to
         # protect against, not a crash.
         return []
-    hashes: list[int] = []
+    hashes: list[tuple[str, int]] = []
     for row in rows:
         try:
-            hashes.append(phash_bytes(Path(row["path"]).read_bytes()))
+            hashes.append((row["file_id"], phash_bytes(Path(row["path"]).read_bytes())))
         except (OSError, ValueError):
             continue  # unreadable/missing local file -- never fatal to a propose() scan
     return hashes
+
+
+def _finished_file_ids(conn: sqlite3.Connection, user_id: int) -> set[str]:
+    """Landing file ids whose expansion is over: a titled draft (completed), an
+    adopted/pushed one (`etsy_listing_id` set, title NULL -- a live listing's
+    photo), or an untitled one whose copy was refused MAX_COPY_REFUSALS times
+    (operator review). A known file in neither state failed mid-chain and may be retried."""
+    from shopsteward.pipeline.listings.copy import MAX_COPY_REFUSALS, copy_refusals
+    from shopsteward.pipeline.listings.projections import rebuild_listings
+
+    rebuild_listings(conn)  # ops runs don't rebuild this projection
+    return {
+        r["landing_file_id"]
+        for r in conn.execute(
+            "SELECT draft_id, landing_file_id, title, etsy_listing_id FROM proj_listing_drafts "
+            "WHERE user_id=? AND landing_file_id IS NOT NULL",
+            (user_id,),
+        )
+        if r["title"] is not None
+        or r["etsy_listing_id"] is not None
+        or copy_refusals(conn, user_id, r["draft_id"]) >= MAX_COPY_REFUSALS
+    }
+
+
+def _failed_attempts(conn: sqlite3.Connection, user_id: int) -> dict[str, int]:
+    """file_id -> failed catalog_expand attempts (`action.failed`, or
+    `action.refused` reason `execute_revalidation_error`). action -> target via
+    `action.proposed` and `action.proposal_deduped` (both carry target_id)."""
+    target_of: dict[str, str] = {}
+    for etype in ("action.proposed", "action.proposal_deduped"):
+        for e in read_all(conn, etype):
+            if e.user_id == user_id and e.payload.get("capability") == _CAPABILITY:
+                target_of[e.payload["action_id"]] = str(e.payload["target_id"])
+    counts: dict[str, int] = {}
+    for e in read_all(conn, "action."):
+        failed = e.type == "action.failed" or (
+            e.type == "action.refused" and e.payload.get("reason") == "execute_revalidation_error"
+        )
+        target = target_of.get(e.payload.get("action_id", ""))
+        if e.user_id == user_id and failed and target is not None:
+            counts[target] = counts.get(target, 0) + 1
+    return counts
 
 
 def _candidates(
@@ -329,7 +418,10 @@ def _candidates(
     )
 
     known_ids = _known_file_ids(conn, user_id)
+    if known_ids:
+        known_ids &= _finished_file_ids(conn, user_id)  # unfinished ones stay candidates
     rejected_ids = _rejected_file_ids(conn, user_id)
+    attempts = _failed_attempts(conn, user_id)
     existing_hashes = _existing_landing_hashes(conn, user_id)
     candidate_hashes: list[int] = []
 
@@ -339,7 +431,11 @@ def _candidates(
 
     for path in adopt.scan_local_files(folder, ce.recursive):
         file_id = _sha256_file(path)
-        if file_id in known_ids or file_id in rejected_ids:
+        if (
+            file_id in known_ids
+            or file_id in rejected_ids
+            or attempts.get(file_id, 0) >= MAX_ATTEMPTS
+        ):
             continue
 
         fmt = _SUFFIX_FORMATS.get(path.suffix.lower())
@@ -355,7 +451,11 @@ def _candidates(
             file_hash = phash_bytes(path.read_bytes())
         except ValueError:
             continue  # undecodable image -- never a candidate
-        if any(hamming_distance(file_hash, h) <= ce.dedup_max_distance for h in existing_hashes):
+        if any(
+            hamming_distance(file_hash, h) <= ce.dedup_max_distance
+            for fid, h in existing_hashes
+            if fid != file_id  # a retried file's own landing row is not its duplicate
+        ):
             continue  # already in the catalog under a different name/crop
         if any(hamming_distance(file_hash, h) <= ce.dedup_max_distance for h in candidate_hashes):
             continue  # duplicate of another candidate already picked THIS run
@@ -381,7 +481,8 @@ def _candidates(
             expires_at=expires_at,
             params={"path": str(path)},
         )
-    return out
+    # stable sort: never-attempted files ahead of retried ones, path order within
+    return dict(sorted(out.items(), key=lambda kv: attempts.get(kv[0], 0)))
 
 
 class ListingCatalogExpand:
@@ -398,14 +499,17 @@ class ListingCatalogExpand:
         live_copy: bool,
         checker: CopyChecker,
         live_check: bool,
+        vision: VisionAdapter,
+        live_vision: bool,
     ) -> None:
         self._adapter = adapter
         self._live_copy = live_copy
+        self._vision = vision
         self._checker = checker
         # The control preventing fixture copy / an unverifiable copy check from
         # reaching a real Etsy listing (module docstring) -- governor.py's own
         # `getattr(cap, "precondition_ok", True)` -> RefusalReason.PRECONDITION.
-        self.precondition_ok = live_copy and live_check
+        self.precondition_ok = live_copy and live_check and live_vision
 
     def propose(
         self, conn: sqlite3.Connection, user_id: int, cfg: OpsConfig
@@ -451,7 +555,14 @@ class ListingCatalogExpand:
             )
 
         path = Path(str(action.params["path"]))
-        draft_id = expand_one(conn, user_id, path, adapter=self._adapter, live_copy=self._live_copy)
+        draft_id = expand_one(
+            conn,
+            user_id,
+            path,
+            adapter=self._adapter,
+            live_copy=self._live_copy,
+            vision=self._vision,
+        )
 
         # From here a draft exists on Etsy: nothing below may raise (the file
         # is landed, so a raise could never be retried -- module docstring).

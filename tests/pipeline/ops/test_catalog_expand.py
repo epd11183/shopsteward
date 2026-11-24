@@ -15,8 +15,18 @@ from PIL import Image
 from shopsteward.adapters.copy.fake import FixtureCopyAdapter
 from shopsteward.adapters.etsy.fake import FakeEtsyWriteAdapter
 from shopsteward.adapters.planner.interface import ProposalIntent
-from shopsteward.adapters.vision.fake import FakeCopyChecker, FixtureCopyChecker
-from shopsteward.adapters.vision.interface import CopyCheckResult, CopyCheckVerdict
+from shopsteward.adapters.vision.fake import (
+    FakeCopyChecker,
+    FakeVisionAdapter,
+    FixtureCopyChecker,
+    FixtureVisionAdapter,
+)
+from shopsteward.adapters.vision.interface import (
+    CopyCheckResult,
+    CopyCheckVerdict,
+    VisionResult,
+    VisionVerdict,
+)
 from shopsteward.core.db import connect, migrate
 from shopsteward.core.events import Event, append, read_all
 from shopsteward.core.projections import rebuild as rebuild_core
@@ -112,10 +122,15 @@ def _bad(*problems: str) -> CopyCheckResult:
     return CopyCheckResult(verdict=CopyCheckVerdict(ok=False, problems=list(problems)))
 
 
-def _cap(adapter, *results) -> ListingCatalogExpand:
+def _cap(adapter, *results, vision=None) -> ListingCatalogExpand:
     """Live-gates open (precondition_ok) with a queued fake copy checker."""
     return ListingCatalogExpand(
-        adapter, live_copy=True, checker=FakeCopyChecker(list(results)), live_check=True
+        adapter,
+        live_copy=True,
+        checker=FakeCopyChecker(list(results)),
+        live_check=True,
+        vision=vision or FixtureVisionAdapter(),
+        live_vision=True,
     )
 
 
@@ -272,7 +287,12 @@ def test_fixture_checker_never_publishes(conn, tmp_path, offline_copy):
     adapter = FakeEtsyWriteAdapter()
     # Gates closed: the governor refuses before anything is built.
     closed = ListingCatalogExpand(
-        adapter, live_copy=True, checker=FixtureCopyChecker(), live_check=False
+        adapter,
+        live_copy=True,
+        checker=FixtureCopyChecker(),
+        live_check=False,
+        vision=FixtureVisionAdapter(),
+        live_vision=False,
     )
     assert closed.precondition_ok is False
     cfg, _ = _auto_run(conn, tmp_path, closed)
@@ -282,7 +302,12 @@ def test_fixture_checker_never_publishes(conn, tmp_path, offline_copy):
 
     # Even if execute() is reached directly, the fixture checker never approves.
     forced = ListingCatalogExpand(
-        adapter, live_copy=True, checker=FixtureCopyChecker(), live_check=True
+        adapter,
+        live_copy=True,
+        checker=FixtureCopyChecker(),
+        live_check=True,
+        vision=FixtureVisionAdapter(),
+        live_vision=True,
     )
     forced.execute(conn, USER_ID, action)
     (listing_id,) = adapter.listings
@@ -359,7 +384,12 @@ def test_precondition_blocks_when_live_copy_is_closed(conn, tmp_path):
     cfg = _apply_ops_cfg(conn, tmp_path, source_folder=folder)
 
     cap = ListingCatalogExpand(
-        FakeEtsyWriteAdapter(), live_copy=False, checker=FakeCopyChecker([]), live_check=True
+        FakeEtsyWriteAdapter(),
+        live_copy=False,
+        checker=FakeCopyChecker([]),
+        live_check=True,
+        vision=FixtureVisionAdapter(),
+        live_vision=True,
     )
     assert cap.precondition_ok is False
 
@@ -489,19 +519,187 @@ def test_genuine_staleness_still_raises_and_terminalizes(conn, tmp_path, offline
     assert "action.failed" in statuses
 
 
-def test_unscored_photo_is_a_retryable_refusal_not_an_executed_expansion(
-    conn, tmp_path, offline_copy
-):
-    # No vision score -> copy is skipped -> no title. That must not be recorded as a
-    # done expansion (nothing on the ops path would ever title it later).
+def _verdict_result() -> VisionResult:
+    return VisionResult(
+        verdict=VisionVerdict(
+            commercial_score=70,
+            subject="osprey",
+            strongest_room_style="coastal",
+            one_risk="glare",
+            rationale="well composed",
+            scene="An osprey perched on a bare branch against a clear sky.",
+        )
+    )
+
+
+def _one_candidate_cfg(conn, tmp_path):
     _enable_asset_store(conn, tmp_path)
     folder = tmp_path / "candidates"
-    _candidate_image(folder, "one.jpg")
-    cfg = _apply_ops_cfg_max_new_per_week(conn, tmp_path, source_folder=folder, max_new_per_week=1)
-    cap = _cap(FakeEtsyWriteAdapter())
+    photo = _candidate_image(folder, "one.jpg")
+    cfg = _apply_ops_cfg_max_new_per_week(conn, tmp_path, source_folder=folder, max_new_per_week=5)
+    return cfg, hashlib.sha256(photo.read_bytes()).hexdigest()
+
+
+def test_closed_vision_gate_refuses_at_governor_and_ingests_nothing(conn, tmp_path, offline_copy):
+    cfg, _ = _one_candidate_cfg(conn, tmp_path)
+    vision = FakeVisionAdapter([])
+    cap = ListingCatalogExpand(
+        FakeEtsyWriteAdapter(),
+        live_copy=True,
+        checker=FakeCopyChecker([]),
+        live_check=True,
+        vision=vision,
+        live_vision=False,
+    )
+    assert cap.precondition_ok is False
     register(cap)
 
     report = run(conn, USER_ID, cfg, [cap], today=TODAY, live_autonomy=True)
-    assert report.executed == 0 and report.refused == 1
-    assert read_all(conn, "action.executed") == []
-    assert read_all(conn, "action.failed") == []  # retryable, not terminal
+    assert (report.executed, report.refused) == (0, 1)
+    assert read_all(conn, "landing.file_") == []  # nothing ingested
+    assert vision.calls == []
+
+
+def test_expand_scores_the_file_then_builds_a_titled_draft(conn, tmp_path, offline_copy):
+    cfg, file_id = _one_candidate_cfg(conn, tmp_path)  # NOT pre-scored
+    vision = FakeVisionAdapter([_verdict_result()])
+    cap = _cap(FakeEtsyWriteAdapter(), _ok(), vision=vision)
+    register(cap)
+
+    report = run(conn, USER_ID, cfg, [cap], today=TODAY, live_autonomy=True)
+    assert (report.executed, report.refused, report.failed) == (1, 0, 0)
+    assert len(vision.calls) == 1
+    (scored,) = read_all(conn, "photo.scored")
+    assert scored.payload["photo_id"] == f"file-{file_id[:12]}"
+    row = conn.execute(
+        "SELECT title FROM proj_listing_drafts WHERE landing_file_id=?", (file_id,)
+    ).fetchone()
+    assert row["title"] is not None
+    assert _candidates(conn, USER_ID, cfg) == {}  # a completed expansion is not a candidate
+
+
+def test_file_ingested_by_a_failed_attempt_is_retried(conn, tmp_path, offline_copy):
+    cfg, file_id = _one_candidate_cfg(conn, tmp_path)
+    adapter = FakeEtsyWriteAdapter()
+    # attempt 1: vision down -> file ingested, no title, retryable
+    cap1 = _cap(adapter, _ok(), vision=FakeVisionAdapter([RuntimeError("vision down")]))
+    register(cap1)
+    report = run(conn, USER_ID, cfg, [cap1], today=TODAY, live_autonomy=True)
+    assert report.executed == 0
+    assert read_all(conn, "landing.file_")  # the failed attempt did ingest it
+    assert file_id in _candidates(conn, USER_ID, cfg)  # ...and it is still a candidate
+
+    # attempt 2 (the retryable refusal stays approvable): vision is back -> expands
+    action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
+    REGISTRY.clear()
+    cap2 = _cap(adapter, _ok(), vision=FakeVisionAdapter([_verdict_result()]))
+    register(cap2)
+    report = approve_action(
+        conn, USER_ID, action_id, [cap2], cfg=cfg, today=TODAY, live_autonomy=True
+    )
+    assert report.executed == 1
+    assert len(adapter.listings) == 1
+    assert len(read_all(conn, "asset.archived")) == 1  # archive no-ops on retry
+    assert _candidates(conn, USER_ID, cfg) == {}
+
+
+def test_file_with_copy_refused_max_times_is_not_a_candidate(conn, tmp_path, offline_copy):
+    from shopsteward.pipeline.listings.copy import MAX_COPY_REFUSALS
+
+    cfg, file_id = _one_candidate_cfg(conn, tmp_path)
+    cap = _cap(
+        FakeEtsyWriteAdapter(), _ok(), vision=FakeVisionAdapter([RuntimeError("vision down")])
+    )
+    register(cap)
+    run(conn, USER_ID, cfg, [cap], today=TODAY, live_autonomy=True)
+    draft = conn.execute(
+        "SELECT draft_id FROM proj_listing_drafts WHERE landing_file_id=?", (file_id,)
+    ).fetchone()
+    assert draft is not None and file_id in _candidates(conn, USER_ID, cfg)
+
+    for _ in range(MAX_COPY_REFUSALS):
+        append(
+            conn,
+            Event(
+                user_id=USER_ID,
+                type="copy.refused",
+                payload={"draft_id": draft["draft_id"], "reason": "undelivered size"},
+            ),
+        )
+    assert _candidates(conn, USER_ID, cfg) == {}
+
+
+def test_adopted_file_with_etsy_id_and_no_title_is_not_a_candidate(conn, tmp_path):
+    from shopsteward.pipeline import tuning
+    from shopsteward.pipeline.config import TUNING_PROFILE_PATH
+    from shopsteward.pipeline.listings import adopt
+
+    cfg, file_id = _one_candidate_cfg(conn, tmp_path)
+    tuning.seed(conn, USER_ID, TUNING_PROFILE_PATH)
+    assert adopt.ingest_one_file(conn, USER_ID, tmp_path / "candidates" / "one.jpg") == file_id
+    assert file_id in _candidates(conn, USER_ID, cfg)  # known, unfinished -> still a candidate
+    append(
+        conn,
+        Event(
+            user_id=USER_ID,
+            type="listing.source_adopted",
+            payload={
+                "draft_id": "adopted-1",
+                "landing_file_id": file_id,
+                "photo_id": f"file-{file_id[:12]}",
+                "etsy_listing_id": 777,
+            },
+        ),
+    )
+    assert _candidates(conn, USER_ID, cfg) == {}
+
+
+def _fail(conn, action, kind: str) -> None:
+    """One failed attempt for `action`: action.failed or the revalidation refusal."""
+    if kind == "failed":
+        append(conn, Event(user_id=USER_ID, type="action.failed", payload={"action_id": action}))
+    else:
+        append(
+            conn,
+            Event(
+                user_id=USER_ID,
+                type="action.refused",
+                payload={"action_id": action, "reason": "execute_revalidation_error"},
+            ),
+        )
+
+
+def _propose_for(conn, cfg, file_id: str, action_id: str, *, deduped: bool = False) -> None:
+    action = _candidates(conn, USER_ID, cfg)[file_id]
+    if deduped:
+        payload = {"action_id": action_id, "capability": action.capability, "target_id": file_id}
+        append(conn, Event(user_id=USER_ID, type="action.proposal_deduped", payload=payload))
+    else:
+        payload = action.model_dump() | {"action_id": action_id}
+        append(conn, Event(user_id=USER_ID, type="action.proposed", payload=payload))
+
+
+def test_three_failed_attempts_stop_a_file_being_a_candidate(conn, tmp_path):
+    cfg, file_id = _one_candidate_cfg(conn, tmp_path)
+    _propose_for(conn, cfg, file_id, "a1")
+    _propose_for(conn, cfg, file_id, "a2", deduped=True)
+    _fail(conn, "a1", "failed")
+    _fail(conn, "a1", "refused")
+    assert file_id in _candidates(conn, USER_ID, cfg)  # 2 attempts: still retried
+    _fail(conn, "a2", "refused")  # resolved through action.proposal_deduped
+    assert _candidates(conn, USER_ID, cfg) == {}
+
+
+def test_fresh_files_sort_ahead_of_retried_ones(conn, tmp_path):
+    _enable_asset_store(conn, tmp_path)
+    folder = tmp_path / "candidates"
+    a = _candidate_image(folder, "a_retried.jpg")
+    b = _candidate_image(folder, "b_fresh.jpg", ellipse=True)
+    cfg = _apply_ops_cfg_max_new_per_week(conn, tmp_path, source_folder=folder, max_new_per_week=5)
+    id_a = hashlib.sha256(a.read_bytes()).hexdigest()
+    id_b = hashlib.sha256(b.read_bytes()).hexdigest()
+    assert list(_candidates(conn, USER_ID, cfg)) == [id_a, id_b]  # path order
+
+    _propose_for(conn, cfg, id_a, "a1")
+    _fail(conn, "a1", "failed")
+    assert list(_candidates(conn, USER_ID, cfg)) == [id_b, id_a]

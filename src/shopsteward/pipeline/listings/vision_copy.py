@@ -24,12 +24,60 @@ def _synthetic_id(file_id: str) -> str:
     return f"file-{file_id[:12]}"
 
 
-def _already_scored(conn: sqlite3.Connection, user_id: int) -> set[str]:
+def already_scored(conn: sqlite3.Connection, user_id: int) -> set[str]:
     done = set()
     for e in read_all(conn, "photo.scored"):
         if e.user_id == user_id:
             done.add(e.payload.get("photo_id"))
     return done
+
+
+def score_photo(
+    conn: sqlite3.Connection,
+    user_id: int,
+    photo_id: str,
+    path: str,
+    *,
+    adapter: VisionAdapter,
+    model: str,
+) -> bool:
+    """Score ONE file and append its `llm.call` + `photo.scored` events. False
+    (nothing appended) on a vision failure -- non-fatal, callers count it.
+    Shared by `run_vision_copy` and `catalog_expand.expand_one`."""
+    try:
+        result = adapter.score_commercial(_read_bytes(path), model=model)
+    except Exception:  # noqa: BLE001 - per-photo vision failure is non-fatal
+        # A failed vision call is unledgered: its cost is unknown. Callers bound
+        # the spend (catalog_expand's attempt cap).
+        return False
+    usage = result.usage
+    if usage is not None:
+        append(
+            conn,
+            Event(
+                user_id=user_id,
+                type="llm.call",
+                payload={
+                    "feature": "vision_copy",
+                    "model": usage.model,
+                    "est_cost_usd": usage.est_cost_usd,
+                },
+            ),
+        )
+    append(
+        conn,
+        Event(
+            user_id=user_id,
+            type="photo.scored",
+            payload={
+                "photo_id": photo_id,
+                "composite": 0.0,
+                "scores": {},
+                "vision": {"triage": {"verdict": result.verdict.model_dump()}},
+            },
+        ),
+    )
+    return True
 
 
 def run_vision_copy(
@@ -51,7 +99,7 @@ def run_vision_copy(
         "WHERE user_id=? AND status='valid' ORDER BY file_id",
         (user_id,),
     ).fetchall()
-    done = set() if regenerate else _already_scored(conn, user_id)
+    done = set() if regenerate else already_scored(conn, user_id)
 
     scored = skipped = failed = 0
     cap_hit = False
@@ -63,38 +111,9 @@ def run_vision_copy(
         if monthly_spend(conn, user_id, month_prefix) >= soft_cap_usd:
             cap_hit = True
             break
-        try:
-            result = adapter.score_commercial(_read_bytes(row["path"]), model=model)
-        except Exception:  # noqa: BLE001 - per-photo vision failure is non-fatal
+        if not score_photo(conn, user_id, sid, row["path"], adapter=adapter, model=model):
             failed += 1
             continue
-        usage = result.usage
-        if usage is not None:
-            append(
-                conn,
-                Event(
-                    user_id=user_id,
-                    type="llm.call",
-                    payload={
-                        "feature": "vision_copy",
-                        "model": usage.model,
-                        "est_cost_usd": usage.est_cost_usd,
-                    },
-                ),
-            )
-        append(
-            conn,
-            Event(
-                user_id=user_id,
-                type="photo.scored",
-                payload={
-                    "photo_id": sid,
-                    "composite": 0.0,
-                    "scores": {},
-                    "vision": {"triage": {"verdict": result.verdict.model_dump()}},
-                },
-            ),
-        )
         scored += 1
         done.add(sid)  # two files matched to one photo_id: pay once
 
