@@ -61,6 +61,58 @@ def test_blown_highlights_suppress_positive_exposure():
     assert analyze_raw(_flat(0.15), knobs).exposure > 0
 
 
+def test_small_light_sources_do_not_pin_exposure():
+    # A dark venue frame with ~3% already-blown lamps still brightens; a
+    # 19% blown sky (above exposure_point_light_max) still cancels the push.
+    knobs = {
+        **KNOBS,
+        "exposure_highlight_ceiling": 0.92,
+        "exposure_clip_tolerance": 0.01,
+        "exposure_clip_tolerance_dark": 0.03,
+        "exposure_dark_median": 0.10,
+        "exposure_point_light_max": 0.05,
+    }
+    img = np.full((100, 100, 3), 0.08, dtype=np.float32)
+    img[:3, :, :] = 1.0
+    assert analyze_raw(DecodedImage(rgb=img), knobs).exposure > 1.0
+    assert analyze_raw(DecodedImage(rgb=img), KNOBS).exposure == 0.0  # old p99 guard
+    # Bright-but-unclipped area (a white dress at 0.95) is NOT a point light:
+    # the push would blow it, so it stays capped.
+    dress = np.full((100, 100, 3), 0.08, dtype=np.float32)
+    dress[:4, :, :] = 0.95
+    assert analyze_raw(DecodedImage(rgb=dress), knobs).exposure == 0.0
+    sky = np.full((16, 16, 3), 0.15, dtype=np.float32)
+    sky[:3, :, :] = 0.98
+    assert analyze_raw(DecodedImage(rgb=sky), knobs).exposure == 0.0
+
+
+def test_shadow_lift_accounts_for_exposure_push():
+    # Same dark frame: once exposure brightens it, the shadow push must shrink
+    # rather than stack a full lift on top (washed-out skin, 2026-10-26).
+    pinned = analyze_raw(_flat(0.06), {**KNOBS, "exposure_max_stops": 0.0})
+    pushed = analyze_raw(_flat(0.06), KNOBS)
+    assert pushed.exposure > 0
+    assert pushed.shadows < pinned.shadows
+
+
+def test_dark_clip_tolerance_only_for_dark_frames():
+    # Same 2% near-ceiling area: a dark frame may push into it, a
+    # well-exposed frame keeps the strict tolerance (pale walls, 2026-10-26).
+    knobs = {
+        **KNOBS,
+        "exposure_highlight_ceiling": 0.92,
+        "exposure_clip_tolerance": 0.01,
+        "exposure_clip_tolerance_dark": 0.03,
+        "exposure_dark_median": 0.10,
+    }
+    dark = np.full((100, 100, 3), 0.08, dtype=np.float32)
+    dark[:2, :, :] = 0.95
+    lit = np.full((100, 100, 3), 0.20, dtype=np.float32)
+    lit[:2, :, :] = 0.95
+    assert analyze_raw(DecodedImage(rgb=dark), knobs).exposure > 1.0
+    assert analyze_raw(DecodedImage(rgb=lit), knobs).exposure == 0.0
+
+
 def test_exposure_bias_shifts_uniformly():
     base = analyze_raw(_flat(0.3), KNOBS).exposure
     biased = analyze_raw(_flat(0.3), {**KNOBS, "exposure_bias": -0.45}).exposure
@@ -87,7 +139,7 @@ def test_black_point_deepens_hazy_frames_only():
 
 
 def test_very_dark_triggers_shadow_lift():
-    cs = analyze_raw(_flat(0.05), KNOBS)
+    cs = analyze_raw(_flat(0.01), KNOBS)  # beyond what the exposure cap can fix
     assert cs.shadows > 0
 
 
