@@ -11,6 +11,7 @@
     "exposure_clip_tolerance_dark": 0.03,
     "exposure_dark_median": 0.11,
     "exposure_point_light_max": 0.05,
+    "exposure_point_light_luma": 0.99,
     "highlight_clip_threshold": 0.90,
     "highlight_recovery_max": 70,
     "highlight_recovery_saturate": 0.15,
