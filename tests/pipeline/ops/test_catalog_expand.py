@@ -627,3 +627,79 @@ def test_file_with_copy_refused_max_times_is_not_a_candidate(conn, tmp_path, off
             ),
         )
     assert _candidates(conn, USER_ID, cfg) == {}
+
+
+def test_adopted_file_with_etsy_id_and_no_title_is_not_a_candidate(conn, tmp_path):
+    from shopsteward.pipeline import tuning
+    from shopsteward.pipeline.config import TUNING_PROFILE_PATH
+    from shopsteward.pipeline.listings import adopt
+
+    cfg, file_id = _one_candidate_cfg(conn, tmp_path)
+    tuning.seed(conn, USER_ID, TUNING_PROFILE_PATH)
+    assert adopt.ingest_one_file(conn, USER_ID, tmp_path / "candidates" / "one.jpg") == file_id
+    assert file_id in _candidates(conn, USER_ID, cfg)  # known, unfinished -> still a candidate
+    append(
+        conn,
+        Event(
+            user_id=USER_ID,
+            type="listing.source_adopted",
+            payload={
+                "draft_id": "adopted-1",
+                "landing_file_id": file_id,
+                "photo_id": f"file-{file_id[:12]}",
+                "etsy_listing_id": 777,
+            },
+        ),
+    )
+    assert _candidates(conn, USER_ID, cfg) == {}
+
+
+def _fail(conn, action, kind: str) -> None:
+    """One failed attempt for `action`: action.failed or the revalidation refusal."""
+    if kind == "failed":
+        append(conn, Event(user_id=USER_ID, type="action.failed", payload={"action_id": action}))
+    else:
+        append(
+            conn,
+            Event(
+                user_id=USER_ID,
+                type="action.refused",
+                payload={"action_id": action, "reason": "execute_revalidation_error"},
+            ),
+        )
+
+
+def _propose_for(conn, cfg, file_id: str, action_id: str, *, deduped: bool = False) -> None:
+    action = _candidates(conn, USER_ID, cfg)[file_id]
+    if deduped:
+        payload = {"action_id": action_id, "capability": action.capability, "target_id": file_id}
+        append(conn, Event(user_id=USER_ID, type="action.proposal_deduped", payload=payload))
+    else:
+        payload = action.model_dump() | {"action_id": action_id}
+        append(conn, Event(user_id=USER_ID, type="action.proposed", payload=payload))
+
+
+def test_three_failed_attempts_stop_a_file_being_a_candidate(conn, tmp_path):
+    cfg, file_id = _one_candidate_cfg(conn, tmp_path)
+    _propose_for(conn, cfg, file_id, "a1")
+    _propose_for(conn, cfg, file_id, "a2", deduped=True)
+    _fail(conn, "a1", "failed")
+    _fail(conn, "a1", "refused")
+    assert file_id in _candidates(conn, USER_ID, cfg)  # 2 attempts: still retried
+    _fail(conn, "a2", "refused")  # resolved through action.proposal_deduped
+    assert _candidates(conn, USER_ID, cfg) == {}
+
+
+def test_fresh_files_sort_ahead_of_retried_ones(conn, tmp_path):
+    _enable_asset_store(conn, tmp_path)
+    folder = tmp_path / "candidates"
+    a = _candidate_image(folder, "a_retried.jpg")
+    b = _candidate_image(folder, "b_fresh.jpg", ellipse=True)
+    cfg = _apply_ops_cfg_max_new_per_week(conn, tmp_path, source_folder=folder, max_new_per_week=5)
+    id_a = hashlib.sha256(a.read_bytes()).hexdigest()
+    id_b = hashlib.sha256(b.read_bytes()).hexdigest()
+    assert list(_candidates(conn, USER_ID, cfg)) == [id_a, id_b]  # path order
+
+    _propose_for(conn, cfg, id_a, "a1")
+    _fail(conn, "a1", "failed")
+    assert list(_candidates(conn, USER_ID, cfg)) == [id_b, id_a]

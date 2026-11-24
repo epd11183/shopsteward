@@ -47,6 +47,8 @@ def score_photo(
     try:
         result = adapter.score_commercial(_read_bytes(path), model=model)
     except Exception:  # noqa: BLE001 - per-photo vision failure is non-fatal
+        # A failed vision call is unledgered: its cost is unknown. Callers bound
+        # the spend (catalog_expand's attempt cap).
         return False
     usage = result.usage
     if usage is not None:

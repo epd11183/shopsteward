@@ -83,8 +83,15 @@ capability here follows it), per design §3's steps:
 6. Near-duplicate guard: pHash against other candidates this run and every
    already-registered landing file, both local, zero network.
 
-Sorted by path (already true of step 2's output) -- deterministic ordering,
-no truncation.
+7. Attempt cap: a file with MAX_ATTEMPTS failed attempts (`action.failed`, or
+   `action.refused` with reason `execute_revalidation_error`, for this
+   capability and this file) is no longer a candidate -- **needs operator:
+   move it out of the folder or fix it.** Without the cap a file that keeps
+   failing is never executed, so it never counts toward pace and, sorted by
+   path, could hold every weekly slot forever.
+
+Sorted by failed-attempt count (never-attempted files first), then path (step
+2's order) -- deterministic ordering, no truncation.
 
 **Pace is deliberately NOT step 7 here anymore** (H1, guardrail review
 2026-08-25, third instance of this failure class): this function doubles as
@@ -151,6 +158,7 @@ _CAPABILITY = "listing.catalog_expand"
 # protocol), so this is a plain constant rather than a tuning-profile read
 # that could raise on an unseeded profile.
 _ALLOWED_FORMATS = ("JPEG", "TIFF")
+MAX_ATTEMPTS = 3
 
 
 def expand_one(
@@ -344,9 +352,10 @@ def _existing_landing_hashes(conn: sqlite3.Connection, user_id: int) -> list[tup
 
 
 def _finished_file_ids(conn: sqlite3.Connection, user_id: int) -> set[str]:
-    """Landing file ids whose expansion is over: a titled draft (completed), or
-    an untitled one whose copy was refused MAX_COPY_REFUSALS times (operator
-    review). A known file in neither state failed mid-chain and may be retried."""
+    """Landing file ids whose expansion is over: a titled draft (completed), an
+    adopted/pushed one (`etsy_listing_id` set, title NULL -- a live listing's
+    photo), or an untitled one whose copy was refused MAX_COPY_REFUSALS times
+    (operator review). A known file in neither state failed mid-chain and may be retried."""
     from shopsteward.pipeline.listings.copy import MAX_COPY_REFUSALS, copy_refusals
     from shopsteward.pipeline.listings.projections import rebuild_listings
 
@@ -354,13 +363,34 @@ def _finished_file_ids(conn: sqlite3.Connection, user_id: int) -> set[str]:
     return {
         r["landing_file_id"]
         for r in conn.execute(
-            "SELECT draft_id, landing_file_id, title FROM proj_listing_drafts "
+            "SELECT draft_id, landing_file_id, title, etsy_listing_id FROM proj_listing_drafts "
             "WHERE user_id=? AND landing_file_id IS NOT NULL",
             (user_id,),
         )
         if r["title"] is not None
+        or r["etsy_listing_id"] is not None
         or copy_refusals(conn, user_id, r["draft_id"]) >= MAX_COPY_REFUSALS
     }
+
+
+def _failed_attempts(conn: sqlite3.Connection, user_id: int) -> dict[str, int]:
+    """file_id -> failed catalog_expand attempts (`action.failed`, or
+    `action.refused` reason `execute_revalidation_error`). action -> target via
+    `action.proposed` and `action.proposal_deduped` (both carry target_id)."""
+    target_of: dict[str, str] = {}
+    for etype in ("action.proposed", "action.proposal_deduped"):
+        for e in read_all(conn, etype):
+            if e.user_id == user_id and e.payload.get("capability") == _CAPABILITY:
+                target_of[e.payload["action_id"]] = str(e.payload["target_id"])
+    counts: dict[str, int] = {}
+    for e in read_all(conn, "action."):
+        failed = e.type == "action.failed" or (
+            e.type == "action.refused" and e.payload.get("reason") == "execute_revalidation_error"
+        )
+        target = target_of.get(e.payload.get("action_id", ""))
+        if e.user_id == user_id and failed and target is not None:
+            counts[target] = counts.get(target, 0) + 1
+    return counts
 
 
 def _candidates(
@@ -391,6 +421,7 @@ def _candidates(
     if known_ids:
         known_ids &= _finished_file_ids(conn, user_id)  # unfinished ones stay candidates
     rejected_ids = _rejected_file_ids(conn, user_id)
+    attempts = _failed_attempts(conn, user_id)
     existing_hashes = _existing_landing_hashes(conn, user_id)
     candidate_hashes: list[int] = []
 
@@ -400,7 +431,11 @@ def _candidates(
 
     for path in adopt.scan_local_files(folder, ce.recursive):
         file_id = _sha256_file(path)
-        if file_id in known_ids or file_id in rejected_ids:
+        if (
+            file_id in known_ids
+            or file_id in rejected_ids
+            or attempts.get(file_id, 0) >= MAX_ATTEMPTS
+        ):
             continue
 
         fmt = _SUFFIX_FORMATS.get(path.suffix.lower())
@@ -446,7 +481,8 @@ def _candidates(
             expires_at=expires_at,
             params={"path": str(path)},
         )
-    return out
+    # stable sort: never-attempted files ahead of retried ones, path order within
+    return dict(sorted(out.items(), key=lambda kv: attempts.get(kv[0], 0)))
 
 
 class ListingCatalogExpand:
