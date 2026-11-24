@@ -20,6 +20,7 @@ import sqlite3
 from datetime import UTC, date, datetime, timedelta
 
 from shopsteward.core.events import read_all
+from shopsteward.pipeline.ops import cadence
 from shopsteward.pipeline.ops.capabilities.seo_edit import misaligned_candidates
 from shopsteward.pipeline.ops.keyword_probe import probe_coverage_note
 from shopsteward.pipeline.ops.models import (
@@ -899,6 +900,9 @@ def pin_experiment_readout(
         )
     )
 
+    buffer_by_action = {
+        p["action_id"]: p for p in cadence.latest_observed(conn, user_id).values() if p["action_id"]
+    }
     out: list[PinExperimentResult] = []
     for r in rows:
         listing_id = r["listing_id"]
@@ -920,6 +924,11 @@ def pin_experiment_readout(
                 baseline_views_per_day=baseline,
                 observed_views_per_day=observed,
                 delta_views_per_day=delta_per_day,
+                buffer_metrics=(
+                    dict(obs["metrics"])
+                    if (obs := buffer_by_action.get(r["action_id"])) is not None
+                    else None
+                ),
             )
         )
     return out

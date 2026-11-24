@@ -13,7 +13,7 @@ from datetime import UTC, date, datetime
 
 from shopsteward.core.events import read_all
 from shopsteward.pipeline import llm_ledger
-from shopsteward.pipeline.ops import analytics, governor
+from shopsteward.pipeline.ops import analytics, buffer_publish, cadence, governor
 from shopsteward.pipeline.ops.models import (
     Brief,
     BriefAction,
@@ -22,8 +22,11 @@ from shopsteward.pipeline.ops.models import (
     BriefLadderRow,
     BriefPin,
     BriefProposal,
+    BriefQueuedPost,
     BriefReadbackFailure,
     BriefRefusal,
+    BriefSocialQueue,
+    BriefUnresolvedIntent,
     OpsConfig,
     ProposedAction,
     Tier,
@@ -39,6 +42,7 @@ from shopsteward.pipeline.ops.tiers import effective_tier_for
 # one under cfg.windows if the operator ever wants a longer/shorter Brief
 # history.
 _DONE_REFUSED_WINDOW_DAYS = 7
+_BUFFER_METRIC_KEYS = ("impressions", "saves", "reactions")
 
 
 def _proposed_by_action_id(conn: sqlite3.Connection, user_id: int) -> dict[str, ProposedAction]:
@@ -265,6 +269,64 @@ def _pin_drafts(conn: sqlite3.Connection, user_id: int, as_of: date) -> list[Bri
     return out
 
 
+def _social_queue(
+    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, as_of: date
+) -> BriefSocialQueue:
+    """S8: our posts waiting in Buffer (due + undo-until), per-channel weekly
+    deficits, unresolved publish intents and Buffer error-status posts. All
+    event-derived (buffer-sync is what keeps the events fresh)."""
+    observed = cadence.latest_observed(conn, user_id)
+    deleted = {
+        e.payload.get("buffer_post_id")
+        for e in read_all(conn, buffer_publish.DELETED)
+        if e.user_id == user_id
+    }
+    queued = []
+    for e in read_all(conn, buffer_publish.QUEUED):
+        p = e.payload
+        obs = observed.get(str(p["buffer_post_id"]))
+        if e.user_id != user_id or p["buffer_post_id"] in deleted:
+            continue
+        if obs is not None and obs.get("status") != "scheduled":
+            continue  # sent (nothing to undo) or errored (listed below)
+        queued.append(
+            BriefQueuedPost(
+                action_id=p["action_id"],
+                channel=p["channel"],
+                listing_id=p["listing_id"],
+                due_at=p["due_at"],
+                undo_until=p["due_at"],
+                reconciled=bool(p.get("reconciled")),
+            )
+        )
+    queued.sort(key=lambda q: q.due_at)
+    unresolved = [
+        BriefUnresolvedIntent(
+            action_id=i.action_id,
+            listing_id=i.event.payload["listing_id"],
+            channel=i.event.payload["channel"],
+            drafted_at=i.event.payload["drafted_at"],
+        )
+        for i in buffer_publish.unresolved_intents(conn, user_id)
+    ]
+    errors = [
+        f"{o['channel']} post {o['post_id']} is in error status (not retried)"
+        for o in observed.values()
+        if o.get("status") == "error"
+        # a post that errored while still due in the future is recent too
+        and (
+            not o.get("due_at")
+            or (as_of - date.fromisoformat(o["due_at"][:10])).days <= _DONE_REFUSED_WINDOW_DAYS
+        )
+    ]
+    return BriefSocialQueue(
+        queued=queued,
+        deficits=cadence.cadence_deficit(conn, user_id, cfg, as_of),
+        unresolved=unresolved,
+        errors=sorted(errors),
+    )
+
+
 def _autonomy_section(
     conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, as_of: date
 ) -> BriefAutonomy:
@@ -334,6 +396,8 @@ def generate_brief(
         else []
     )
 
+    social_queue = _social_queue(conn, user_id, cfg, as_of) if sections.social_queue else None
+
     return Brief(
         generated_at=as_of,
         window_days=cfg.windows.revenue_window_days,
@@ -354,6 +418,7 @@ def generate_brief(
         caption_drafts=caption_drafts,
         pin_drafts=pin_drafts,
         pin_experiments=pin_experiments,
+        social_queue=social_queue,
     )
 
 
@@ -391,6 +456,32 @@ def render_text(brief: Brief) -> str:
         lines.append(f"REFUSED ({len(brief.refused_recent)})")
         for r in brief.refused_recent:
             lines.append(f"  {r.capability} -> {r.target_id} : {r.reason}")
+
+    sq = brief.social_queue
+    if sq is not None and (sq.queued or sq.unresolved or sq.errors or sq.deficits):
+        lines.append("")
+        lines.append(f"SOCIAL QUEUE ({len(sq.queued)} queued in Buffer)")
+        # Deficits and unresolved intents first: they are what needs attention.
+        for u in sq.unresolved:
+            lines.append(
+                f"  UNRESOLVED [{u.action_id}] {u.channel} listing {u.listing_id} drafted "
+                f"{u.drafted_at}: create outcome unknown, listing blocked until buffer-sync "
+                "resolves it"
+            )
+        for err in sq.errors:
+            lines.append(f"  ERROR {err}")
+        for channel, owed in sorted(sq.deficits.items()):
+            lines.append(f"  {channel}: {owed} post(s) owed this week")
+        for q in sq.queued:
+            note = (
+                " -- posted despite a refusal, delete via Buffer/CLI if unwanted"
+                if q.reconciled
+                else ""
+            )
+            lines.append(
+                f"  [{q.channel}] listing {q.listing_id} -- due {q.due_at}, undo until "
+                f"{q.undo_until} (ops undo {q.action_id}){note}"
+            )
 
     if brief.caption_drafts:
         lines.append("")
@@ -432,6 +523,15 @@ def render_text(brief: Brief) -> str:
                     f"{x.baseline_views_per_day:.1f} -> {x.observed_views_per_day:.1f} views/day "
                     f"({x.delta_views_per_day:+.1f}) -- may be pin-driven, may be coincidental"
                 )
+            if x.buffer_metrics is not None:
+                # An absent key is "not reported", never 0 (design §6).
+                shown = ", ".join(
+                    f"{k}: {x.buffer_metrics[k]:g}"
+                    if k in x.buffer_metrics
+                    else f"{k}: not yet reported"
+                    for k in _BUFFER_METRIC_KEYS
+                )
+                lines.append(f"    Buffer: {shown}")
 
     lines.append("")
     lines.append("THE SHOP")

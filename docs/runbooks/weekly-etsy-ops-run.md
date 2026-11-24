@@ -141,6 +141,10 @@ the photo by a vision model. A pass publishes it ($0.20, counted in the cap).
   for Instagram and Facebook (S6). Both stay off for the
   weekly run until the cutover (design slice S9): keep using the existing
   Buffer connector for posts until then.
+  The brief's SOCIAL QUEUE section shows what is queued and until when it can
+  be undone. UNRESOLVED means a create outcome is unknown: run
+  `ops buffer-sync --live`, which resolves it to queued or lost. ERROR means a
+  post failed in Buffer; it is never retried automatically. Report both.
 
 ## Report
 

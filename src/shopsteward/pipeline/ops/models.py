@@ -20,7 +20,10 @@ __all__ = [
     "BriefLadderRow",
     "BriefPin",
     "BriefProposal",
+    "BriefQueuedPost",
     "BriefRefusal",
+    "BriefSocialQueue",
+    "BriefUnresolvedIntent",
     "CapabilityState",
     "DeadListing",
     "ExecutionResult",
@@ -89,6 +92,7 @@ class _OpsBriefSections(BaseModel):
     captions: bool = True
     pins: bool = True
     pin_experiments: bool = True
+    social_queue: bool = True
 
 
 class _OpsLadder(BaseModel):
@@ -364,6 +368,10 @@ class _OpsAutonomy(BaseModel):
     # Per-capability cap on materialized proposals per `plan_proposals()` run
     # (design §10 CPO improvement) -- keeps NEEDS YOU short and high-signal.
     planner_max_per_capability_per_run: int = Field(gt=0, default=1)
+    # Capability key -> per-run cap that replaces the default above for that
+    # capability only (Buffer design §7: a cadence deficit needs more than one
+    # post per run). Default-empty so stored configs still validate.
+    planner_max_per_run_overrides: dict[str, int] = Field(default_factory=dict)
     # Capability key -> the LEAST-autonomous tier its ladder may sit at
     # (0=AUTO, 1=NOTIFY, 2=PROPOSE; default PROPOSE when absent). A fresh
     # capability starts at its floor and demotion can never push it below.
@@ -607,6 +615,10 @@ class PinExperimentResult(BaseModel):
     baseline_views_per_day: float | None
     observed_views_per_day: float | None
     delta_views_per_day: float | None  # None unless both sides are measurable
+    # Latest Buffer metrics (snake_case keys) for this pin's post. None = no
+    # Buffer post observed for it (hand-posted pin); {} = observed but nothing
+    # reported yet. A key's absence means "not reported", NEVER 0.
+    buffer_metrics: dict[str, float] | None = None
 
 
 class SeoEditViewDelta(BaseModel):
@@ -737,6 +749,37 @@ class BriefPin(BaseModel):
     action_id: str | None = None
 
 
+class BriefQueuedPost(BaseModel):
+    """One of our posts waiting in Buffer (S8). `undo_until` is when `ops undo`
+    stops working: deletePost only works while the post is still queued, so it
+    is the due time."""
+
+    action_id: str
+    channel: str
+    listing_id: int
+    due_at: str
+    undo_until: str
+    reconciled: bool = False  # created despite a refusal; delete via Buffer/CLI if unwanted
+
+
+class BriefUnresolvedIntent(BaseModel):
+    """A `publish_via=buffer` draft with no `buffer_queued`/`buffer_lost`: the
+    create outcome is unknown and the listing is blocked until buffer-sync
+    resolves it."""
+
+    action_id: str
+    listing_id: int
+    channel: str
+    drafted_at: str
+
+
+class BriefSocialQueue(BaseModel):
+    queued: list[BriefQueuedPost] = Field(default_factory=list)
+    deficits: dict[str, int] = Field(default_factory=dict)  # channel -> posts owed this week
+    unresolved: list[BriefUnresolvedIntent] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)  # Buffer posts in error status, never retried
+
+
 class BriefAutonomy(BaseModel):
     enabled: bool
     halted: bool
@@ -778,3 +821,5 @@ class Brief(BaseModel):
     # P1 outcome readout (2026-08-24 design doc §3) -- default-empty, same
     # reasoning as pin_drafts above. Gated on brief_sections.pin_experiments.
     pin_experiments: list[PinExperimentResult] = Field(default_factory=list)
+    # S8 (Buffer design §6/§12): None iff brief_sections.social_queue is off.
+    social_queue: BriefSocialQueue | None = None
