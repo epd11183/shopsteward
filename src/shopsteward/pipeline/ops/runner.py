@@ -6,13 +6,15 @@ in PR1; tests pass a StubCapability list)."""
 
 import logging
 import sqlite3
+from collections.abc import Iterator
 from datetime import UTC, date, datetime
+from itertools import chain
 
 from pydantic import BaseModel
 
 from shopsteward.core.events import Event, append, read_all
 from shopsteward.pipeline.ops.governor import _SEO_RENEW_CAPABILITIES, govern
-from shopsteward.pipeline.ops.models import OpsConfig, ProposedAction, Tier
+from shopsteward.pipeline.ops.models import OpsConfig, ProposedAction, RefusalReason, Tier
 from shopsteward.pipeline.ops.projections import capability_states
 from shopsteward.pipeline.ops.registry import Capability, StaleTargetError
 from shopsteward.pipeline.ops.tiers import effective_tier, promote_t1_t0, promote_t2_t1
@@ -25,6 +27,12 @@ _AUTO_EXECUTE_TIERS = (Tier.AUTO, Tier.NOTIFY)
 # place that set is defined) outranks this capability for the same
 # target_id within a single run() call. See run()'s own docstring.
 _PIN_CAPABILITY = "social.pinterest_post"
+
+# Gap 2: within one run() at most one executed action per listing. Deactivate
+# is governed FIRST (see run()'s capability ordering), so it wins; everything
+# else is first-come in the caller's capability order.
+_DEACTIVATE_CAPABILITY = "listing.deactivate"
+_LISTING_TARGET = "listing"
 
 _TERMINAL = {"executed", "refused", "rejected", "undone", "expired", "superseded"}
 
@@ -195,6 +203,25 @@ def _pending_targets(
     return out
 
 
+def _stale_pending(
+    conn: sqlite3.Connection, user_id: int, today: date, cap_key: str, seen: set[str]
+) -> Iterator[ProposedAction]:
+    """Gap 1: still-pending, unexpired proposals of `cap_key` that this run's
+    own propose() did not re-mint (e.g. a planner-only seo_edit proposed while
+    the capability was PROPOSE, since lifted to AUTO by `tier_floor`). Status
+    is re-read per item so a proposal superseded/resolved mid-run is skipped."""
+    for e in read_all(conn, "action.proposed"):
+        p = e.payload
+        if e.user_id != user_id or p["capability"] != cap_key or p["action_id"] in seen:
+            continue
+        if today > date.fromisoformat(p["expires_at"]):
+            continue
+        if _action_status(conn, user_id, p["action_id"]) != "proposed":
+            continue
+        seen.add(p["action_id"])
+        yield ProposedAction.model_validate(p)
+
+
 def _supersede_siblings(conn: sqlite3.Connection, user_id: int, action: ProposedAction) -> None:
     """E1(c): once (capability, target_id) executes, terminalize any OTHER
     still-pending proposal for the SAME target as `action.superseded` --
@@ -327,9 +354,24 @@ def run(
                 a for a in pin_proposals if a.target_id not in seo_renew_targets_this_run
             ]
 
-    for cap in capabilities:
+    # Gap 2: deactivate is governed before every other capability so it wins
+    # a same-listing conflict (stable sort: all other order is unchanged).
+    ordered = sorted(capabilities, key=lambda c: c.key != _DEACTIVATE_CAPABILITY)
+    touched_listings: set[str] = set()
+
+    for cap in ordered:
         eff_tier = effective_tier(cap, states.get(cap.key), cfg.autonomy.tier_floor)
-        for action in cap_proposals_by_key.get(cap.key, []):
+        fresh = cap_proposals_by_key.get(cap.key, [])
+        seen_ids = {a.action_id for a in fresh}
+        # Gap 1: after the fresh proposals (lazy, so any E1 supersede above has
+        # already happened), also drive old pending ones through the SAME
+        # governor/re-validation path -- only when the CURRENT tier auto-executes.
+        stale = (
+            _stale_pending(conn, user_id, today, cap.key, seen_ids)
+            if eff_tier in _AUTO_EXECUTE_TIERS
+            else iter(())
+        )
+        for action in chain(fresh, stale):
             action = action.model_copy(update={"tier": eff_tier})
             status = _action_status(conn, user_id, action.action_id)
 
@@ -415,6 +457,20 @@ def run(
                 # proposal exactly as it was (still "proposed").
                 report.live_gate_blocked = True
                 continue
+            if action.target_type == _LISTING_TARGET and action.target_id in touched_listings:
+                append(
+                    conn,
+                    Event(
+                        user_id=user_id,
+                        type="action.refused",
+                        payload={
+                            "action_id": action.action_id,
+                            "reason": RefusalReason.LISTING_CONFLICT.value,
+                        },
+                    ),
+                )
+                report.refused += 1
+                continue
 
             by = "tier:T0" if action.tier == Tier.AUTO else "tier:T1"
             append(
@@ -425,7 +481,10 @@ def run(
                     payload={"action_id": action.action_id, "by": by},
                 ),
             )
+            executed_before = report.executed
             _execute_and_record(conn, user_id, cap, action, report)
+            if report.executed > executed_before and action.target_type == _LISTING_TARGET:
+                touched_listings.add(action.target_id)
 
         # Promotion depends only on already-recorded approvals/executions/
         # elapsed days (tiers.py, pure) -- orthogonal to whether THIS run

@@ -481,6 +481,9 @@ class RefusalReason(StrEnum):
     # per-target eligibility check re-derived from current config/state.
     INELIGIBLE = "ineligible"
     PORTFOLIO_CAP = "portfolio_cap"
+    # Another action already executed on this listing earlier in the same
+    # run() (deactivate is ordered first, so it wins).
+    LISTING_CONFLICT = "listing_conflict"
 
 
 class CapabilityState(BaseModel):
