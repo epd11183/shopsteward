@@ -5,7 +5,8 @@ change; the task prompt only points here.
 
 Run everything from the repo root of this checkout. Never read `data/` or `.env*`
 (the CLI loads `.env` itself). Authority and limits: CLAUDE.md "Governance &
-decision authority" (total control of listings, 2026-11-22; $20/month cap).
+decision authority" (total control of listings, 2026-11-22; autonomous new
+listings behind the read-back gate, 2026-11-23; $20/month cap).
 
 ## Gates
 
@@ -35,8 +36,8 @@ adapter and burns the proposal. Check the gate first.
      `D:/Photos/Etsy/candidates`, each published only if the read-back gate
      passes. Needs `SHOPSTEWARD_LIVE_COPY=1` and `SHOPSTEWARD_LIVE_VISION=1`
      too, or nothing is auto-published. Gate failures appear in the brief
-     under NEEDS YOU with their problems: fix the draft with `ops edit-listing`
-     (or `listings` tools) and publish it at Gate 3;
+     under NEEDS YOU with their problems. Fix them yourself (see "New
+     listings" below), never hand them back;
    - capabilities still at PROPOSE stay pending: `gapfill_reprint`,
      `autorenew_on`, `social.*`.
 4. `uv run shopsteward ops brief`. Its sections are NEEDS YOU, DONE, REFUSED
@@ -74,26 +75,41 @@ so.
 - Etsy rate limits (429) are retried automatically on reads. Writes are sent
   once.
 
-## New listings (batches, operator-authorized)
+## New listings (autonomous since 2026-11-23)
 
-New listings cost $0.20 each, inside the $20 cap. Create them in batches and
-check each batch live before starting the next.
+`catalog_expand` (step 3) creates up to 5 new listings a week from
+`D:/Photos/Etsy/candidates`. Each draft is read back from Etsy (5 files,
+7 images, 13 tags, "(Digital Download)" title) and its copy is checked against
+the photo by a vision model. A pass publishes it ($0.20, counted in the cap).
 
-- **Batch 1:** 10 listings published 2026-11-22, IDs 4623573891 to 4623581618.
-- **Before batch 2:** check batch 1 on Etsy. Confirm they are active and have
-  5 files and 7 images each, and note their views.
-- **Building a batch:** `shop build <winners folder> --live-vision --live-copy
-  --live-etsy-write`.
-  - Etsy drafts are not public. Publishing goes through `gate3.publish`, from
-    the review UI (`uv run shopsteward serve`).
-  - Read every draft back before publishing: subject-correct title, 5 files,
-    13 tags, `listing_type` download.
+- **Gate failure** (brief, NEEDS YOU): read the problems and look at the photo
+  (the candidate file). Rewrite the wrong title/tags/description with
+  `ops edit-listing <listing_id> ... --live-autonomy`, then publish with
+  `listings publish --listing-id <id> --live`. It re-runs the gate and
+  publishes only on a pass. If a second attempt still fails, leave it a draft
+  and report it.
+- **First live auto-published listings**: open each new listing's copy and
+  compare it with its photo. The checker is good, not perfect (a wrong species
+  is the hardest catch). Fix anything wrong with `ops edit-listing`; undo the
+  action if the photo itself shouldn't be listed.
+- **Candidate supply**: the operator adds new JPEG exports to
+  `D:/Photos/Etsy/candidates` from time to time (full size, 6000px+ long edge,
+  only photos not already listed). Already-listed or near-duplicate photos are
+  moved to `D:/Photos/Etsy/candidates_excluded`, never deleted. Before step 3,
+  if files were added since the last run, check the new ones against the live
+  listings (a contact sheet of new candidates beside the live listings'
+  first images) and move any duplicate to `candidates_excluded`. The built-in
+  pHash dedupe misses the shop's older listings.
+- **Report the supply**: the number of candidates left (files in the folder
+  that are not yet listed). Under 10, say so first in the report so the
+  operator exports more.
 - ⛔ `listings build` **without** `--live-etsy-write` writes FAKE Etsy IDs
   (1000+).
   - To recover: `listings reset <folder> --include-pushed --format
     digital_download --keep-landing`.
   - Then confirm exactly the fake IDs it lists with `--confirm-listing-id` and
     `--apply`.
+- ⛔ Don't run `shop build --regenerate`: it re-scores every photo for nothing.
 - The Etsy token cannot delete listings (it lacks the `listings_d` scope). Fix
   drafts in place.
 
@@ -107,14 +123,18 @@ check each batch live before starting the next.
   is allowed. No AI label on social posts (operator 2026-11-22).
 - **Data and git:** never commit shop data or credentials. No force-push. Don't
   merge PRs unless the operator says so.
-- **Social:** the Buffer API adapter is designed
-  (`docs/designs/2026-11-22-buffer-social-adapter.md`) but not built. Keep
-  using the existing Buffer connector for posts until it ships.
+- **Social:** the Buffer API adapter (`src/shopsteward/adapters/buffer/`,
+  design `docs/designs/2026-11-22-buffer-social-adapter.md`) is built but not
+  yet wired into a capability. Keep using the existing Buffer connector for
+  posts until the cutover (design slice S9).
 
 ## Report
 
 End with a short report:
 - what executed, with undo IDs;
+- new listings published this run (IDs and titles) and any gate failures
+  with what you did about them;
+- candidates left in `D:/Photos/Etsy/candidates`;
 - what is pending and why;
 - spend this month against the $20 cap;
 - anything that failed;
