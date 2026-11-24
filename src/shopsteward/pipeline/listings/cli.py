@@ -588,6 +588,98 @@ def backfill_files_cmd(
         conn.close()
 
 
+@listings_app.command("publish")
+def publish_cmd(
+    draft_id: Annotated[str | None, typer.Option("--draft-id", help="Draft to publish")] = None,
+    listing_id: Annotated[
+        int | None, typer.Option("--listing-id", help="Etsy listing id of the draft")
+    ] = None,
+    live: Annotated[
+        bool, typer.Option("--live", help="Run the read-back gate and publish for real")
+    ] = False,
+) -> None:
+    """Publish a pushed draft behind the read-back gate (the same gate
+    `listing.catalog_expand` uses). Without --live: dry run, never publishes.
+    Exits non-zero if the gate or the publish fails."""
+    import json
+
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.pipeline.config import TUNING_PROFILE_PATH
+    from shopsteward.pipeline.listings import gate3
+    from shopsteward.pipeline.listings.push import build_etsy_write_adapter
+    from shopsteward.pipeline.listings.readback import run_readback
+    from shopsteward.pipeline.live_gate import (
+        live_copy_error,
+        live_copy_open,
+        live_etsy_write_error,
+        live_etsy_write_open,
+        live_vision_error,
+        live_vision_open,
+    )
+    from shopsteward.pipeline.models import TuningProfile
+    from shopsteward.pipeline.vision_factory import build_copy_checker
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    if (draft_id is None) == (listing_id is None):
+        raise _fail("pass exactly one of --draft-id / --listing-id")
+
+    profile = TuningProfile.model_validate(
+        json.loads(TUNING_PROFILE_PATH.read_text(encoding="utf-8"))
+    )
+    if live:
+        if not live_etsy_write_open():
+            raise _fail(live_etsy_write_error())
+        if not live_copy_open():
+            raise _fail(live_copy_error())
+        if not live_vision_open("openrouter"):
+            raise _fail(live_vision_error("openrouter"))
+        if profile.vision.provider != "openrouter":
+            raise _fail("the copy checker needs vision.provider=openrouter")
+
+    conn = connect(db_path())
+    try:
+        migrate(conn)
+        if draft_id is None:
+            rows = conn.execute(
+                "SELECT draft_id FROM proj_listing_drafts WHERE user_id=? AND etsy_listing_id=?",
+                (DEFAULT_USER_ID, str(listing_id)),
+            ).fetchall()
+            if len(rows) != 1:
+                raise _fail(f"{len(rows)} drafts match listing id {listing_id}; need exactly 1")
+            draft_id = rows[0]["draft_id"]
+        try:
+            gate3.check_publishable(conn, DEFAULT_USER_ID, draft_id)
+        except ValueError as exc:
+            raise _fail(str(exc)) from exc
+        if not live:
+            typer.echo(
+                f"dry run: draft {draft_id} is publishable; --live would run the read-back "
+                "gate and publish only on a pass. Nothing published."
+            )
+            return
+
+        adapter = build_etsy_write_adapter(live=True)
+        gate = run_readback(
+            conn,
+            DEFAULT_USER_ID,
+            draft_id,
+            adapter=adapter,
+            checker=build_copy_checker(profile, True),
+            model=profile.vision.copy_check_model,
+        )
+        if not gate.ok:
+            typer.secho(f"read-back gate FAILED for {draft_id}; not published:", fg="red")
+            for problem in gate.problems:
+                typer.echo(f"  - {problem}")
+            raise typer.Exit(code=1)
+        card = gate3.publish(conn, DEFAULT_USER_ID, draft_id, adapter)  # sole publish site
+        if card.state != "published":
+            raise _fail(f"publish failed: {card.retry_error or card.state}")
+        typer.echo(f"published {draft_id} (etsy listing {card.etsy_listing_id}).")
+    finally:
+        conn.close()
+
+
 def _build_live_etsy_read_adapter() -> "LiveEtsyAdapter":
     """Mirrors shopsteward.cli._build_live_etsy_adapter (that helper lives at
     the root CLI, which imports THIS module -- importing it back here would

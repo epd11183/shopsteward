@@ -206,6 +206,21 @@ def edit(
     return _card_for(conn, user_id, draft_id, cfg)
 
 
+def check_publishable(conn: sqlite3.Connection, user_id: int, draft_id: str) -> sqlite3.Row:
+    """publish()'s eligibility rules, callable without publishing (the
+    `listings publish` dry run). Raises ValueError when not publishable."""
+    rebuild_listings(conn)
+    row = _fetch_row(conn, user_id, draft_id)
+    if row is None:
+        raise ValueError(f"unknown draft_id {draft_id!r}")
+    is_pod_enriched = row["pod_status"] == "enriched" and row["state"] == "built"
+    if row["state"] not in ("pushed", "publish_failed") and not is_pod_enriched:
+        raise ValueError(f"draft {draft_id!r} is not publishable (state={row['state']!r})")
+    if row["etsy_listing_id"] is None:
+        raise ValueError(f"draft {draft_id!r} has no Etsy listing id yet")
+    return row
+
+
 def publish(
     conn: sqlite3.Connection, user_id: int, draft_id: str, adapter: EtsyWriteAdapter
 ) -> Gate3Card:
@@ -218,16 +233,7 @@ def publish(
     draft with pod_status='enriched' while state is still 'built' (design:
     pod-publish -- POD drafts never advance state past 'built' via push.py,
     their lifecycle lives in the separate pod_status column instead)."""
-    rebuild_listings(conn)
-    row = _fetch_row(conn, user_id, draft_id)
-    if row is None:
-        raise ValueError(f"unknown draft_id {draft_id!r}")
-    is_pod_enriched = row["pod_status"] == "enriched" and row["state"] == "built"
-    if row["state"] not in ("pushed", "publish_failed") and not is_pod_enriched:
-        raise ValueError(f"draft {draft_id!r} is not publishable (state={row['state']!r})")
-    if row["etsy_listing_id"] is None:
-        raise ValueError(f"draft {draft_id!r} has no Etsy listing id yet")
-
+    row = check_publishable(conn, user_id, draft_id)
     listing_id = int(row["etsy_listing_id"])
     cfg = listing_config.get_config(conn, user_id)
 
