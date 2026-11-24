@@ -248,6 +248,20 @@ a fail leaves it a draft under NEEDS YOU. Pace stays
 and is not refunded on undo. Undo deactivates the listing. No live checker
 (gate closed / non-openrouter provider) means no auto-publish.
 
+**Amended 2026-11-24, explicit operator authorization: social posting cut over
+to ShopSteward at NOTIFY.** `social.pinterest_post` and `social.caption_draft`
+start at `Tier.NOTIFY` via `autonomy.tier_floor`: the weekly run queues
+Pinterest, Instagram and Facebook posts through the Buffer API itself, inside
+the governor's per-channel `PACE` (counts posts from any source), at least
+`min_lead_hours` ahead, undoable (`deletePost`) while still queued. This needs
+the live publisher (`--live-autonomy`, `SHOPSTEWARD_LIVE_BUFFER=1`,
+`SHOPSTEWARD_LIVE_BUFFER_WRITE=1`, key); without it `max_tier` is PROPOSE and
+the clamp keeps posting draft-only. The weekly run no longer posts through the
+Buffer connector/MCP (runbook "Social posting"). Free; no AI label
+(`isAiGenerated` false, operator Q1 2026-11-22). This supersedes the "still
+hold for non-listing ones (`social.*`...)" clause above for these two
+capabilities only; `ops.tune_threshold` stays PROPOSE.
+
 **Objective — optimize for contribution profit and long-term portfolio
 value, not gross sales or activity.** Trailing-window contribution profit
 (revenue minus Etsy fees, fulfillment cost, and attributed ad spend) is the

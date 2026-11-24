@@ -42,8 +42,12 @@ adapter and burns the proposal. Check the gate first.
      too, or nothing is auto-published. Gate failures appear in the brief
      under NEEDS YOU with their problems. Fix them yourself (see "New
      listings" below), never hand them back;
+   - social posts (NOTIFY since 2026-11-24): `social.pinterest_post` and
+     `social.caption_draft` queue Pinterest, Instagram and Facebook posts in
+     Buffer, at least 4 hours ahead, within each channel's weekly target
+     (governor `PACE`). Each can be undone while still queued;
    - capabilities still at PROPOSE stay pending: `gapfill_reprint`,
-     `autorenew_on`, `social.*`.
+     `autorenew_on`.
 4. `uv run shopsteward ops brief`. Its sections are NEEDS YOU, DONE, REFUSED
    and THE SHOP. Report from it.
 5. `uv run shopsteward ops status`. Shows month spend against the $20 cap and
@@ -124,25 +128,23 @@ the photo by a vision model. A pass publishes it ($0.20, counted in the cap).
 - The Etsy token cannot delete listings (it lacks the `listings_d` scope). Fix
   drafts in place.
 
-## Buffer cutover (design slice S9, from 2026-11-24)
+## Social posting (cut over 2026-11-24)
 
-ShopSteward can now post pins, Instagram and Facebook posts itself through
-Buffer, but posting stays off (`SHOPSTEWARD_LIVE_BUFFER_WRITE` is not set)
-while the Claude Desktop Buffer job keeps posting. Each weekly run until cutover:
+ShopSteward posts to Pinterest, Instagram and Facebook itself, through the
+Buffer API, in step 3. **Do not post, draft, schedule or delete anything
+through the Buffer connector, MCP or CLI**, and do not write captions for
+Buffer by hand: that was the old flow, and two posters on one queue means
+double posts. Read-only Buffer lookups are fine.
 
-1. After `ops buffer-sync --live`, run `ops run` (dry run) and read the
-   `social.pinterest_post` / `social.caption_draft` proposals next to the
-   brief's SOCIAL QUEUE deficits.
-2. Check, per channel: proposals <= that channel's deficit, and no proposal's
-   (listing, channel) matches a post Buffer already shows for that listing in
-   the last 35 days (Desktop-job posts included).
-3. Report the result as a line: `S9 check: pinterest 2 proposed / 2 owed,
-   instagram 1/1, facebook 1/1, no duplicates` (or what failed).
-
-After one clean week, report "S9 ready". The operator then sets
-`SHOPSTEWARD_LIVE_BUFFER_WRITE=1` in `.claude/settings.local.json` and disables
-the Desktop Buffer job. Never set that gate yourself: two schedulers posting at
-once is the failure this whole check exists to prevent.
+- The brief's SOCIAL QUEUE shows each queued post with its due time and its
+  undo-until time, plus what each channel still owes this week.
+- To pull a post, `ops undo <action_id> --live-autonomy` while it is still
+  queued. After it is sent it can only be removed on the platform itself:
+  say so in the report.
+- UNRESOLVED means a create outcome is unknown: run
+  `ops buffer-sync --live`, which resolves it to queued or lost. Never post
+  it again by hand. ERROR means a post failed in Buffer; it is never retried
+  automatically. Report both.
 
 ## Hard limits
 
@@ -154,16 +156,9 @@ once is the failure this whole check exists to prevent.
   is allowed. No AI label on social posts (operator 2026-11-22).
 - **Data and git:** never commit shop data or credentials. No force-push. Don't
   merge PRs unless the operator says so.
-- **Social:** the Buffer API adapter (`src/shopsteward/adapters/buffer/`,
-  design `docs/designs/2026-11-22-buffer-social-adapter.md`) exists, and
-  `social.pinterest_post` can post through it (Variant B) behind a separate
-  write gate, `SHOPSTEWARD_LIVE_BUFFER_WRITE=1`; so can `social.caption_draft`
-  for Instagram and Facebook (S6). Both stay off until the cutover: see
-  "Buffer cutover" above.
-  The brief's SOCIAL QUEUE section shows what is queued and until when it can
-  be undone. UNRESOLVED means a create outcome is unknown: run
-  `ops buffer-sync --live`, which resolves it to queued or lost. ERROR means a
-  post failed in Buffer; it is never retried automatically. Report both.
+- **Social:** posts go out only through `ops run` (Buffer API adapter,
+  design `docs/designs/2026-11-22-buffer-social-adapter.md`), never the
+  Buffer connector. See "Social posting" above.
 
 ## Report
 
@@ -174,6 +169,7 @@ End with a short report:
 - candidates left in `D:/Photos/Etsy/candidates`;
 - what is pending and why;
 - spend this month against the $20 cap;
-- the S9 check line (until cutover) and any SOCIAL QUEUE UNRESOLVED/ERROR items;
+- social posts queued this run (channel, listing, due time) and any SOCIAL
+  QUEUE UNRESOLVED/ERROR items;
 - anything that failed;
 - one recommended next action.
