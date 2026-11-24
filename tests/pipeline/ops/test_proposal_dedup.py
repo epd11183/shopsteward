@@ -276,3 +276,16 @@ def test_undo_recovers_an_id_executed_under_the_old_dedupe_bug(conn):
     undo_action(conn, USER_ID, orphan, [cap])
     (undone,) = read_all(conn, "action.undone")
     assert undone.payload["action_id"] == orphan
+
+
+def test_approve_never_acts_on_a_deduped_id(conn):
+    """The undo-only recovery must not let `ops approve` execute a duplicate of
+    the still-pending original (review 2026-11-24)."""
+    cap = StubCapability(key="stub.ap", day=DAY1, targets={"111": {"on": True}})
+    run(conn, USER_ID, _cfg(), [cap], today=DAY1)
+    cap.day = DAY2
+    run(conn, USER_ID, _cfg(), [cap], today=DAY2)  # dedupes the DAY2 id
+    (deduped,) = read_all(conn, "action.proposal_deduped")
+    with pytest.raises(KeyError):
+        approve_action(conn, USER_ID, deduped.payload["action_id"], [cap], cfg=_cfg(), today=DAY2)
+    assert read_all(conn, "action.executed") == []
