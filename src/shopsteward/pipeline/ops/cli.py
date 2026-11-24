@@ -610,8 +610,8 @@ def status() -> None:
 
 def _catalog_expand(adapter: "EtsyWriteAdapter") -> "ListingCatalogExpand":
     """`listing.catalog_expand` with its two independent live gates resolved:
-    SHOPSTEWARD_LIVE_COPY (copy generation) and SHOPSTEWARD_LIVE_VISION (the
-    read-back copy-vs-photo check). Either closed -> precondition_ok False, and
+    SHOPSTEWARD_LIVE_COPY (copy generation) and SHOPSTEWARD_LIVE_VISION (photo
+    scoring + the read-back copy-vs-photo check). Either closed -> precondition_ok False, and
     the fixture checker (which never approves) is wired."""
     import json
 
@@ -619,7 +619,7 @@ def _catalog_expand(adapter: "EtsyWriteAdapter") -> "ListingCatalogExpand":
     from shopsteward.pipeline.live_gate import live_copy_open, live_vision_open
     from shopsteward.pipeline.models import TuningProfile
     from shopsteward.pipeline.ops.capabilities.catalog_expand import ListingCatalogExpand
-    from shopsteward.pipeline.vision_factory import build_copy_checker
+    from shopsteward.pipeline.vision_factory import build_copy_checker, build_vision_adapter
 
     profile = TuningProfile.model_validate(
         json.loads(TUNING_PROFILE_PATH.read_text(encoding="utf-8"))
@@ -630,6 +630,8 @@ def _catalog_expand(adapter: "EtsyWriteAdapter") -> "ListingCatalogExpand":
         live_copy=live_copy_open(),
         checker=build_copy_checker(profile, live_check),
         live_check=live_check,
+        vision=build_vision_adapter(profile, live_check),
+        live_vision=live_check,
     )
 
 

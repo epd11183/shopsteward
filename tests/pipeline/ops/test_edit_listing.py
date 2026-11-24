@@ -92,6 +92,7 @@ def _updates(fake):
 
 
 def test_real_listing_capabilities_floor_auto_with_undo_and_gapfill_stays_propose():
+    from shopsteward.adapters.vision.fake import FixtureVisionAdapter
     from shopsteward.pipeline.listings.pod.factory import build_print_file_host
     from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
     from shopsteward.pipeline.ops.capabilities.autorenew_on import ListingAutorenewOn
@@ -133,7 +134,12 @@ def test_real_listing_capabilities_floor_auto_with_undo_and_gapfill_stays_propos
 
     # catalog_expand: AUTO since 2026-11-23, behind the read-back gate; undo deactivates
     expand = ListingCatalogExpand(
-        fake, live_copy=False, checker=FixtureCopyChecker(), live_check=False
+        fake,
+        live_copy=False,
+        checker=FixtureCopyChecker(),
+        live_check=False,
+        vision=FixtureVisionAdapter(),
+        live_vision=False,
     )
     register(expand)
     assert expand.max_tier == Tier.AUTO and callable(expand.undo)
