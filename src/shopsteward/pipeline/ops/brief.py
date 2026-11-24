@@ -11,6 +11,7 @@ import sqlite3
 from datetime import UTC, date, datetime
 
 from shopsteward.core.events import read_all
+from shopsteward.pipeline import llm_ledger
 from shopsteward.pipeline.ops import analytics, governor
 from shopsteward.pipeline.ops.models import (
     Brief,
@@ -239,10 +240,14 @@ def _autonomy_section(
         )
         for cap_key, st in sorted(capability_states(conn, user_id).items())
     ]
+    parts = governor.month_spend_parts(conn, user_id, as_of.isoformat()[:7], cfg)
     return BriefAutonomy(
         enabled=cfg.autonomy.enabled,
         halted=governor.is_halted(conn, user_id),
-        month_spend_usd=governor.month_spend(conn, user_id, as_of.isoformat()[:7]),
+        month_spend_usd=sum(parts),
+        month_actions_usd=parts[0],
+        month_listing_fees_usd=parts[1],
+        month_llm_usd=llm_ledger.monthly_spend(conn, user_id, as_of.isoformat()[:7]),
         monthly_spend_cap_usd=cfg.autonomy.monthly_spend_cap_usd,
         ladder=ladder,
     )
@@ -463,7 +468,9 @@ def render_text(brief: Brief) -> str:
         lines.append("AUTONOMY")
         lines.append(f"  autonomy: {state}")
         lines.append(
-            f"  spend {_money(a.month_spend_usd)} of {_money(a.monthly_spend_cap_usd)} cap"
+            f"  month spend: {_money(a.month_spend_usd)} of {_money(a.monthly_spend_cap_usd)} cap "
+            f"(actions {_money(a.month_actions_usd)}, listing fees "
+            f"{_money(a.month_listing_fees_usd)}); LLM {_money(a.month_llm_usd)} (separate ledger)"
         )
         for row in a.ladder:
             lines.append(
