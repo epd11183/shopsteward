@@ -204,3 +204,22 @@ def test_list_channels_skips_unsupported_services() -> None:
     )
     _route(_ok("account"), httpx.Response(200, json=chans))
     assert [c.channel_id for c in _adapter().list_channels()] == ["fx-channel-1", "fx-channel-2"]
+
+
+@respx.mock
+def test_recorded_live_responses_parse() -> None:
+    """Scrubbed real responses (recorded 2026-11-23, read-only): 3 channels incl.
+    a 2-board Pinterest, sent + scheduled posts, Free-plan metrics readable."""
+    _route(_ok("recorded_account"), _ok("recorded_channels"), _ok("recorded_posts"))
+    a = _adapter()
+    chans = a.list_channels()
+    assert sorted(c.service for c in chans) == ["facebook", "instagram", "pinterest"]
+    assert len(next(c for c in chans if c.service == "pinterest").boards) == 2
+    assert not any(c.is_disconnected or c.is_locked for c in chans)
+    posts = a.list_posts(
+        channel_ids=[c.channel_id for c in chans], created_since=SINCE, with_metrics=True
+    )
+    assert {p.status for p in posts} == {"sent", "scheduled"}
+    keys = {k for p in posts for k in p.metrics}
+    assert {"impressions", "pin_clicks", "eng_rate", "saves"} <= keys
+    assert all(re.fullmatch(r"[a-z0-9_]+", k) for k in keys)

@@ -222,6 +222,15 @@ byte-exact; if not, IG reconcile never resolves to "lost" (safe, but noisy). V5 
 auto-crop. V7 `deletePost` on a sent post removes only the Buffer record. V8 Paid-plan pricing
 per channel, if Q3 ever triggers.
 
+**Verified 2026-11-23 (live, read-only, scrubbed fixtures `tests/fixtures/buffer/recorded_*.json`):**
+3 channels (facebook, pinterest with 2 boards, instagram), none disconnected,
+locked or paused. V2 = yes: metrics are readable on Free (16 of 18 posts in
+60 days had them). Buffer sends display labels ("Impressions", "Pin Clicks",
+"Eng. Rate", "Saves", ...); the adapter keys them snake_case (`impressions`,
+`pin_clicks`, `eng_rate`). The 30-day rate-limit header read 2984 of 3000
+remaining. V1, V3-V7 still open: they need a write or a channel field the
+query doesn't select (V3).
+
 ## 11. Slices (each is one PR with its acceptance test)
 
 | # | Slice | Acceptance test |

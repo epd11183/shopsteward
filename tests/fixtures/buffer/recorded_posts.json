@@ -1,0 +1,237 @@
+{
+ "data": {
+  "posts": {
+   "edges": [
+    {
+     "node": {
+      "id": "fx-id-15",
+      "channelId": "fx-channel-16",
+      "status": "scheduled",
+      "text": "fx-text-17",
+      "dueAt": "2026-11-26T16:15:00.000Z",
+      "sentAt": null,
+      "createdAt": "2026-11-23T16:31:08.225Z",
+      "externalLink": null,
+      "error": null,
+      "metricsUpdatedAt": "2026-11-23T16:31:08.238Z",
+      "metrics": null,
+      "metadata": {
+       "__typename": "InstagramPostMetadata"
+      }
+     }
+    },
+    {
+     "node": {
+      "id": "fx-id-18",
+      "channelId": "fx-channel-19",
+      "status": "scheduled",
+      "text": "fx-text-20",
+      "dueAt": "2026-11-28T15:40:00.000Z",
+      "sentAt": null,
+      "createdAt": "2026-11-23T16:31:07.711Z",
+      "externalLink": null,
+      "error": null,
+      "metricsUpdatedAt": "2026-11-23T16:31:07.727Z",
+      "metrics": [
+       {
+        "name": "Reactions",
+        "value": 7
+       },
+       {
+        "name": "Comments",
+        "value": 7
+       },
+       {
+        "name": "Eng. Rate",
+        "value": 7
+       },
+       {
+        "name": "Impressions",
+        "value": 7
+       },
+       {
+        "name": "Reach",
+        "value": 7
+       },
+       {
+        "name": "Shares",
+        "value": 7
+       },
+       {
+        "name": "Clicks",
+        "value": 7
+       }
+      ],
+      "metadata": {
+       "__typename": "FacebookPostMetadata"
+      }
+     }
+    },
+    {
+     "node": {
+      "id": "fx-id-21",
+      "channelId": "fx-channel-16",
+      "status": "sent",
+      "text": "fx-text-22",
+      "dueAt": "2026-11-24T01:16:00.000Z",
+      "sentAt": "2026-11-24T01:16:13.663Z",
+      "createdAt": "2026-11-23T16:27:50.426Z",
+      "externalLink": "fx-externallink-23",
+      "error": null,
+      "metricsUpdatedAt": "2026-11-23T16:27:50.432Z",
+      "metrics": null,
+      "metadata": {
+       "__typename": "InstagramPostMetadata"
+      }
+     }
+    },
+    {
+     "node": {
+      "id": "fx-id-24",
+      "channelId": "fx-channel-25",
+      "status": "sent",
+      "text": "fx-text-26",
+      "dueAt": "2026-11-23T21:43:00.000Z",
+      "sentAt": "2026-11-23T21:43:01.742Z",
+      "createdAt": "2026-11-23T16:27:49.162Z",
+      "externalLink": "fx-externallink-27",
+      "error": null,
+      "metricsUpdatedAt": "2026-11-23T16:27:49.173Z",
+      "metrics": [
+       {
+        "name": "Saves",
+        "value": 7
+       },
+       {
+        "name": "Pin Clicks",
+        "value": 7
+       },
+       {
+        "name": "Comments",
+        "value": 7
+       },
+       {
+        "name": "Eng. Rate",
+        "value": 7
+       },
+       {
+        "name": "Impressions",
+        "value": 7
+       },
+       {
+        "name": "Reactions",
+        "value": 7
+       }
+      ],
+      "metadata": {
+       "__typename": "PinterestPostMetadata",
+       "url": "fx-url-28"
+      }
+     }
+    },
+    {
+     "node": {
+      "id": "fx-id-29",
+      "channelId": "fx-channel-19",
+      "status": "sent",
+      "text": "fx-text-30",
+      "dueAt": "2026-10-13T14:42:00.000Z",
+      "sentAt": "2026-10-13T14:42:04.314Z",
+      "createdAt": "2026-10-12T16:59:45.190Z",
+      "externalLink": "fx-externallink-31",
+      "error": null,
+      "metricsUpdatedAt": "2026-11-12T06:15:40.292Z",
+      "metrics": [
+       {
+        "name": "Reactions",
+        "value": 7
+       },
+       {
+        "name": "Comments",
+        "value": 7
+       },
+       {
+        "name": "Eng. Rate",
+        "value": 7
+       },
+       {
+        "name": "Impressions",
+        "value": 7
+       },
+       {
+        "name": "Reach",
+        "value": 7
+       },
+       {
+        "name": "Shares",
+        "value": 7
+       },
+       {
+        "name": "Clicks",
+        "value": 7
+       }
+      ],
+      "metadata": {
+       "__typename": "FacebookPostMetadata"
+      }
+     }
+    },
+    {
+     "node": {
+      "id": "fx-id-32",
+      "channelId": "fx-channel-16",
+      "status": "sent",
+      "text": "fx-text-33",
+      "dueAt": "2026-10-13T00:16:00.000Z",
+      "sentAt": "2026-10-13T00:16:08.757Z",
+      "createdAt": "2026-10-12T16:59:41.556Z",
+      "externalLink": "fx-externallink-34",
+      "error": null,
+      "metricsUpdatedAt": "2026-11-23T08:35:05.566Z",
+      "metrics": [
+       {
+        "name": "Reactions",
+        "value": 7
+       },
+       {
+        "name": "Comments",
+        "value": 7
+       },
+       {
+        "name": "Eng. Rate",
+        "value": 7
+       },
+       {
+        "name": "Views",
+        "value": 7
+       },
+       {
+        "name": "Shares",
+        "value": 7
+       },
+       {
+        "name": "Saves",
+        "value": 7
+       },
+       {
+        "name": "Follows",
+        "value": 7
+       },
+       {
+        "name": "Reach",
+        "value": 7
+       }
+      ],
+      "metadata": {
+       "__typename": "InstagramPostMetadata"
+      }
+     }
+    }
+   ],
+   "pageInfo": {
+    "hasNextPage": false,
+    "endCursor": "fx-endcursor-35"
+   }
+  }
+ }
+}
