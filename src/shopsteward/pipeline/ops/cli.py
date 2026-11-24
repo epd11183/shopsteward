@@ -488,6 +488,39 @@ def resume_cmd(
         conn.close()
 
 
+@ops_app.command("heartbeat")
+def heartbeat(
+    max_age_days: Annotated[
+        float, typer.Option("--max-age-days", help="Alert if the last live sync is older")
+    ] = 8.0,
+) -> None:
+    """Exit 1 if the weekly run hasn't happened: its first step (`sync --live`)
+    always appends etsy.shop.observed, so the newest one dates the last run."""
+    from datetime import UTC, datetime
+
+    from shopsteward.core.db import connect
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    conn = connect(db_path())
+    try:
+        row = conn.execute(
+            "SELECT MAX(created_at) FROM events WHERE user_id=? AND type='etsy.shop.observed'",
+            (DEFAULT_USER_ID,),
+        ).fetchone()
+    finally:
+        conn.close()
+    last = row[0] if row else None
+    if last is None:
+        typer.echo("STALE: no live sync has ever run")
+        raise typer.Exit(1)
+    age = datetime.now(UTC) - datetime.fromisoformat(last.replace("Z", "+00:00"))
+    days = age.total_seconds() / 86400
+    if days > max_age_days:
+        typer.echo(f"STALE: last weekly run (live sync) {days:.1f} days ago ({last})")
+        raise typer.Exit(1)
+    typer.echo(f"ok: last live sync {days:.1f} days ago ({last})")
+
+
 @ops_app.command("status")
 def status() -> None:
     """Print autonomy on/off, halt state, month spend vs cap, per-capability
