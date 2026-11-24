@@ -192,7 +192,19 @@ def expand_one(
         # per-target staleness -> the runner terminalizes this one.
         raise StaleTargetError(f"{path}: failed landing validation -- cannot expand")
 
-    photo_id = f"file-{file_id[:12]}"
+    # The photo_id every later stage keys on (score, mockups, drafts): the
+    # catalog photo the file matched by base name, else the synthetic id.
+    # Hardcoding the synthetic id broke every catalog-matched candidate (i.e.
+    # nearly all of them): mockups found no landing row for it, so no draft
+    # was ever built (2026-11-24, 10 photos).
+    from shopsteward.pipeline.projections import rebuild_pipeline
+
+    rebuild_pipeline(conn)
+    matched = conn.execute(
+        "SELECT photo_id FROM proj_landing_files WHERE user_id=? AND file_id=?",
+        (user_id, file_id),
+    ).fetchone()
+    photo_id = (matched["photo_id"] if matched else None) or f"file-{file_id[:12]}"
     asset_store_config.seed(conn, user_id)
     from shopsteward.pipeline.listings.projections import rebuild_listings
 
@@ -214,9 +226,16 @@ def expand_one(
     )
 
     _score_file(conn, user_id, file_id, vision)
-    mockup_hook("run_mockups")(conn, user_id, photo_id=photo_id)
+    # file_id: a catalog photo_id can cover other exports of the same RAW;
+    # only this file may get mockups and a draft.
+    mockup_hook("run_mockups")(conn, user_id, photo_id=photo_id, file_id=file_id)
     report = build_drafts(
-        conn, user_id, photo_id=photo_id, live_copy=live_copy, etsy_adapter=adapter
+        conn,
+        user_id,
+        photo_id=photo_id,
+        file_id=file_id,
+        live_copy=live_copy,
+        etsy_adapter=adapter,
     )
 
     row = conn.execute(
@@ -239,7 +258,10 @@ def expand_one(
     # No title for any reason (refused, or skipped for want of a vision score) is
     # retryable: never record a titleless draft as an executed expansion.
     if row is None or row["title"] is None:
-        reasons = "; ".join(report.skip_reasons) or "no reason reported"
+        reasons = "; ".join(report.skip_reasons) or (
+            f"no reason reported by build_drafts for photo_id={photo_id!r} "
+            "(check that mockups rendered for it)"
+        )
         raise RuntimeError(
             f"{path}: catalog-expand chain completed but no usable draft was built "
             f"(file_id={file_id!r}): {reasons}"

@@ -703,3 +703,48 @@ def test_fresh_files_sort_ahead_of_retried_ones(conn, tmp_path):
     _propose_for(conn, cfg, id_a, "a1")
     _fail(conn, "a1", "failed")
     assert list(_candidates(conn, USER_ID, cfg)) == [id_b, id_a]
+
+
+def test_a_candidate_matching_a_catalog_raw_builds_under_the_catalog_photo_id(
+    conn, tmp_path, offline_copy
+):
+    """Nearly every candidate is an export of a catalog RAW, so its landing row
+    carries that photo_id. expand_one used the synthetic file-<id> instead, and
+    mockups (keyed on the landing row's photo_id) rendered nothing, so no draft
+    was ever built (2026-11-24 weekly runs, 10 photos)."""
+    from shopsteward.editing.ingest import ingest_folder
+    from shopsteward.editing.projections import rebuild_editing
+
+    shoot = tmp_path / "shoot"
+    shoot.mkdir()
+    (shoot / "one.CR3").write_bytes(b"raw-one")
+    Image.new("RGB", (20, 20)).save(shoot / "one.jpg", "JPEG")
+    (photo_id,) = ingest_folder(conn, user_id=USER_ID, path=shoot, mode="hero").photo_ids
+    rebuild_editing(conn)
+
+    cfg, file_id = _one_candidate_cfg(conn, tmp_path)  # candidates/one.jpg
+    # An unlisted sibling export of the SAME RAW, already a landing file: it
+    # shares the catalog photo_id but must never get mockups or a draft.
+    from shopsteward.pipeline import tuning
+    from shopsteward.pipeline.config import TUNING_PROFILE_PATH
+    from shopsteward.pipeline.listings import adopt
+
+    tuning.seed(conn, USER_ID, TUNING_PROFILE_PATH)
+    sibling = _candidate_image(tmp_path / "older_exports", "one-alt.jpg")
+    assert adopt.ingest_one_file(conn, USER_ID, sibling) is not None
+    vision = FakeVisionAdapter([_verdict_result()])
+    cap = _cap(FakeEtsyWriteAdapter(), _ok(), vision=vision)
+    register(cap)
+
+    report = run(conn, USER_ID, cfg, [cap], today=TODAY, live_autonomy=True)
+    assert (report.executed, report.refused, report.failed) == (1, 0, 0)
+    (scored,) = read_all(conn, "photo.scored")
+    assert scored.payload["photo_id"] == photo_id
+    row = conn.execute(
+        "SELECT title, photo_id FROM proj_listing_drafts WHERE landing_file_id=?", (file_id,)
+    ).fetchone()
+    assert row["title"] is not None and row["photo_id"] == photo_id
+    drafts = conn.execute(
+        "SELECT landing_file_id FROM proj_listing_drafts WHERE photo_id=?", (photo_id,)
+    ).fetchall()
+    assert [d["landing_file_id"] for d in drafts] == [file_id]  # no sibling draft
