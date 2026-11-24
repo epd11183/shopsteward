@@ -455,7 +455,7 @@ class ListingCatalogExpand:
 
         # From here a draft exists on Etsy: nothing below may raise (the file
         # is landed, so a raise could never be retried -- module docstring).
-        model = tuning.get_profile(conn, user_id).vision.rescore_model
+        model = tuning.get_profile(conn, user_id).vision.copy_check_model
         gate = run_readback(
             conn, user_id, draft_id, adapter=self._adapter, checker=self._checker, model=model
         )
