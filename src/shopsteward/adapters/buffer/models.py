@@ -23,6 +23,7 @@ class BufferChannel(BaseModel):
 class BufferPostSpec(BaseModel):
     channel_id: str
     text: str
+    service: Service | None = None
     image_url: str | None = None
     mode: Literal["addToQueue", "customScheduled"] = "customScheduled"
     due_at: datetime | None = None

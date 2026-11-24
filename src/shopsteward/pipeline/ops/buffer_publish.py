@@ -313,6 +313,7 @@ def publish(
     spec = BufferPostSpec(
         channel_id=channel.channel_id,
         text=text,
+        service=channel.service,
         image_url=image_url,
         mode="customScheduled",
         due_at=due_at,
