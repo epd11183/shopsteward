@@ -37,6 +37,9 @@ adapter and burns the proposal. Check the gate first.
    and THE SHOP. Report from it.
 5. `uv run shopsteward ops status`. Shows month spend against the $20 cap and
    whether ops is halted.
+6. Missed-run alert: the Windows task "ShopSteward weekly-run heartbeat"
+   (daily 09:00, `scripts/ops_heartbeat_alert.ps1`) pops up a desktop alert when
+   `ops heartbeat` finds no live sync in 8 days. Step 1 is what resets it.
 
 Act-then-show: do listing fixes yourself and report them. Never hand a listing
 fix back to the operator. Every executed action prints an
