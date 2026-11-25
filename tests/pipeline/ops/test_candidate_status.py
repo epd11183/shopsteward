@@ -108,6 +108,18 @@ def test_cli_json_is_read_only(tmp_path, monkeypatch):
 
     db = tmp_path / "cli.db"
     monkeypatch.setenv("SHOPSTEWARD_DB", str(db))
+    # Never scan the operator's real candidates folder from a test.
+    from shopsteward.pipeline.ops import config as ops_config
+
+    shipped = ops_config.load_ops_config()
+    isolated = shipped.model_copy(
+        update={
+            "catalog_expansion": shipped.catalog_expansion.model_copy(
+                update={"source_folder": str(tmp_path / "absent")}
+            )
+        }
+    )
+    monkeypatch.setattr(ops_config, "load_ops_config", lambda *a, **k: isolated)
     result = CliRunner().invoke(app, ["listings", "candidate-status", "--json"])
     assert result.exit_code == 0, result.output
     out = json.loads(result.output)
