@@ -134,6 +134,11 @@ class RunReport(BaseModel):
     # E1(b): pending proposals swept into a terminal `action.expired` this
     # run because `today` has passed their own `expires_at`.
     expired: int = 0
+    # dry_run only: what a live run would have appended as `action.proposed`.
+    # A dry run records NO action.*/capability.* events (a recorded dry-run
+    # proposal/dedupe/refusal changed what the next live run did, 2026-11-24),
+    # so this is the only place those proposals are visible.
+    would_propose: list[ProposedAction] = []
 
 
 def _action_status(conn: sqlite3.Connection, user_id: int, action_id: str) -> str | None:
@@ -158,7 +163,14 @@ def _action_status(conn: sqlite3.Connection, user_id: int, action_id: str) -> st
 # ponytail: see the matching comment on `_pending_targets` below -- this
 # also calls `_action_status` (a full event-log scan) per still-pending
 # proposal. Same ceiling, same upgrade path.
-def _sweep_expired(conn: sqlite3.Connection, user_id: int, today: date, report: RunReport) -> None:
+def _sweep_expired(
+    conn: sqlite3.Connection,
+    user_id: int,
+    today: date,
+    report: RunReport,
+    *,
+    dry_run: bool = False,
+) -> None:
     """E1(b): terminalize every still-pending ("proposed", not yet approved/
     executed/etc) proposal whose own `expires_at` has passed as of `today`
     -- an `action.expired` event, folded into `_TERMINAL`/`_APPROVE_
@@ -174,9 +186,11 @@ def _sweep_expired(conn: sqlite3.Connection, user_id: int, today: date, report: 
         action_id = p["action_id"]
         if _action_status(conn, user_id, action_id) != "proposed":
             continue  # already resolved some other way -- nothing to expire
-        append(
-            conn, Event(user_id=user_id, type="action.expired", payload={"action_id": action_id})
-        )
+        if not dry_run:
+            append(
+                conn,
+                Event(user_id=user_id, type="action.expired", payload={"action_id": action_id}),
+            )
         report.expired += 1
 
 
@@ -268,6 +282,7 @@ def run(
     today: date | None = None,
     proposals: list[ProposedAction] | None = None,
     live_autonomy: bool = False,
+    record_completion: bool = False,
 ) -> RunReport:
     """Every capability's own `propose()` ALWAYS runs, planner or not -- a
     deterministic capability (listing.renew/autorenew_off/autorenew_on/
@@ -320,7 +335,7 @@ def run(
     today = today or datetime.now(UTC).date()
     states = capability_states(conn, user_id)
 
-    _sweep_expired(conn, user_id, today, report)
+    _sweep_expired(conn, user_id, today, report, dry_run=dry_run)
     pending_targets = _pending_targets(conn, user_id, today)
 
     proposals_by_cap: dict[str, list[ProposedAction]] | None = None
@@ -403,29 +418,34 @@ def run(
                         # intent_dropped / governor refusal-is-an-event
                         # precedent: "why didn't this get proposed" is
                         # answerable from the log without mutating anything).
+                        if not dry_run:
+                            append(
+                                conn,
+                                Event(
+                                    user_id=user_id,
+                                    type="action.proposal_deduped",
+                                    payload={
+                                        "action_id": action.action_id,
+                                        "capability": action.capability,
+                                        "target_id": action.target_id,
+                                        "existing_action_id": existing_id,
+                                    },
+                                ),
+                            )
+                        report.skipped_duplicate_target += 1
+                        continue
+                    if not dry_run:
                         append(
                             conn,
                             Event(
                                 user_id=user_id,
-                                type="action.proposal_deduped",
+                                type="action.superseded",
                                 payload={
-                                    "action_id": action.action_id,
-                                    "capability": action.capability,
-                                    "target_id": action.target_id,
-                                    "existing_action_id": existing_id,
+                                    "action_id": existing_id,
+                                    "superseded_by": action.action_id,
                                 },
                             ),
                         )
-                        report.skipped_duplicate_target += 1
-                        continue
-                    append(
-                        conn,
-                        Event(
-                            user_id=user_id,
-                            type="action.superseded",
-                            payload={"action_id": existing_id, "superseded_by": action.action_id},
-                        ),
-                    )
                     # fall through -- (action.capability, action.target_id)
                     # now proposes/governs `action` as normal, below.
 
@@ -437,17 +457,20 @@ def run(
                 report.skipped_idempotent += 1
                 continue
             if status is None:
-                append(
-                    conn,
-                    Event(user_id=user_id, type="action.proposed", payload=action.model_dump()),
-                )
+                if dry_run:
+                    report.would_propose.append(action)
+                else:
+                    append(
+                        conn,
+                        Event(user_id=user_id, type="action.proposed", payload=action.model_dump()),
+                    )
                 report.proposed += 1
                 pending_targets[(action.capability, action.target_id)] = (
                     action.action_id,
                     action.inputs_hash,
                 )
 
-            decision = govern(conn, user_id, action, cap, cfg, today)
+            decision = govern(conn, user_id, action, cap, cfg, today, record=not dry_run)
             if not decision.approved:
                 report.refused += 1
                 continue
@@ -496,11 +519,24 @@ def run(
             if report.executed > executed_before and action.target_type == _LISTING_TARGET:
                 touched_listings.add(action.target_id)
 
-        # Promotion depends only on already-recorded approvals/executions/
-        # elapsed days (tiers.py, pure) -- orthogonal to whether THIS run
-        # executes anything, so it runs even under --dry-run.
-        _maybe_promote(conn, user_id, cap, cfg, today)
+        # Promotion appends a capability.* event, so a dry run skips it.
+        if not dry_run:
+            _maybe_promote(conn, user_id, cap, cfg, today)
 
+    if record_completion and not dry_run:
+        # `ops heartbeat` dates the weekly run by this, not by etsy.shop.observed
+        # (a daily read-only `sync --live` appends that too).
+        append(
+            conn,
+            Event(
+                user_id=user_id,
+                type="ops.run.completed",
+                payload={
+                    **report.model_dump(exclude={"would_propose", "dry_run"}),
+                    "today": today.isoformat(),
+                },
+            ),
+        )
     return report
 
 

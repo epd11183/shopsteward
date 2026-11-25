@@ -434,8 +434,12 @@ def run_cmd(
             dry_run=dry_run,
             proposals=proposals,
             live_autonomy=live_autonomy,
+            # Only a full LIVE run is the weekly run (heartbeat).
+            record_completion=capability is None and live_autonomy,
         )
-        typer.echo(f"ops run: {report.model_dump()}")
+        typer.echo(f"ops run: {report.model_dump(exclude={'would_propose'})}")
+        for a in report.would_propose:
+            typer.echo(f"  would propose: {a.capability} {a.target_id} ({a.action_id})")
         if report.live_gate_blocked:
             # Finding 2: without --live-autonomy, a live-gated action that
             # would otherwise auto-execute (AUTO/NOTIFY tier) is refused
@@ -519,11 +523,14 @@ def panel_unblock_cmd(
 @ops_app.command("heartbeat")
 def heartbeat(
     max_age_days: Annotated[
-        float, typer.Option("--max-age-days", help="Alert if the last live sync is older")
+        float, typer.Option("--max-age-days", help="Alert if the last live ops run is older")
     ] = 8.0,
 ) -> None:
-    """Exit 1 if the weekly run hasn't happened: its first step (`sync --live`)
-    always appends etsy.shop.observed, so the newest one dates the last run."""
+    """Exit 1 if the weekly run hasn't happened: the newest `ops.run.completed`
+    (appended by every live `ops run`) dates the last live ops run. A sync
+    alone does not count (a daily `sync --live` also appends etsy.shop.observed).
+    Until the first `ops.run.completed` exists, falls back to the newest
+    etsy.shop.observed so it doesn't fire falsely right after deploy."""
     from datetime import UTC, datetime
 
     from shopsteward.core.db import connect
@@ -531,22 +538,25 @@ def heartbeat(
 
     conn = connect(db_path())
     try:
-        row = conn.execute(
-            "SELECT MAX(created_at) FROM events WHERE user_id=? AND type='etsy.shop.observed'",
-            (DEFAULT_USER_ID,),
-        ).fetchone()
+        last = None
+        for event_type in ("ops.run.completed", "etsy.shop.observed"):
+            last = conn.execute(
+                "SELECT MAX(created_at) FROM events WHERE user_id=? AND type=?",
+                (DEFAULT_USER_ID, event_type),
+            ).fetchone()[0]
+            if last is not None:
+                break
     finally:
         conn.close()
-    last = row[0] if row else None
     if last is None:
-        typer.echo("STALE: no live sync has ever run")
+        typer.echo("STALE: no live ops run has ever happened")
         raise typer.Exit(1)
     age = datetime.now(UTC) - datetime.fromisoformat(last.replace("Z", "+00:00"))
     days = age.total_seconds() / 86400
     if days > max_age_days:
-        typer.echo(f"STALE: last weekly run (live sync) {days:.1f} days ago ({last})")
+        typer.echo(f"STALE: last live ops run {days:.1f} days ago ({last})")
         raise typer.Exit(1)
-    typer.echo(f"ok: last live sync {days:.1f} days ago ({last})")
+    typer.echo(f"ok: last live ops run {days:.1f} days ago ({last})")
 
 
 @ops_app.command("status")

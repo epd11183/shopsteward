@@ -14,7 +14,7 @@ import pytest
 from shopsteward.adapters.etsy.fake import FakeEtsyWriteAdapter
 from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.core.db import connect, migrate
-from shopsteward.core.events import read_all
+from shopsteward.core.events import Event, append, read_all
 from shopsteward.core.projections import rebuild as rebuild_core
 from shopsteward.pipeline.ops import config as ops_config
 from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
@@ -81,9 +81,29 @@ def _seed_listing(
 
 def _cfg(**autonomy_overrides):
     cfg = ops_config.load_ops_config()
+    cfg.reprice.blackout_until = None  # the shipped Cyber Week blackout is tested explicitly
     for k, v in autonomy_overrides.items():
         setattr(cfg.autonomy, k, v)
     return cfg
+
+
+def _seed_cfg(conn) -> None:
+    """Seed the stored config like the shipped one, minus the Cyber Week
+    blackout (execute() reads the stored config, and the blackout is wall-clock
+    dependent)."""
+    cfg = _cfg()
+    append(
+        conn,
+        Event(
+            user_id=USER_ID,
+            type="opsconfig.seeded",
+            payload={
+                "name": cfg.name,
+                "config": cfg.model_dump(by_alias=True),
+                "source": "defaults",
+            },
+        ),
+    )
 
 
 # --- the load-bearing safety test --------------------------------------------
@@ -142,7 +162,7 @@ def test_pod_listing_execute_is_refused_even_if_somehow_reached(conn):
     fake = FakeEtsyWriteAdapter()
     fake.seed_listing(LISTING_CANVAS, state="active", price=20.0)
     cap = ListingReprice(fake)
-    ops_config.seed(conn, USER_ID)
+    _seed_cfg(conn)
     rebuild_ops(conn)
 
     forged = ProposedAction(
@@ -425,7 +445,7 @@ def test_execute_refuses_a_hand_forged_action_with_a_non_finite_price(conn):
     _seed_listing(conn, LISTING_DIGITAL, "Loon Digital Download", price_usd=20.0)
     rebuild_core(conn)
     rebuild_ops(conn)
-    ops_config.seed(conn, USER_ID)
+    _seed_cfg(conn)
     rebuild_ops(conn)
     fake = FakeEtsyWriteAdapter()
     fake.seed_listing(LISTING_DIGITAL, state="active", price=20.0)
@@ -487,7 +507,7 @@ def test_params_round_trip_through_action_proposed_event(conn):
     _seed_listing(conn, LISTING_DIGITAL, "Loon Digital Download", price_usd=20.0)
     rebuild_core(conn)
     rebuild_ops(conn)
-    ops_config.seed(conn, USER_ID)
+    _seed_cfg(conn)
     rebuild_ops(conn)
     fake = FakeEtsyWriteAdapter()
     fake.seed_listing(LISTING_DIGITAL, state="active", price=20.0)
@@ -532,7 +552,7 @@ def test_e2e_valid_intent_lands_at_t2_approve_calls_update_listing_price_undo_re
     _seed_listing(conn, LISTING_DIGITAL, "Loon Digital Download", price_usd=20.0)
     rebuild_core(conn)
     rebuild_ops(conn)
-    ops_config.seed(conn, USER_ID)
+    _seed_cfg(conn)
     rebuild_ops(conn)
     fake = FakeEtsyWriteAdapter()
     fake.seed_listing(LISTING_DIGITAL, state="active", price=20.0)
@@ -572,9 +592,9 @@ def test_e2e_valid_intent_lands_at_t2_approve_calls_update_listing_price_undo_re
     assert state.tier == Tier.PROPOSE
     assert state.undos == 0  # reset by the demotion the undo itself triggered
 
-    # idempotent re-run under a fresh price/action_id since the price moved.
+    # the undo starts the revert cooldown: a re-run proposes nothing for it.
     rerun = run(conn, USER_ID, cfg, [cap], today=TODAY)
-    assert rerun.skipped_idempotent == 1  # same target_id/inputs_hash/day -> terminal action_id
+    assert rerun.proposed == 0 and rerun.skipped_idempotent == 0
 
 
 # --- T2 ceiling: never promotable ------------------------------------------
@@ -585,15 +605,13 @@ def test_undo_demotes_the_ladder_state_but_effective_tier_stays_auto(conn):
     _seed_listing(conn, 805, "Second Digital Download", price_usd=50.0)
     rebuild_core(conn)
     rebuild_ops(conn)
-    ops_config.seed(conn, USER_ID)
+    _seed_cfg(conn)
     rebuild_ops(conn)
     fake = FakeEtsyWriteAdapter()
     fake.seed_listing(LISTING_DIGITAL, state="active", price=50.0)
     fake.seed_listing(805, state="active", price=50.0)
     cap = ListingReprice(fake)
     cfg = _cfg(enabled=True, weekly_catalog_pct_cap=1.0)
-    # The shipped floor entry is paused (2026-11-24); this tests the floor mechanism.
-    cfg.autonomy.tier_floor = {**cfg.autonomy.tier_floor, "listing.reprice": int(Tier.AUTO)}
 
     run(conn, USER_ID, cfg, [cap], today=TODAY)
     proposed = [e.payload for e in read_all(conn, "action.proposed")]
@@ -615,7 +633,7 @@ def test_no_secret_in_any_payload_and_append_only(conn):
     _seed_listing(conn, LISTING_DIGITAL, "Loon Digital Download", price_usd=20.0)
     rebuild_core(conn)
     rebuild_ops(conn)
-    ops_config.seed(conn, USER_ID)
+    _seed_cfg(conn)
     rebuild_ops(conn)
     fake = FakeEtsyWriteAdapter()
     fake.seed_listing(LISTING_DIGITAL, state="active", price=20.0)
@@ -636,3 +654,150 @@ def test_no_secret_in_any_payload_and_append_only(conn):
         for word in banned:
             assert word not in blob, f"event {e.type} payload leaked {word!r}: {blob}"
         assert e.user_id == USER_ID
+
+
+# --- safety: sale blackout + respect reverts (2026-11-24) ----------------------
+
+
+def _prepare(conn):
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    _seed_cfg(conn)
+    rebuild_ops(conn)
+
+
+def test_blackout_proposes_nothing_until_the_end_date_inclusive(conn):
+    _seed_listing(conn, LISTING_DIGITAL, "Loon at Dusk Digital Download")
+    _prepare(conn)
+    cap = ListingReprice(FakeEtsyWriteAdapter())
+    cfg = _cfg()
+    cfg.reprice.blackout_until = TODAY.isoformat()
+    assert cap.propose(conn, USER_ID, cfg) == []
+    cfg.reprice.blackout_until = (TODAY - timedelta(days=1)).isoformat()
+    assert [a.target_id for a in cap.propose(conn, USER_ID, cfg)] == [str(LISTING_DIGITAL)]
+
+
+def test_shipped_blackout_is_the_end_of_cyber_week():
+    assert ops_config.load_ops_config().reprice.blackout_until == "2026-12-03"
+
+
+def test_blackout_blocks_executing_an_older_pending_proposal(conn, monkeypatch):
+    from shopsteward.pipeline.ops.capabilities import reprice as reprice_mod
+
+    _seed_listing(conn, LISTING_DIGITAL, "Loon at Dusk Digital Download")
+    _prepare(conn)
+    fake = FakeEtsyWriteAdapter()
+    fake.seed_listing(LISTING_DIGITAL, state="active", price=20.0)
+    cap = ListingReprice(fake)
+    cfg = _cfg()
+    (action,) = cap.propose(conn, USER_ID, cfg)
+    blackout_cfg = _cfg()
+    blackout_cfg.reprice.blackout_until = TODAY.isoformat()
+    monkeypatch.setattr(reprice_mod, "get_ops_config", lambda c, u: blackout_cfg)
+    with pytest.raises(ValueError, match="blackout"):
+        cap.execute(conn, USER_ID, action)
+
+
+def test_undo_blocks_the_next_cut_for_the_cooldown(conn):
+    _seed_listing(conn, LISTING_DIGITAL, "Loon at Dusk Digital Download")
+    _prepare(conn)
+    fake = FakeEtsyWriteAdapter()
+    fake.seed_listing(LISTING_DIGITAL, state="active", price=20.0)
+    cap = ListingReprice(fake)
+    cfg = _cfg(enabled=True, weekly_catalog_pct_cap=1.0)
+
+    run(conn, USER_ID, cfg, [cap], today=TODAY, live_autonomy=True)
+    (executed,) = read_all(conn, "action.executed")
+    undo_action(conn, USER_ID, executed.payload["action_id"], [cap], live_autonomy=True)
+
+    # proj_listings still shows the pre-cut price, so only the cooldown stops it
+    assert cap.propose(conn, USER_ID, cfg) == []
+    from shopsteward.pipeline.ops.capabilities.reprice import _cooling_down
+
+    assert _cooling_down(conn, USER_ID, cfg, TODAY + timedelta(days=29)) == {LISTING_DIGITAL}
+    assert _cooling_down(conn, USER_ID, cfg, TODAY + timedelta(days=30)) == set()
+
+
+def _seed_price_restore(conn, listing_id: int, cut_days_ago: int, restored_days_ago: int) -> None:
+    for price, ago in ((15.0, cut_days_ago), (20.0, restored_days_ago)):
+        seed_listing_observed_on(
+            conn,
+            listing_id=listing_id,
+            title="Loon at Dusk Digital Download",
+            day=TODAY - timedelta(days=ago),
+            views=100,
+            price_usd=price,
+        )
+
+
+def test_manual_price_increase_blocks_the_next_cut(conn):
+    _seed_price_restore(conn, LISTING_DIGITAL, cut_days_ago=20, restored_days_ago=10)
+    _prepare(conn)
+    cap = ListingReprice(FakeEtsyWriteAdapter())
+    assert cap.propose(conn, USER_ID, _cfg()) == []
+
+
+def test_old_manual_price_increase_no_longer_blocks(conn):
+    _seed_price_restore(conn, LISTING_DIGITAL, cut_days_ago=60, restored_days_ago=40)
+    _prepare(conn)
+    cap = ListingReprice(FakeEtsyWriteAdapter())
+    assert [a.target_id for a in cap.propose(conn, USER_ID, _cfg())] == [str(LISTING_DIGITAL)]
+
+
+def test_a_normal_dead_listing_is_still_cut_after_the_blackout(conn):
+    _seed_listing(conn, LISTING_DIGITAL, "Loon at Dusk Digital Download")
+    _prepare(conn)
+    cap = ListingReprice(FakeEtsyWriteAdapter())
+    cfg = ops_config.load_ops_config()  # shipped config, blackout and all
+    assert cfg.reprice.blackout_until is not None
+    cfg.reprice.blackout_until = (TODAY - timedelta(days=1)).isoformat()  # i.e. after 2026-12-02
+    (action,) = cap.propose(conn, USER_ID, cfg)
+    assert action.params["price_usd"] == 18.0
+
+
+def test_hand_restore_between_syncs_blocks_the_next_cut(conn):
+    """sync sees $20, the chassis cuts to $18, the operator restores $20, the
+    next sync sees $20: no observed-to-observed increase, but it is an increase
+    over the price the chassis wrote."""
+    from shopsteward.pipeline.ops.capabilities.reprice import _cooling_down
+
+    _seed_listing(conn, LISTING_DIGITAL, "Loon at Dusk Digital Download")
+    _prepare(conn)
+    fake = FakeEtsyWriteAdapter()
+    fake.seed_listing(LISTING_DIGITAL, state="active", price=20.0)
+    cap = ListingReprice(fake)
+    cfg = _cfg(enabled=True, weekly_catalog_pct_cap=1.0)
+
+    run(conn, USER_ID, cfg, [cap], today=TODAY, live_autonomy=True)
+    assert read_all(conn, "action.executed")
+    assert _cooling_down(conn, USER_ID, cfg, TODAY) == set()
+
+    seed_listing_observed_on(
+        conn,
+        listing_id=LISTING_DIGITAL,
+        title="Loon at Dusk Digital Download",
+        day=TODAY,
+        views=100,
+        price_usd=20.0,
+    )
+    assert _cooling_down(conn, USER_ID, cfg, TODAY) == {LISTING_DIGITAL}
+
+
+def test_undo_of_an_orphan_deduped_id_still_starts_the_cooldown(conn):
+    from shopsteward.pipeline.ops.capabilities.reprice import _cooling_down
+
+    for etype, payload in (
+        (
+            "action.proposal_deduped",
+            {
+                "action_id": "orphan",
+                "capability": "listing.reprice",
+                "target_id": str(LISTING_DIGITAL),
+                "existing_action_id": "x",
+            },
+        ),
+        ("action.executed", {"action_id": "orphan", "before": {}, "after": {"price_usd": 18.0}}),
+        ("action.undone", {"action_id": "orphan", "restored_to": {}}),
+    ):
+        append(conn, Event(user_id=USER_ID, type=etype, payload=payload))
+    assert _cooling_down(conn, USER_ID, _cfg(), TODAY) == {LISTING_DIGITAL}

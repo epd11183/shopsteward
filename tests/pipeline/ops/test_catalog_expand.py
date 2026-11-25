@@ -410,7 +410,7 @@ def test_rejected_photo_does_not_return_tomorrow(conn, tmp_path):
     cfg = _apply_ops_cfg(conn, tmp_path, source_folder=folder)
     cap = _cap(FakeEtsyWriteAdapter())
 
-    run(conn, USER_ID, cfg, [cap], today=TODAY, dry_run=True)
+    run(conn, USER_ID, cfg, [cap], today=TODAY)
     action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
 
     reject_action(conn, USER_ID, action_id)
@@ -504,7 +504,7 @@ def test_genuine_staleness_still_raises_and_terminalizes(conn, tmp_path, offline
     cap = _cap(FakeEtsyWriteAdapter())
     register(cap)
 
-    run(conn, USER_ID, cfg, [cap], today=TODAY, dry_run=True)
+    run(conn, USER_ID, cfg, [cap], today=TODAY)
     action_id = read_all(conn, "action.proposed")[0].payload["action_id"]
 
     photo.unlink()  # genuinely stale -- not a pace reason

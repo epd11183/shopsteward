@@ -632,7 +632,7 @@ def test_cli_ops_run_planner_disabled_uses_the_deterministic_path(tmp_path, monk
     fake = FakeEtsyWriteAdapter()
     monkeypatch.setattr(push_mod, "build_etsy_write_adapter", lambda *, live: fake)
 
-    result = runner_cli.invoke(app, ["ops", "run"])
+    result = runner_cli.invoke(app, ["ops", "run", "--no-dry-run"])
 
     assert result.exit_code == 0, result.output
     assert "planner: off (deterministic)" in result.output
@@ -641,6 +641,8 @@ def test_cli_ops_run_planner_disabled_uses_the_deterministic_path(tmp_path, monk
     # autorenew_off + deactivate both target the dead/active listing (reprice
     # excludes it as non-digital-titled; seo_edit proposes nothing
     # deterministically; tune_threshold has nothing to trigger it).
+    # no --live-autonomy: not the weekly run, so the heartbeat stays honest
+    assert read_all(conn, "ops.run.completed") == []
     assert len(read_all(conn, "action.proposed")) == 2
 
 
@@ -669,7 +671,7 @@ def test_cli_ops_run_planner_enabled_but_gate_closed_never_builds_an_adapter(tmp
 
     monkeypatch.setattr(planner_openrouter_mod, "OpenRouterPlannerAdapter", _no_live_adapter)
 
-    result = runner_cli.invoke(app, ["ops", "run"])
+    result = runner_cli.invoke(app, ["ops", "run", "--no-dry-run"])
 
     assert result.exit_code == 0, result.output
     assert "planner: off (deterministic)" in result.output

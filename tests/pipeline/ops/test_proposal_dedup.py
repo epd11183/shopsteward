@@ -247,6 +247,64 @@ def test_dry_run_dedupe_then_live_run_executes_only_proposed_ids_and_undo_works(
     assert len(read_all(conn, "action.undone")) == 1
 
 
+def test_dry_run_writes_no_events_but_reports_would_propose(conn):
+    cfg = _cfg(tier_floor={"stub.dd": 1})
+    cap = StubCapability(key="stub.dd", day=DAY1, targets={"111": {"on": True}})
+    report = run(conn, USER_ID, cfg, [cap], today=DAY1, dry_run=True)
+    assert report.proposed == 1
+    assert [a.target_id for a in report.would_propose] == ["111"]
+    assert read_all(conn) == []
+
+
+def _event_shape(conn):
+    return [(e.type, e.payload) for e in read_all(conn)]
+
+
+@pytest.mark.parametrize("floor", [{"stub.dd": 1, "stub.old": 1}, {}])
+def test_dry_run_then_live_equals_live_alone(tmp_path, floor):
+    """Dry runs leave no trace: with a live-recorded pending proposal, one past
+    its TTL, a same-target dedupe and a supersede in play, the live run's event
+    sequence is identical to a live run alone (ids/timestamps aside)."""
+    day0 = DAY1 - timedelta(days=60)  # stub.old's proposal is long expired by DAY2
+    shapes = []
+    for with_dry in (True, False):
+        c = connect(tmp_path / f"{with_dry}.db")
+        migrate(c)
+        old = StubCapability(key="stub.old", day=day0, targets={"999": {"on": True}})
+        run(c, USER_ID, _cfg(), [old], today=day0)  # PROPOSE tier: stays pending
+        cap = StubCapability(key="stub.dd", day=DAY1, targets={"111": {"on": True}})
+        run(c, USER_ID, _cfg(), [cap], today=DAY1)  # pending DAY1 id
+        cfg = _cfg(tier_floor=floor)
+        cap.day = DAY2
+        if with_dry:
+            run(c, USER_ID, cfg, [cap, old], today=DAY2, dry_run=True)
+            run(c, USER_ID, _cfg(), [cap, old], today=DAY2, dry_run=True)
+        run(c, USER_ID, cfg, [cap, old], today=DAY2)
+        shapes.append(_event_shape(c))
+    assert shapes[0] == shapes[1]
+    types = [t for t, _ in shapes[0]]
+    assert "action.expired" in types and types.count("action.proposed") >= 2
+
+
+def test_live_run_appends_ops_run_completed_and_dry_run_does_not(conn):
+    cap = StubCapability(key="stub.rc", day=DAY1)
+    run(conn, USER_ID, _cfg(), [cap], today=DAY1, dry_run=True, record_completion=True)
+    assert read_all(conn, "ops.run.completed") == []
+    run(conn, USER_ID, _cfg(), [cap], today=DAY1)  # default: not the weekly run
+    assert read_all(conn, "ops.run.completed") == []
+    run(conn, USER_ID, _cfg(), [cap], today=DAY1, record_completion=True)
+    (done,) = read_all(conn, "ops.run.completed")
+    assert done.payload["today"] == DAY1.isoformat() and "proposed" in done.payload
+
+
+def test_dry_run_does_not_record_a_precondition_refusal(conn):
+    cfg = _cfg()
+    cap = StubCapability(key="stub.pre", day=DAY1, precondition_ok=False)
+    report = run(conn, USER_ID, cfg, [cap], today=DAY1, dry_run=True)
+    assert report.refused == 1
+    assert read_all(conn) == []
+
+
 def test_undo_recovers_an_id_executed_under_the_old_dedupe_bug(conn):
     """Ids already executed with no action.proposed (pre-fix) are undoable via
     the proposal they were deduped against (identical inputs by construction)."""

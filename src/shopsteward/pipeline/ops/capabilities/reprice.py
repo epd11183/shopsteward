@@ -50,14 +50,16 @@ import hashlib
 import math
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from shopsteward.adapters.etsy.interface import EtsyWriteAdapter
 from shopsteward.adapters.planner.interface import ProposalIntent
 from shopsteward.core.events import read_all
+from shopsteward.core.sync import read_live_observed
 from shopsteward.pipeline.ops.config import get_ops_config, ops_config_hash
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
 from shopsteward.pipeline.ops.registry import StaleTargetError, compute_action_id
+from shopsteward.pipeline.ops.timeutil import parse_ts
 
 
 @dataclass(frozen=True)
@@ -98,6 +100,69 @@ def _is_conservatively_digital(title: str, keywords: dict[str, list[str]]) -> bo
     )
 
 
+def _in_blackout(cfg: OpsConfig, today: date) -> bool:
+    until = cfg.reprice.blackout_until
+    return until is not None and today <= date.fromisoformat(until)
+
+
+def _cooling_down(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, today: date) -> set[int]:
+    """Listings inside `revert_cooldown_days` of a revert: an `action.undone`
+    of a reprice on it, or an observed price INCREASE (the operator restoring
+    a price by hand). The price stream per listing merges `etsy.listing.
+    observed` prices with the price each reprice executed WROTE (by event id),
+    so a restore between two syncs (observed 20, we cut to 18, operator back
+    to 20, observed 20) still shows as an increase over what we wrote."""
+    last: dict[int, date] = {}
+
+    def note(listing_id: int, day: date) -> None:
+        if listing_id not in last or day > last[listing_id]:
+            last[listing_id] = day
+
+    # action_id -> listing. `proposal_deduped` also carries capability+target_id:
+    # ids executed under the pre-#88 dedupe bug have no action.proposed.
+    target_of: dict[str, int] = {}
+    for e in read_all(conn, "action."):
+        if (
+            e.user_id == user_id
+            and e.type in ("action.proposed", "action.proposal_deduped")
+            and e.payload["capability"] == ListingReprice.key
+        ):
+            target_of[e.payload["action_id"]] = int(e.payload["target_id"])
+    for e in read_all(conn, "action.undone"):
+        if e.user_id == user_id and e.payload["action_id"] in target_of:
+            note(target_of[e.payload["action_id"]], parse_ts(e.created_at).date())
+
+    # (event id, listing, price, day-if-this-is-an-observation)
+    stream: list[tuple[int, int, float, date | None]] = []
+    for e in read_live_observed(conn, "etsy.listing.observed"):
+        money = e.payload.get("price")
+        if e.user_id != user_id or not money or not money.get("divisor"):
+            continue
+        stream.append(
+            (
+                e.id,
+                int(e.payload["listing_id"]),
+                money["amount"] / money["divisor"],
+                parse_ts(e.created_at).date(),
+            )
+        )
+    for e in read_all(conn, "action.executed"):
+        if e.user_id == user_id and e.payload["action_id"] in target_of:
+            after = (e.payload.get("after") or {}).get("price_usd")
+            if after is not None:
+                stream.append((e.id, target_of[e.payload["action_id"]], float(after), None))
+
+    prev: dict[int, float] = {}
+    for _, listing_id, price, observed_day in sorted(stream, key=lambda t: t[0]):
+        if observed_day is not None and price > prev.get(listing_id, price) + 0.005:
+            note(listing_id, observed_day)
+        prev[listing_id] = price
+
+    return {
+        lid for lid, day in last.items() if (today - day).days < cfg.reprice.revert_cooldown_days
+    }
+
+
 def _eligible(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> dict[str, _Target]:
     """target_id -> the eligible-to-reprice facts for that listing -- the
     ONE grounding function shared by propose() and materialize() so the two
@@ -107,9 +172,12 @@ def _eligible(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> dict[st
     `state`/`views`/`price_usd` already reflect the latest sync) rather than
     re-walking the event log itself -- same table analytics.py's own
     `_title`/`product_type_breakdown` read."""
-    start = datetime.now(UTC).date() - timedelta(days=cfg.windows.revenue_window_days - 1)
     end = datetime.now(UTC).date()
+    if _in_blackout(cfg, end):
+        return {}
+    start = end - timedelta(days=cfg.windows.revenue_window_days - 1)
     pod_linked = _pod_linked_listing_ids(conn, user_id)
+    cooling = _cooling_down(conn, user_id, cfg, end)
 
     rows = conn.execute(
         "SELECT listing_id, title, views, price_usd FROM proj_listings "
@@ -119,6 +187,8 @@ def _eligible(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> dict[st
 
     out: dict[str, _Target] = {}
     for r in rows:
+        if r["listing_id"] in cooling:
+            continue
         if r["listing_id"] in pod_linked:
             continue  # authoritative provider signal -- never eligible, no exceptions
         if not _is_conservatively_digital(r["title"], cfg.product_type_keywords):
@@ -283,6 +353,13 @@ class ListingReprice:
             raise StaleTargetError(
                 f"listing {listing_id}: not a digital listing -- refusing to reprice"
             )
+
+        # A proposal minted before a blackout/revert (or an old pending one the
+        # runner re-drives) must not execute inside it. Plain ValueError: a
+        # rate/policy condition, so a non-terminal refusal, not action.failed.
+        today = datetime.now(UTC).date()
+        if _in_blackout(cfg, today) or listing_id in _cooling_down(conn, user_id, cfg, today):
+            raise ValueError(f"listing {listing_id}: reprice blackout/revert cooldown -- refusing")
 
         # H2b: deliberately plain ValueError, not StaleTargetError, for the
         # two params checks below -- an invalid/missing price is a bad
