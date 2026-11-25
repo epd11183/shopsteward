@@ -267,6 +267,16 @@ capabilities only; `ops.tune_threshold` stays PROPOSE.
 The 11-24 weekly run re-cut five prices the operator had restored, on top of
 the 25% Cyber sale. Re-adding the floor entry is the operator's call.
 
+**Amended 2026-11-24 (later), explicit operator authorization: `listing.reprice`
+back to AUTO with guards.** The operator chose "safer auto price cuts":
+no cut while `reprice.blackout_until` (sale end date, shipped 2026-12-02) is
+today or later, and none within `reprice.revert_cooldown_days` (30) of an undo
+of a reprice or an observed manual price increase. Same guards block
+`ops approve`. Supersedes the pause above. Also: dry runs record no events;
+the read-back gate holds listings with sensor dust; the weekly run supplies
+its own candidates from Lightroom (rating >= 4) via `listings
+candidate-status`; a daily read-only sync runs in the heartbeat task.
+
 **Objective — optimize for contribution profit and long-term portfolio
 value, not gross sales or activity.** Trailing-window contribution profit
 (revenue minus Etsy fees, fulfillment cost, and attributed ad spend) is the

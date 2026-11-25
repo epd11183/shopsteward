@@ -26,8 +26,9 @@ on the command itself to act on the real shop.
    Then `scripts/ops.sh ops buffer-sync --live` (read-only). It records Buffer posts and metrics, marks
    sent pins posted at their real send time, and feeds the per-channel pacing
    counts. Run it every week: pacing is wrong without it.
-2. `scripts/ops.sh ops run`. This is a **dry run by default**. Read what it
-   would do.
+2. `scripts/ops.sh ops run`. This is a **dry run by default**: it records
+   nothing and prints `would propose: ...` lines. Read them. Pending approvals
+   reach NEEDS YOU only from the live step below.
 3. `scripts/ops.sh ops run --no-dry-run --live-autonomy`. This executes
    every AUTO-tier action inside the governor's caps:
    - listing capabilities: `seo_edit`, `size_claims_fix`, `reprice`,
@@ -42,16 +43,23 @@ on the command itself to act on the real shop.
      `social.caption_draft` queue Pinterest, Instagram and Facebook posts in
      Buffer, at least 4 hours ahead, within each channel's weekly target
      (governor `PACE`). Each can be undone while still queued;
-   - capabilities still at PROPOSE stay pending: `gapfill_reprint`,
-     `autorenew_on`, and `listing.reprice` (paused 2026-11-24 after it
-     re-cut prices during the sale; never approve a price cut yourself).
+   - `listing.reprice` is AUTO again (2026-11-24) with two guards: no cuts
+     while `reprice.blackout_until` (a sale end date; Etsy has no sales
+     API) is today or later, and no cut within 30 days of an undo or of a
+     price the operator raised by hand. If the operator starts a sale,
+     set `blackout_until` to its end date (`ops config` change) before the
+     run;
+   - capabilities still at PROPOSE stay pending: `gapfill_reprint` and
+     `autorenew_on`.
 4. `scripts/ops.sh ops brief`. Its sections are NEEDS YOU, DONE, REFUSED
    and THE SHOP. Report from it.
 5. `scripts/ops.sh ops status`. Shows month spend against the $20 cap and
    whether ops is halted.
 6. Missed-run alert: the Windows task "ShopSteward weekly-run heartbeat"
-   (daily 09:00, `scripts/ops_heartbeat_alert.ps1`) pops up a desktop alert when
-   `ops heartbeat` finds no live sync in 8 days. Step 1 is what resets it.
+   (daily 09:00, `scripts/ops_heartbeat_alert.ps1`) also runs a read-only
+   daily `sync --live` + `buffer-sync --live`, and pops up an alert when
+   `ops heartbeat` finds no full live `ops run` (step 3) in 8 days, or when
+   the daily sync fails. Only step 3 without `--capability` resets it.
 
 Act-then-show: do listing fixes yourself and report them. Never hand a listing
 fix back to the operator. Every executed action prints an
@@ -100,12 +108,31 @@ the photo by a vision model. A pass publishes it ($0.20, counted in the cap).
   `listings publish --listing-id <id> --live`. It re-runs the gate and
   publishes only on a pass. If a second attempt still fails, leave it a draft
   and report it.
+- **Sensor dust** (gate problem `sensor dust: <where>`): the listing stays a
+  draft. Never edit the photo. Report it with the location. Once the operator
+  has healed and re-exported it: `ops replace-file <listing_id> --file PATH
+  --live-autonomy` (swaps the draft's uploaded file; approve only after
+  checking it is the same photo), then `listings publish --listing-id <id>
+  --live` (re-runs the gate). If the gate was wrong (no dust visible), say so
+  and leave the publish to the operator.
 - **First live auto-published listings**: open each new listing's copy and
   compare it with its photo. The checker is good, not perfect (a wrong species
   is the hardest catch). Fix anything wrong with `ops edit-listing`; undo the
   action if the photo itself shouldn't be listed.
-- **Candidate supply**: the operator adds new JPEG exports to
-  `D:/Photos/Etsy/candidates` from time to time (full size, 6000px+ long edge,
+- **Candidate supply (before step 3, every run)**: run
+  `scripts/ops.sh listings candidate-status --json`. It returns `listed`,
+  `ingested`, `in_folder`, `failed` (base-name lists) and `needed` (a count).
+  If `needed` > 0 and the Lightroom tools are available: search the catalog
+  for rating >= 4; drop every base name (file name without extension, e.g.
+  `1J4A2472.CR3` -> `1J4A2472`) in `listed`, `ingested`, `in_folder` or
+  `failed`; prefer different scenes over near-identical frames of one burst or
+  a series already listed; export at most `needed` as JPEG, quality 100, full
+  size, sRGB, named `<base name>.jpg`, into `D:/Photos/Etsy/candidates`. Then
+  run the visual duplicate check below on the new files (older listings have
+  no source record, so `listed` misses them). Without Lightroom, or if fewer
+  than `needed` qualify, report the shortfall. Report `failed` files (3 failed
+  attempts): the operator moves them out or fixes them.
+  The operator may also add exports by hand (full size, 6000px+ long edge,
   only photos not already listed). Already-listed or near-duplicate photos are
   moved to `D:/Photos/Etsy/candidates_excluded`, never deleted. Before step 3,
   if files were added since the last run, check the new ones against the live
