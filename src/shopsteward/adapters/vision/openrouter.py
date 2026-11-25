@@ -53,8 +53,9 @@ _COPY_CHECK_SCHEMA = {
     "properties": {
         "ok": {"type": "boolean"},
         "problems": {"type": "array", "items": {"type": "string"}},
+        "dust": {"type": "string"},
     },
-    "required": ["ok", "problems"],
+    "required": ["ok", "problems", "dust"],
     "additionalProperties": False,
 }
 
@@ -63,6 +64,9 @@ _MAX_ERROR_LEN = 500
 # Vision models cap effective resolution, and the API rejects oversized image
 # payloads with HTTP 413. Full-res exports (6000px+) must be shrunk first.
 _MAX_IMAGE_EDGE = 1536
+# The copy check also looks for sensor dust, which shrinks to nothing at 1536px
+# on a 6000px frame; 2560px keeps ~40px blobs visible (~4.5k image tokens).
+_COPY_CHECK_EDGE = 2560
 
 
 def _downscale_jpeg(jpeg_bytes: bytes, max_edge: int = _MAX_IMAGE_EDGE) -> bytes:
@@ -151,7 +155,7 @@ class OpenRouterVisionAdapter:
     ) -> CopyCheckResult:
         """Copy-vs-photo check (the prompt is the constructor's `prompt`)."""
         listing = json.dumps({"title": title, "tags": tags, "description": description})
-        image = base64.b64encode(_downscale_jpeg(jpeg_bytes)).decode("ascii")
+        image = base64.b64encode(_downscale_jpeg(jpeg_bytes, _COPY_CHECK_EDGE)).decode("ascii")
         body = {
             "model": model,
             "temperature": 0,

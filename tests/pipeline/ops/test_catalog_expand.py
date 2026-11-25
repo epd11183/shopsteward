@@ -748,3 +748,41 @@ def test_a_candidate_matching_a_catalog_raw_builds_under_the_catalog_photo_id(
         "SELECT landing_file_id FROM proj_listing_drafts WHERE photo_id=?", (photo_id,)
     ).fetchall()
     assert [d["landing_file_id"] for d in drafts] == [file_id]  # no sibling draft
+
+
+def test_dust_verdict_fails_the_gate_and_leaves_a_draft(conn, tmp_path, offline_copy):
+    adapter = FakeEtsyWriteAdapter()
+    dusty = CopyCheckResult(verdict=CopyCheckVerdict(ok=True, dust="flat sky, upper left"))
+    cap = _cap(adapter, dusty)
+    cfg, _ = _auto_run(conn, tmp_path, cap)
+
+    run(conn, USER_ID, cfg, [cap], today=TODAY, live_autonomy=True)
+
+    (listing_id,) = adapter.listings
+    assert adapter.listings[listing_id]["state"] == "draft"
+    assert "publish_listing" not in [c for c, _ in adapter.calls]
+    (rb,) = read_all(conn, "listingdraft.readback")
+    assert rb.payload["ok"] is False
+    assert rb.payload["problems"] == ["sensor dust: flat sky, upper left"]
+    (failure,) = _brief(conn, cfg).readback_failed
+    assert failure.problems == ["sensor dust: flat sky, upper left"]
+
+
+def test_no_dust_verdict_publishes(conn, tmp_path, offline_copy):
+    adapter = FakeEtsyWriteAdapter()
+    clean = CopyCheckResult(verdict=CopyCheckVerdict(ok=True, dust=""))
+    cap = _cap(adapter, clean)
+    cfg, _ = _auto_run(conn, tmp_path, cap)
+
+    run(conn, USER_ID, cfg, [cap], today=TODAY, live_autonomy=True)
+
+    (listing_id,) = adapter.listings
+    assert adapter.listings[listing_id]["state"] == "active"
+
+
+def test_copy_check_prompt_excludes_dust_false_positives():
+    from shopsteward.pipeline.config import COPY_CHECK_PROMPT_PATH
+
+    text = COPY_CHECK_PROMPT_PATH.read_text(encoding="utf-8").lower()
+    for word in ("birds", "stars", "distant animals", "snowflakes", "intentional", "dust"):
+        assert word in text

@@ -38,7 +38,19 @@ Never flag these, they are not claims about the photo:
   bird" for a heron, "mountain wildlife" for an alpine animal);
 - product facts (sizes, file format, digital download, printing).
 
-Return ONLY a JSON object with these exact fields:
+Sensor dust (separate from the claims above). Also inspect the photograph
+itself for sensor dust: soft, dark, out-of-focus round blobs or smudges, most
+visible in flat areas such as clear sky, water, fog or snow. Only report clear
+sensor-dust blobs. Do NOT report as dust: birds, stars, distant animals or
+people, insects, snowflakes, raindrops, foliage or rock detail, shadows,
+sun spots, or any dark spot that could be an intentional part of the scene.
+When in doubt, it is not dust.
+- dust: empty string "" when there is no clear sensor dust; otherwise a short
+  phrase saying where the blobs are (for example "flat sky, upper left"). Dust
+  alone does not make a copy claim wrong, so do not set ok to false for dust.
+
+Return ONLY a JSON object with these exact fields (ok, problems, dust):
 - ok: true only if no claim about the photo is contradicted or unshown
 - problems: a list of short strings, one per flagged claim, each naming the
   claim and what the photo shows instead (empty list when ok is true)
+- dust: see the sensor dust section above
