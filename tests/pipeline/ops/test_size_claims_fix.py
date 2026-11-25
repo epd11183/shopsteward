@@ -214,7 +214,9 @@ def test_cli_capability_flag_runs_only_this_propose(conn, tmp_path, monkeypatch)
     monkeypatch.delenv("SHOPSTEWARD_LIVE_AUTONOMY", raising=False)
     monkeypatch.setattr(push_mod, "build_etsy_write_adapter", lambda *, live: adapter)
 
-    result = CliRunner().invoke(app, ["ops", "run", "--capability", "listing.size_claims_fix"])
+    result = CliRunner().invoke(
+        app, ["ops", "run", "--no-dry-run", "--capability", "listing.size_claims_fix"]
+    )
     assert result.exit_code == 0, result.output
     assert "planner skipped" in result.output
     c = connect(db)

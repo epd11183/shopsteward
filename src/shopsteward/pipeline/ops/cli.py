@@ -435,7 +435,9 @@ def run_cmd(
             proposals=proposals,
             live_autonomy=live_autonomy,
         )
-        typer.echo(f"ops run: {report.model_dump()}")
+        typer.echo(f"ops run: {report.model_dump(exclude={'would_propose'})}")
+        for a in report.would_propose:
+            typer.echo(f"  would propose: {a.capability} {a.target_id} ({a.action_id})")
         if report.live_gate_blocked:
             # Finding 2: without --live-autonomy, a live-gated action that
             # would otherwise auto-execute (AUTO/NOTIFY tier) is refused

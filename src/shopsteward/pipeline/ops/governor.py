@@ -439,16 +439,20 @@ def govern(
     cap: Capability,
     cfg: OpsConfig,
     today: date,
+    *,
+    record: bool = True,
 ) -> Decision:
+    """`record=False` (dry runs) decides without appending `action.refused`."""
     reason = _refusal_reason(conn, user_id, action, cap, cfg, today)
     if reason is None:
         return approve()
-    append(
-        conn,
-        Event(
-            user_id=user_id,
-            type="action.refused",
-            payload={"action_id": action.action_id, "reason": reason.value},
-        ),
-    )
+    if record:
+        append(
+            conn,
+            Event(
+                user_id=user_id,
+                type="action.refused",
+                payload={"action_id": action.action_id, "reason": reason.value},
+            ),
+        )
     return refuse(reason)
