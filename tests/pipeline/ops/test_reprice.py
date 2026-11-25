@@ -678,7 +678,7 @@ def test_blackout_proposes_nothing_until_the_end_date_inclusive(conn):
 
 
 def test_shipped_blackout_is_the_end_of_cyber_week():
-    assert ops_config.load_ops_config().reprice.blackout_until == "2026-12-02"
+    assert ops_config.load_ops_config().reprice.blackout_until == "2026-12-03"
 
 
 def test_blackout_blocks_executing_an_older_pending_proposal(conn, monkeypatch):
