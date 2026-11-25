@@ -269,7 +269,7 @@ the 25% Cyber sale. Re-adding the floor entry is the operator's call.
 
 **Amended 2026-11-24 (later), explicit operator authorization: `listing.reprice`
 back to AUTO with guards.** The operator chose "safer auto price cuts":
-no cut while `reprice.blackout_until` (sale end date, shipped 2026-12-02) is
+no cut while `reprice.blackout_until` (sale end date as a UTC date, shipped 2026-12-03 to cover US 12-02) is
 today or later, and none within `reprice.revert_cooldown_days` (30) of an undo
 of a reprice or an observed manual price increase. Same guards block
 `ops approve`. Supersedes the pause above. Also: dry runs record no events;
