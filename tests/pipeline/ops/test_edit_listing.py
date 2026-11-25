@@ -368,6 +368,13 @@ def test_direct_edit_then_undo_restores_the_original(conn):
     }
 
 
+def test_edit_listing_run_writes_no_ops_run_completed(conn):
+    _seed(conn)
+    _edit(conn, _fake(), title="Loon Wall Art")
+    assert read_all(conn, "action.executed")
+    assert read_all(conn, "ops.run.completed") == []
+
+
 def test_direct_refused_without_live_autonomy_appends_nothing(conn):
     _seed(conn)
     fake = _fake()

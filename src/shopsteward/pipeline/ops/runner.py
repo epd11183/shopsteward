@@ -282,6 +282,7 @@ def run(
     today: date | None = None,
     proposals: list[ProposedAction] | None = None,
     live_autonomy: bool = False,
+    record_completion: bool = False,
 ) -> RunReport:
     """Every capability's own `propose()` ALWAYS runs, planner or not -- a
     deterministic capability (listing.renew/autorenew_off/autorenew_on/
@@ -522,7 +523,7 @@ def run(
         if not dry_run:
             _maybe_promote(conn, user_id, cap, cfg, today)
 
-    if not dry_run:
+    if record_completion and not dry_run:
         # `ops heartbeat` dates the weekly run by this, not by etsy.shop.observed
         # (a daily read-only `sync --live` appends that too).
         append(

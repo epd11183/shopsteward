@@ -434,6 +434,7 @@ def run_cmd(
             dry_run=dry_run,
             proposals=proposals,
             live_autonomy=live_autonomy,
+            record_completion=capability is None,
         )
         typer.echo(f"ops run: {report.model_dump(exclude={'would_propose'})}")
         for a in report.would_propose:

@@ -641,6 +641,7 @@ def test_cli_ops_run_planner_disabled_uses_the_deterministic_path(tmp_path, monk
     # autorenew_off + deactivate both target the dead/active listing (reprice
     # excludes it as non-digital-titled; seo_edit proposes nothing
     # deterministically; tune_threshold has nothing to trigger it).
+    assert len(read_all(conn, "ops.run.completed")) == 1  # a full live ops run is the weekly run
     assert len(read_all(conn, "action.proposed")) == 2
 
 
