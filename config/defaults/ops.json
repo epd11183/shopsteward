@@ -75,7 +75,8 @@
     "max_new_per_week": 5,
     "min_long_edge_px": 6000,
     "dedup_max_distance": 6,
-    "listing_fee_usd": 0.2
+    "listing_fee_usd": 0.2,
+    "min_candidates": 15
   },
   "caption": {
     "max_len": 2200,

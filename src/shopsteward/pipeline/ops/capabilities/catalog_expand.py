@@ -507,6 +507,49 @@ def _candidates(
     return dict(sorted(out.items(), key=lambda kv: attempts.get(kv[0], 0)))
 
 
+def candidate_status(conn: sqlite3.Connection, user_id: int, cfg: OpsConfig) -> dict[str, object]:
+    """Read-only candidate-supply report for `listings candidate-status`: base
+    names (file stems, Lightroom matches by these) that are `listed` (an Etsy
+    listing exists: published, adopted or pushed), `ingested` (any landing
+    file), `in_folder`, `failed` (hit MAX_ATTEMPTS: needs the operator), and
+    `needed` more candidates to reach `min_candidates`. No events, no network."""
+    from shopsteward.pipeline.landing import _sha256_file
+    from shopsteward.pipeline.projections import rebuild_pipeline
+
+    ce = cfg.catalog_expansion
+    rebuild_pipeline(conn)
+    _finished_file_ids(conn, user_id)  # rebuilds proj_listing_drafts
+    landing = {
+        r["file_id"]: r["base_name"] or Path(r["path"]).stem
+        for r in conn.execute(
+            "SELECT file_id, path, base_name FROM proj_landing_files WHERE user_id=?",
+            (user_id,),
+        )
+    }
+    listed = {
+        landing[r["landing_file_id"]]
+        for r in conn.execute(
+            "SELECT landing_file_id FROM proj_listing_drafts WHERE user_id=? "
+            "AND landing_file_id IS NOT NULL "
+            "AND (etsy_listing_id IS NOT NULL OR state='published')",
+            (user_id,),
+        )
+        if r["landing_file_id"] in landing
+    }
+    folder = Path(ce.source_folder)
+    files = adopt.scan_local_files(folder, ce.recursive) if folder.is_dir() else []
+    attempts = _failed_attempts(conn, user_id)
+    failed = {p.stem for p in files if attempts.get(_sha256_file(p), 0) >= MAX_ATTEMPTS}
+    supply = len(_candidates(conn, user_id, cfg))
+    return {
+        "listed": sorted(listed),
+        "ingested": sorted(set(landing.values()) - listed),
+        "in_folder": sorted({p.stem for p in files}),
+        "failed": sorted(failed),
+        "needed": max(0, ce.min_candidates - supply),
+    }
+
+
 class ListingCatalogExpand:
     key = _CAPABILITY
     # 2026-11-23 operator decision: AUTO behind the read-back gate; the undo
