@@ -522,6 +522,20 @@ def run(
         if not dry_run:
             _maybe_promote(conn, user_id, cap, cfg, today)
 
+    if not dry_run:
+        # `ops heartbeat` dates the weekly run by this, not by etsy.shop.observed
+        # (a daily read-only `sync --live` appends that too).
+        append(
+            conn,
+            Event(
+                user_id=user_id,
+                type="ops.run.completed",
+                payload={
+                    **report.model_dump(exclude={"would_propose", "dry_run"}),
+                    "today": today.isoformat(),
+                },
+            ),
+        )
     return report
 
 

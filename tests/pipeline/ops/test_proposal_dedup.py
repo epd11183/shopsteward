@@ -286,6 +286,15 @@ def test_dry_run_then_live_equals_live_alone(tmp_path, floor):
     assert "action.expired" in types and types.count("action.proposed") >= 2
 
 
+def test_live_run_appends_ops_run_completed_and_dry_run_does_not(conn):
+    cap = StubCapability(key="stub.rc", day=DAY1)
+    run(conn, USER_ID, _cfg(), [cap], today=DAY1, dry_run=True)
+    assert read_all(conn, "ops.run.completed") == []
+    run(conn, USER_ID, _cfg(), [cap], today=DAY1)
+    (done,) = read_all(conn, "ops.run.completed")
+    assert done.payload["today"] == DAY1.isoformat() and done.payload["proposed"] == 1
+
+
 def test_dry_run_does_not_record_a_precondition_refusal(conn):
     cfg = _cfg()
     cap = StubCapability(key="stub.pre", day=DAY1, precondition_ok=False)
