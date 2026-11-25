@@ -97,7 +97,7 @@
     "max_alt_text_len": 500,
     "holdout_days": 7,
     "boards": {
-      "wall_art": "Nature & Landscape Wall Art"
+      "wall_art": "wall-art"
     }
   },
   "buffer": {
