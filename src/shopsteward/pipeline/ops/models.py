@@ -197,6 +197,8 @@ class _OpsCatalogExpansion(BaseModel):
     min_long_edge_px: int = Field(gt=0)
     dedup_max_distance: int = Field(ge=0)
     listing_fee_usd: float = Field(gt=0)
+    # Candidates the weekly run keeps in source_folder (`listings candidate-status`).
+    min_candidates: int = Field(default=15, ge=0)
 
 
 class _OpsSocialChannel(BaseModel):

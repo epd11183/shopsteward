@@ -141,6 +141,40 @@ def status() -> None:
         conn.close()
 
 
+@listings_app.command("candidate-status")
+def candidate_status_cmd(
+    as_json: Annotated[bool, typer.Option("--json", help="One JSON object, for agents.")] = False,
+) -> None:
+    """Read-only: which photo base names are listed / in the candidates folder /
+    failed, and how many more candidates are needed. No network, no events."""
+    import json
+
+    from shopsteward.core.db import connect, migrate
+    from shopsteward.pipeline.ops import config as ops_config
+    from shopsteward.pipeline.ops.capabilities.catalog_expand import candidate_status
+    from shopsteward.pipeline.ops.projections import rebuild_ops
+    from shopsteward.settings import DEFAULT_USER_ID, db_path
+
+    db = db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db)
+    try:
+        migrate(conn)
+        rebuild_ops(conn)
+        try:
+            cfg = ops_config.get_ops_config(conn, DEFAULT_USER_ID)
+        except KeyError:  # never seeded: shipped defaults, and seeding would write an event
+            cfg = ops_config.load_ops_config()
+        report = candidate_status(conn, DEFAULT_USER_ID, cfg)
+    finally:
+        conn.close()
+    if as_json:
+        typer.echo(json.dumps(report))
+        return
+    for key, value in report.items():
+        typer.echo(f"{key}: {value if isinstance(value, int) else ' '.join(value) or '-'}")
+
+
 @listings_app.command("reset")
 def reset_cmd(
     folder: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
