@@ -40,6 +40,8 @@ class VisionAdapter(Protocol):
 class CopyCheckVerdict(BaseModel):
     ok: bool
     problems: list[str] = Field(default_factory=list)
+    # "" = no sensor dust; otherwise where the dust blobs are ("flat sky, upper left").
+    dust: str = ""
 
 
 class CopyCheckResult(BaseModel):

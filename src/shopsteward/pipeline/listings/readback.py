@@ -7,7 +7,9 @@ Run on a pushed DRAFT. Two kinds of check, both fail-closed:
    local DB): state is draft, exactly 5 digital files, 7 images, the title ends
    with "(Digital Download)", 13 tags.
 2. Copy-vs-photo -- a vision model gets the photo plus the title/tags/
-   description Etsy holds and flags any claim the photo does not show.
+   description Etsy holds and flags any claim the photo does not show. The
+   same call also reports visible sensor dust in the delivered file (a dust
+   verdict fails the gate; the photo is never auto-healed).
 
 `ok` requires a clean structural pass AND a checker verdict that is ok with no
 problems. Nothing here raises once a draft exists: an Etsy read error, an
@@ -108,7 +110,9 @@ def run_readback(
                     ),
                 )
             problems += result.verdict.problems
-            if not result.verdict.ok and not result.verdict.problems:
+            if result.verdict.dust.strip():
+                problems.append(f"sensor dust: {result.verdict.dust.strip()}")
+            elif not result.verdict.ok and not result.verdict.problems:
                 problems.append("copy check failed without naming a problem")
     except Exception as exc:  # noqa: BLE001 - fail closed: any failure is a problem, never a raise
         problems.append(f"read-back could not complete: {type(exc).__name__}: {str(exc)[:200]}")
