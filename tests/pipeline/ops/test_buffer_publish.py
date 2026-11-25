@@ -22,7 +22,9 @@ from tests.pipeline.ops.helpers import seed_listing_observed_on
 
 USER_ID = 1
 LISTING = 801
-BOARD = "Nature & Landscape Wall Art"
+# The shipped board name, so a fake channel can never drift from config (it did
+# once: config named a board Buffer does not have, 2026-11-24).
+BOARD = ops_config.load_ops_config().pinterest.boards["wall_art"]
 
 
 @pytest.fixture(autouse=True)
