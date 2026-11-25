@@ -56,7 +56,9 @@
     "min_price_usd": 3.0,
     "max_pct_change": 0.4,
     "default_reduction_pct": 0.1,
-    "min_lifetime_views": 5
+    "min_lifetime_views": 5,
+    "blackout_until": "2026-12-02",
+    "revert_cooldown_days": 30
   },
   "seo_edit": {
     "min_lifetime_views": 5,
@@ -162,6 +164,7 @@
       "listing.seo_edit": 0,
       "listing.size_claims_fix": 0,
       "listing.panel_replace": 0,
+      "listing.reprice": 0,
       "listing.deactivate": 0,
       "listing.renew": 0,
       "listing.autorenew_off": 0,

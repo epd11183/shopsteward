@@ -115,6 +115,20 @@ class _OpsReprice(BaseModel):
     max_pct_change: float = Field(gt=0, lt=1)
     default_reduction_pct: float = Field(gt=0, lt=1)
     min_lifetime_views: int = Field(gt=0)
+    # Etsy has no sales/coupons API (policy E9), so the operator's sale is
+    # invisible to us: while today <= blackout_until nothing is proposed or
+    # executed. revert_cooldown_days: a listing whose reprice was undone, or
+    # whose observed price went UP (the operator restoring it by hand), is
+    # left alone for this many days.
+    blackout_until: str | None = None  # ISO date; a str so config JSON round-trips
+    revert_cooldown_days: int = Field(default=30, ge=0)
+
+    @field_validator("blackout_until")
+    @classmethod
+    def _iso_date(cls, v: str | None) -> str | None:
+        if v is not None:
+            date.fromisoformat(v)
+        return v
 
 
 class _OpsSeoEdit(BaseModel):

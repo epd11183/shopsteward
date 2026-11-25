@@ -42,6 +42,7 @@ def conn(tmp_path):
 
 def _cfg(**autonomy_overrides):
     cfg = ops_config.load_ops_config()
+    cfg.reprice.blackout_until = None  # wall-clock: the shipped Cyber Week blackout
     for k, v in autonomy_overrides.items():
         setattr(cfg.autonomy, k, v)
     return cfg
