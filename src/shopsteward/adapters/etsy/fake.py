@@ -294,6 +294,7 @@ class FakeEtsyWriteAdapter:
             **self._to_listing(listing_id, row).model_dump(exclude={"description"}),
             description=row["description"],
             images=images,
+            production_partners=row.get("production_partners", []),
         )
 
     def update_listing(self, listing_id: int, fields: EtsyListingUpdate) -> EtsyListing:
@@ -371,7 +372,8 @@ class FakeEtsyWriteAdapter:
         row = self._require(listing_id)
         if not row["images"]:
             raise EtsyWriteError(400, "cannot publish a listing with zero images")
-        if not row["files"]:
+        # A physical (POD) listing, seeded by FakeGelatoAdapter, has no digital files.
+        if not row["files"] and not row.get("physical"):
             raise EtsyWriteError(400, "cannot publish a listing with zero digital files")
         row["state"] = "active"
         self.calls.append(("publish_listing", {"listing_id": listing_id}))

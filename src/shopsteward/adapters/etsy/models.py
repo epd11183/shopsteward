@@ -1,5 +1,7 @@
 """Pydantic models mirroring the Etsy Open API v3 shapes we consume."""
 
+from typing import Any
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -118,6 +120,11 @@ class EtsyListingDetail(EtsyListing):
     listing as Etsy itself holds it, used by the pre-publish read-back gate."""
 
     images: list[EtsyListingImage] = Field(default_factory=list)
+    # Additive, optional: getListing's `production_partners` array (rows carry
+    # production_partner_id/partner_name/location -- see the scrubbed fixture
+    # tests/fixtures/etsy/listings.json). Empty = none declared, which fails
+    # the POD read-back gate closed (`run_physical_readback`).
+    production_partners: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class EtsyTransaction(BaseModel):

@@ -63,11 +63,12 @@ _APPROVE_RESOLVED = {"executed", "rejected", "undone", "failed", "expired", "sup
 # `undo_action()` all check before touching an adapter for a capability in
 # this set -- a refusal here leaves the action exactly as it was (still
 # "proposed"/"executed", never a terminal `action.failed`/`action.undone`).
-# Deliberately NOT every registered capability: `listing.gapfill_reprint`,
-# `ops.tune_threshold`, `social.caption_draft`, and `social.pinterest_post`
-# either hold no adapter or are ALWAYS offline by design (module
-# docstrings) -- gating those too would block a legitimate, always-safe
-# approval for no reason.
+# Deliberately NOT every registered capability: `ops.tune_threshold`,
+# `social.caption_draft`, and `social.pinterest_post` either hold no adapter
+# or are ALWAYS offline by design (module docstrings) -- gating those too
+# would block a legitimate, always-safe approval for no reason.
+# `listing.gapfill_reprint` WAS offline-only; since 2026-11-27 it creates a
+# Gelato product and publishes an Etsy listing, so it IS gated.
 #
 # `listing.catalog_expand` (T11, 2026-08-25 design doc §4.1) is IN this set:
 # its `execute()` reaches the same real Etsy write surface (via
@@ -88,6 +89,7 @@ LIVE_GATED_CAPABILITIES = frozenset(
         "listing.deactivate",
         "listing.renew",
         "listing.catalog_expand",
+        "listing.gapfill_reprint",
     }
 )
 

@@ -178,7 +178,7 @@ def test_enriches_linked_draft_with_copy_reflecting_vision_subject_and_uploads_i
     assert adapter.listings[LISTING_ID]["price"] == 42.0
 
     upload_calls = [c for c in adapter.calls if c[0] == "upload_listing_image"]
-    assert len(upload_calls) == 2  # single + digital_whatyougot mockups
+    assert len(upload_calls) == 1  # single only: the digital_whatyougot panel is dropped for POD
     assert {c[1]["listing_id"] for c in upload_calls} == {LISTING_ID}
 
     row = conn.execute(
@@ -299,3 +299,27 @@ def test_skips_draft_with_no_completed_mockup_set_yet(conn, tmp_path):
         (USER_ID, draft_id),
     ).fetchone()
     assert row["pod_status"] == "linked"  # unchanged -- retried next run
+
+
+def test_unfiltered_enrich_skips_gapfill_claimed_drafts(conn, tmp_path):
+    draft_id = _seed_linked_pod_draft(conn, tmp_path)
+    append(
+        conn,
+        Event(
+            user_id=USER_ID,
+            type="listingdraft.gapfill_claimed",
+            payload={"draft_id": draft_id, "target_id": "1:acrylic"},
+        ),
+    )
+    adapter = _adapter_with_existing_listing()
+
+    report = enrich_pod_drafts(
+        conn,
+        USER_ID,
+        etsy_adapter=adapter,
+        copy_adapter=FixtureCopyAdapter(),
+        cfg=listing_config.get_config(conn, USER_ID),
+    )
+
+    assert (report.enriched, report.failed, report.skipped) == (0, 0, 0)
+    assert adapter.calls == []

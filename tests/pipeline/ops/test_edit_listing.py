@@ -91,7 +91,7 @@ def _updates(fake):
 # --- tiers ------------------------------------------------------------------
 
 
-def test_real_listing_capabilities_floor_auto_with_undo_and_gapfill_stays_propose():
+def test_real_listing_capabilities_floor_auto_with_undo_including_gapfill():
     from shopsteward.adapters.vision.fake import FixtureVisionAdapter
     from shopsteward.pipeline.listings.pod.factory import build_print_file_host
     from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
@@ -120,10 +120,12 @@ def test_real_listing_capabilities_floor_auto_with_undo_and_gapfill_stays_propos
         assert cap.max_tier == Tier.AUTO and callable(cap.undo)
         assert effective_tier(cap, None, floor) == Tier.AUTO
 
-    # no undo -> must stay operator-approved (registry invariant 1 / paid POD SKU)
+    # gapfill_reprint: AUTO since 2026-11-27, behind the physical read-back gate;
+    # undo deactivates the listing (never deletes the Gelato product)
     gapfill = ListingGapfillReprint(build_print_file_host(live=False))
-    assert gapfill.max_tier == Tier.PROPOSE and gapfill.undo is None
-    assert effective_tier(gapfill, None, floor) == Tier.PROPOSE
+    register(gapfill)
+    assert gapfill.max_tier == Tier.AUTO and callable(gapfill.undo)
+    assert effective_tier(gapfill, None, floor) == Tier.AUTO
 
     # catalog_expand: AUTO since 2026-11-23, behind the read-back gate; undo deactivates
     expand = ListingCatalogExpand(

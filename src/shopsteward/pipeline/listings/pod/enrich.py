@@ -54,6 +54,7 @@ from shopsteward.pipeline.listings.drafts import (
 )
 from shopsteward.pipeline.listings.images import order_listing_images
 from shopsteward.pipeline.listings.models import ListingConfig, ListingImage
+from shopsteward.pipeline.listings.pod.provider import claimed_by_gapfill
 from shopsteward.pipeline.listings.projections import rebuild_listings
 from shopsteward.pipeline.listings.push import _images_stage, _update_stage
 
@@ -111,7 +112,12 @@ def _planned_images(
     mockup_set = _completed_mockup_set(conn, user_id, landing_file_id)
     if mockup_set is None:
         return None
-    mockups = _mockup_rows(conn, user_id, mockup_set["set_key"])
+    # A canvas/acrylic listing must never carry the "5 digital files" panel.
+    mockups = [
+        m
+        for m in _mockup_rows(conn, user_id, mockup_set["set_key"])
+        if m["intent"] != "digital_whatyougot"
+    ]
     return order_listing_images(mockups, cfg)
 
 
@@ -251,12 +257,14 @@ def enrich_pod_drafts(
     cfg: ListingConfig,
     live: bool = False,
     soft_cap_usd: float | None = None,
+    draft_ids: set[str] | None = None,
 ) -> PodEnrichReport:
     """cfg is the DIGITAL listing config (listing.json) -- copy generation
     and image ordering are the exact same machinery build_drafts uses for
     digital drafts (see module docstring); pod.json carries no image_order/
     image_cap of its own. Callers seed/rebuild listing config the same way
-    build_drafts does; this only rebuilds the listings projection."""
+    build_drafts does; this only rebuilds the listings projection.
+    `draft_ids` restricts the pass (None = every eligible draft)."""
     rebuild_listings(conn)
 
     if soft_cap_usd is None:
@@ -265,7 +273,12 @@ def enrich_pod_drafts(
         soft_cap_usd = profile.vision.monthly_soft_cap_usd
 
     report = PodEnrichReport()
+    claimed = claimed_by_gapfill(conn, user_id) if draft_ids is None else set()
     for row in _eligible_drafts(conn, user_id):
+        if draft_ids is not None and row["draft_id"] not in draft_ids:
+            continue  # `is not None`: an empty set means none
+        if row["draft_id"] in claimed:
+            continue  # gapfill-owned: advanced only by the capability
         outcome = _enrich_one(
             conn,
             user_id,

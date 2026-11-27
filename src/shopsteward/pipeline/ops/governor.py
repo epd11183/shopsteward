@@ -194,7 +194,9 @@ _SEO_EDIT_CAPABILITY = "listing.seo_edit"
 # 0.05) would silently throttle this to one execution/week with no error.
 # The alternative -- tuning the cap upward for everyone -- would re-open
 # churn risk on the existing catalog to solve a problem that isn't churn.
-_PORTFOLIO_CAP_EXEMPT = frozenset({"listing.catalog_expand"})
+_GAPFILL_CAPABILITY = "listing.gapfill_reprint"
+# gapfill_reprint likewise only ADDS a listing (design 2026-11-27 §4).
+_PORTFOLIO_CAP_EXEMPT = frozenset({"listing.catalog_expand", _GAPFILL_CAPABILITY})
 
 
 # ponytail: rebuilds two full action_id -> ... maps (each a full event-log
@@ -355,9 +357,11 @@ def _refusal_reason(
         return RefusalReason.HOLDOUT
 
     month_prefix = today.isoformat()[:7]
-    if month_spend(conn, user_id, month_prefix, cfg) + action.estimated_cost_usd > (
-        cfg.autonomy.monthly_spend_cap_usd
-    ):
+    # Stored proposals can carry 0.0 (minted before a cost was modelled): the
+    # capability's own estimate is the floor for the reservation.
+    estimate = max(action.estimated_cost_usd, cap.estimate_cost_usd(action))
+    spent = month_spend(conn, user_id, month_prefix, cfg)
+    if spent + estimate > cfg.autonomy.monthly_spend_cap_usd:
         return RefusalReason.BUDGET
 
     capability_of = _capability_of_action_id(conn, user_id)
@@ -367,9 +371,17 @@ def _refusal_reason(
     if today_counts.get(cap.key, 0) >= cfg.autonomy.per_capability_daily_cap:
         return RefusalReason.PER_CAPABILITY_CAP
 
+    # Both weekly listing-creation paces also bind `ops approve` (the weekly
+    # agent run approves through this same govern()): no operator bypass.
     if cap.key == _CATALOG_EXPAND_CAPABILITY:
         week_counts = _executed_this_iso_week(conn, user_id, capability_of, today)
         if week_counts.get(cap.key, 0) >= cfg.catalog_expansion.max_new_per_week:
+            return RefusalReason.PACE
+
+    if cap.key == _GAPFILL_CAPABILITY:
+        from shopsteward.pipeline.ops.capabilities.gapfill import pace_exceeded
+
+        if pace_exceeded(conn, user_id, action, cfg, today):
             return RefusalReason.PACE
 
     # S7 (Buffer design §4): per-channel PACE for Buffer-published posts only,

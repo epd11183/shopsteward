@@ -80,6 +80,10 @@
     "listing_fee_usd": 0.2,
     "min_candidates": 15
   },
+  "gapfill": {
+    "max_per_week": 1,
+    "max_attempts": 3
+  },
   "caption": {
     "max_len": 2200,
     "channels": {
@@ -171,6 +175,7 @@
       "listing.autorenew_on": 0,
       "listing.file_replace": 0,
       "listing.catalog_expand": 0,
+      "listing.gapfill_reprint": 0,
       "social.pinterest_post": 1,
       "social.caption_draft": 1
     },

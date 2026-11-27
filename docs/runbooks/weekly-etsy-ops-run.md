@@ -51,7 +51,11 @@ on the command itself to act on the real shop.
      run;
    - `autorenew_on` is AUTO (2026-11-27), only for listings that sold inside the
      dead-listing window;
-   - `gapfill_reprint` stays pending (PROPOSE) until its autonomous chain ships.
+   - `gapfill_reprint` is AUTO (2026-11-27): at most 1 new physical POD reprint
+     a week, published only if the physical read-back gate passes. A gate
+     failure stays a draft under NEEDS YOU; "check the Gelato dashboard for
+     draft X" means a create attempt's outcome is unknown: never re-run it, report
+     it;
 4. `scripts/ops.sh ops brief`. Its sections are NEEDS YOU, DONE, REFUSED
    and THE SHOP. Report from it.
 5. `scripts/ops.sh ops status`. Shows month spend against the $20 cap and
@@ -178,7 +182,8 @@ double posts. Read-only Buffer lookups are fine.
 - **Spend:**
   - The cap is $20/month and is never raised.
   - No Etsy Ads spend.
-  - `gapfill_reprint` creates a paid POD SKU, so it stays operator-approved.
+  - `gapfill_reprint` costs only the $0.20 listing fee up front (Gelato free plan
+    bills per order, out of the sale).
 - **Photos:** AI never adds to a photograph. Generative removal of distractions
   is allowed. No AI label on social posts (operator 2026-11-22).
 - **Data and git:** never commit shop data or credentials. No force-push. Don't

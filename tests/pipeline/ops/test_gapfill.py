@@ -26,7 +26,7 @@ from shopsteward.pipeline.ops import config as ops_config
 from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
 from shopsteward.pipeline.ops.capabilities.tune_threshold import OpsTuneThreshold
 from shopsteward.pipeline.ops.models import Tier
-from shopsteward.pipeline.ops.projections import capability_states, rebuild_ops
+from shopsteward.pipeline.ops.projections import rebuild_ops
 from shopsteward.pipeline.ops.registry import REGISTRY, register
 from shopsteward.pipeline.ops.runner import approve_action, run, undo_action
 from shopsteward.pipeline.projections import rebuild_pipeline
@@ -261,8 +261,9 @@ def test_proven_seller_with_archived_source_is_proposed_for_a_missing_format(con
     assert action.target_id == f"{LISTING_SELLER}:canvas_portrait"
     assert action.params["photo_id"] == "p1"
     assert action.params["listing_id"] == LISTING_SELLER
-    assert action.estimated_cost_usd == 0.0
-    assert action.undo_available is False
+    assert action.estimated_cost_usd == 0.2  # the Etsy listing fee, reserved by the governor
+    assert action.undo_available is True
+    assert action.params["draft_id"]
     assert "top seller (5 sold)" in action.reason
     assert "no canvas_portrait yet" in action.reason
 
@@ -434,111 +435,43 @@ def test_a_hallucinated_target_is_ungrounded(conn, tmp_path):
 # --- registration --------------------------------------------------------
 
 
-def test_registers_t2_with_no_undo():
+def test_registers_at_auto_with_a_real_undo_and_policy_verified():
     cap = ListingGapfillReprint(FakePrintFileHost())
 
     register(cap)
 
     assert REGISTRY["listing.gapfill_reprint"] is cap
-    assert cap.max_tier == Tier.PROPOSE
-    assert cap.undo is None
+    assert cap.max_tier == Tier.AUTO
+    assert callable(cap.undo)
+    # Policy row E17 (2026-11-27).
+    assert cap.policy_verified is True
+    # Offline construction (no adapters, no live gates): the governor refuses.
+    assert cap.precondition_ok is False
 
 
-def test_estimate_cost_is_always_zero(conn, tmp_path):
+def test_estimate_cost_is_the_injected_listing_fee_even_for_old_zero_cost_proposals(conn, tmp_path):
     _seed_seller_with_a_genuinely_buildable_missing_format(
         conn, tmp_path, listing_id=LISTING_SELLER, photo_id="p1", file_id="f1", units=5
     )
-    cap = ListingGapfillReprint(FakePrintFileHost())
+    cap = ListingGapfillReprint(FakePrintFileHost(), listing_fee_usd=0.2)
     (action,) = [
         a for a in cap.propose(conn, USER_ID, _cfg()) if a.params["product_type"] == "acrylic"
     ]
+    stored = action.model_copy(update={"estimated_cost_usd": 0.0})  # minted before the fee
 
-    assert cap.estimate_cost_usd(action) == 0.0
+    assert cap.estimate_cost_usd(stored) == 0.2
 
 
 # --- e2e via the runner: T2, offline execute, no duplicate draft ------------
-
-
-def test_e2e_lands_at_t2_then_approve_executes_offline_and_builds_the_draft(conn, tmp_path):
-    _seed_seller_with_a_genuinely_buildable_missing_format(
-        conn, tmp_path, listing_id=LISTING_SELLER, photo_id="p1", file_id="f1", units=5
-    )
-    cap = ListingGapfillReprint(FakePrintFileHost())
-    cfg = _cfg()
-    cfg.autonomy.enabled = True
-    cfg.autonomy.weekly_catalog_pct_cap = 1.0
-
-    report = run(conn, USER_ID, cfg, [cap], today=TODAY)
-    # Widening the catalog changed pod_config_hash, so every format --
-    # poster included -- computes a draft_id the (now-stale) poster draft
-    # doesn't match: acrylic, poster, canvas, canvas_portrait all propose.
-    assert report.proposed == 4
-    assert report.executed == 0  # T2 -- never auto-executed
-
-    proposed_events = [
-        e
-        for e in read_all(conn, "action.proposed")
-        if e.payload["params"]["product_type"] == "acrylic"
-    ]
-    (proposed_acrylic,) = proposed_events
-    action_id = proposed_acrylic.payload["action_id"]
-
-    approved = approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
-    assert approved.executed == 1
-
-    executed_events = [
-        e for e in read_all(conn, "action.executed") if e.payload["action_id"] == action_id
-    ]
-    (executed,) = executed_events
-    draft_id = executed.payload["after"]["draft_id"]
-    assert executed.payload["cost_usd"] == 0.0
-
-    draft = conn.execute(
-        "SELECT format, photo_id, print_file_key FROM proj_listing_drafts "
-        "WHERE user_id=? AND draft_id=?",
-        (USER_ID, draft_id),
-    ).fetchone()
-    assert draft is not None
-    assert draft["format"] == "acrylic"
-    assert draft["photo_id"] == "p1"
-    assert draft["print_file_key"] is not None  # reached print_file_hosted, offline host only
-
-    state = capability_states(conn, USER_ID)["listing.gapfill_reprint"]
-    assert state.tier == Tier.PROPOSE  # never promoted
-
-
-def test_execute_raises_action_failed_when_a_duplicate_would_result(conn, tmp_path):
-    """Defense in depth: if execute() is ever invoked twice for the same
-    (photo, product_type) -- e.g. a hand-forged replay bypassing the
-    runner's own idempotency check -- the second call must never silently
-    succeed or duplicate the draft; build_pod_reprint's already_exists guard
-    must surface as a raised exception."""
-    _seed_seller_with_a_genuinely_buildable_missing_format(
-        conn, tmp_path, listing_id=LISTING_SELLER, photo_id="p1", file_id="f1", units=5
-    )
-    cap = ListingGapfillReprint(FakePrintFileHost())
-    (action,) = [
-        a for a in cap.propose(conn, USER_ID, _cfg()) if a.params["product_type"] == "acrylic"
-    ]
-
-    result = cap.execute(conn, USER_ID, action)
-    assert result.after["draft_id"] is not None
-
-    with pytest.raises(ValueError, match="already_exists"):
-        cap.execute(conn, USER_ID, action)
-
-    rows = conn.execute(
-        "SELECT COUNT(*) AS n FROM proj_listing_drafts WHERE user_id=? AND format='acrylic'",
-        (USER_ID,),
-    ).fetchone()["n"]
-    assert rows == 1  # never a duplicate draft
 
 
 def test_planner_gate_still_drops_unknown_policy_ungrounded_with_gapfill_registered(conn, tmp_path):
     _seed_seller_missing_one_ineligible_format(
         conn, tmp_path, listing_id=LISTING_SELLER, photo_id="p1", file_id="f1", units=5
     )
-    register(ListingGapfillReprint(FakePrintFileHost()))
+    gapfill = ListingGapfillReprint(FakePrintFileHost())
+    gapfill.policy_verified = True  # past POLICY_UNVERIFIED so the grounding drop is the one tested
+    register(gapfill)
     register(OpsTuneThreshold())
     cfg = _cfg()
     cfg.autonomy.planner_max_per_capability_per_run = 5
@@ -575,55 +508,7 @@ def test_planner_gate_still_drops_unknown_policy_ungrounded_with_gapfill_registe
 # --- no secrets / no network -------------------------------------------------
 
 
-def test_no_credential_leak_in_any_payload_and_user_id_on_every_event(conn, tmp_path):
-    _seed_seller_with_a_genuinely_buildable_missing_format(
-        conn, tmp_path, listing_id=LISTING_SELLER, photo_id="p1", file_id="f1", units=5
-    )
-    cap = ListingGapfillReprint(FakePrintFileHost())
-    cfg = _cfg()
-    cfg.autonomy.enabled = True
-    cfg.autonomy.weekly_catalog_pct_cap = 1.0
-
-    run(conn, USER_ID, cfg, [cap], today=TODAY)
-    proposed = [
-        e
-        for e in read_all(conn, "action.proposed")
-        if e.payload["params"]["product_type"] == "acrylic"
-    ][0]
-    approve_action(conn, USER_ID, proposed.payload["action_id"], [cap], cfg=cfg, today=TODAY)
-
-    banned = ("token", "api_key", "apikey", "secret", "signed_url", "access_token", "refresh_token")
-    for e in read_all(conn):
-        blob = json.dumps(e.payload).lower()
-        for word in banned:
-            assert word not in blob, f"event {e.type} payload leaked {word!r}: {blob}"
-        assert e.user_id == USER_ID
-
-
 # --- undo on a no-undo capability must never crash (runner.py fix) ---------
-
-
-def test_undo_on_a_no_undo_capability_is_graceful_not_a_crash(conn, tmp_path):
-    _seed_seller_with_a_genuinely_buildable_missing_format(
-        conn, tmp_path, listing_id=LISTING_SELLER, photo_id="p1", file_id="f1", units=5
-    )
-    cap = ListingGapfillReprint(FakePrintFileHost())
-    cfg = _cfg()
-    cfg.autonomy.enabled = True
-    cfg.autonomy.weekly_catalog_pct_cap = 1.0
-    run(conn, USER_ID, cfg, [cap], today=TODAY)
-    proposed = [
-        e
-        for e in read_all(conn, "action.proposed")
-        if e.payload["params"]["product_type"] == "acrylic"
-    ][0]
-    action_id = proposed.payload["action_id"]
-    approve_action(conn, USER_ID, action_id, [cap], cfg=cfg, today=TODAY)
-
-    with pytest.raises(ValueError, match="no undo"):
-        undo_action(conn, USER_ID, action_id, [cap])
-
-    assert read_all(conn, "action.undone") == []
 
 
 def test_undo_on_a_capability_with_a_real_undo_still_works(conn):

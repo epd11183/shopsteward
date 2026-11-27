@@ -119,6 +119,7 @@ class FakeGelatoAdapter:
                     "state": "draft",
                     "images": [],
                     "files": [],
+                    "physical": True,  # a POD listing publishes with zero digital files
                 }
             self._next_etsy_listing_id += 1
         self.calls.append(
