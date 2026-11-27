@@ -215,6 +215,15 @@ class _OpsCatalogExpansion(BaseModel):
     min_candidates: int = Field(default=15, ge=0)
 
 
+class _OpsGapfill(BaseModel):
+    # `listing.gapfill_reprint` (autonomous, design 2026-11-27): the pace unit
+    # is one NEW Gelato product (first create attempt), not one execution.
+    # Lives here, never in pod.json: pod_config_hash is part of draft_id, so a
+    # change there would re-key every draft.
+    max_per_week: int = Field(default=1, gt=0)
+    max_attempts: int = Field(default=3, gt=0)
+
+
 class _OpsSocialChannel(BaseModel):
     """One `social.caption_draft` posting channel (T5+E5, 2026-08-25
     owned-channel premise-gate: /autoplan Decision Audit Trail #9 --
@@ -452,6 +461,7 @@ class OpsConfig(BaseModel):
     seo_edit: _OpsSeoEdit
     renew: _OpsRenew
     catalog_expansion: _OpsCatalogExpansion
+    gapfill: _OpsGapfill = Field(default_factory=_OpsGapfill)
     caption: _OpsCaption
     pinterest: _OpsPinterest
     buffer: _OpsBuffer = Field(default_factory=_OpsBuffer)
