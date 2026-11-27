@@ -103,6 +103,12 @@ the future renewal is a separate event outside this system's control -- but
 the two capabilities' $0.00s do not mean the same thing, and this docstring
 previously implied a false symmetry.
 
+**AUTO guard (operator, 2026-11-27).** Starts at AUTO (`tier_floor`), but only
+for a listing with a sale in the SAME window `dead_listings()` tests
+(`cfg.dead_listing.window_days`, `proj_sale_items`). A listing that sold in
+that window can never be dead, so this can never ping-pong with
+`autorenew_off`; a listing that sold only outside it is never proposed.
+
 `max_tier = Tier.AUTO` -- same as `autorenew_off` (2026-11-22 operator
 decision: listing edits need no approval; was a T1 ceiling): this is the
 same class of action (a free, reversible, single-field state flip), just
@@ -214,7 +220,8 @@ def _candidates(
     this listing_id's MOST RECENT renewal-posture `action.executed` event
     was `listing.renew` (module docstring: the ordinal check that closes
     the oscillation loop with `ListingAutorenewOff`, structurally) AND the
-    listing_id is NOT currently in `analytics.dead_listings()` (module
+    listing sold at least once inside `cfg.dead_listing.window_days` (the
+    AUTO guard) AND the listing_id is NOT currently in `analytics.dead_listings()` (module
     docstring: an additional exclusion, layered on top of the ordinal check,
     that closes the on-then-off round trip on a listing that's still dead
     by the separate windowed check even though it was renewed on the
@@ -227,6 +234,16 @@ def _candidates(
         return {}
 
     dead_ids = {d.listing_id for d in analytics.dead_listings(conn, user_id, cfg)}
+    # Same window and same table `dead_listings()` uses for its "0 sales" test.
+    win_start, win_end = analytics._window(datetime.now(UTC).date(), cfg.dead_listing.window_days)
+    sold_ids = {
+        r["listing_id"]
+        for r in conn.execute(
+            "SELECT DISTINCT listing_id FROM proj_sale_items WHERE user_id=? "
+            "AND sale_date BETWEEN ? AND ?",
+            (user_id, win_start.isoformat(), win_end.isoformat()),
+        ).fetchall()
+    }
 
     active_rows = conn.execute(
         "SELECT listing_id FROM proj_listings WHERE user_id=? AND state='active'",
@@ -248,6 +265,13 @@ def _candidates(
             # listing.renew (never renewed, or a later autorenew_off/_on
             # action superseded an old renew) -- the ordinal oscillation
             # guard (module docstring).
+            continue
+        if listing_id not in sold_ids:
+            # AUTO guard (2026-11-27): auto-renew commits recurring ~$0.20
+            # fees the cap can't see, so only a listing with a sale inside
+            # the `dead_listings` window may be turned on. Same window =>
+            # never fights `autorenew_off` (a sold-in-window listing is by
+            # definition not dead).
             continue
         if listing_id in dead_ids:
             # Currently dead by the separate windowed check -- turning

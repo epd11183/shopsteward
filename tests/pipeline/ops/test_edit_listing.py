@@ -113,15 +113,12 @@ def test_real_listing_capabilities_floor_auto_with_undo_and_gapfill_stays_propos
         ListingDeactivate(fake),
         ListingRenew(fake),
         ListingAutorenewOff(fake),
+        ListingAutorenewOn(fake),  # AUTO only behind its sold-in-window guard (2026-11-27)
     ]
     for cap in auto_caps:
         register(cap)  # registry invariant 1: AUTO needs a callable undo
         assert cap.max_tier == Tier.AUTO and callable(cap.undo)
         assert effective_tier(cap, None, floor) == Tier.AUTO
-
-    # may run at AUTO, but starts at PROPOSE: recurring fees the cap can't see
-    on = ListingAutorenewOn(fake)
-    assert on.max_tier == Tier.AUTO and effective_tier(on, None, floor) == Tier.PROPOSE
 
     # no undo -> must stay operator-approved (registry invariant 1 / paid POD SKU)
     gapfill = ListingGapfillReprint(build_print_file_host(live=False))

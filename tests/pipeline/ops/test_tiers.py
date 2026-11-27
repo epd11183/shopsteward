@@ -75,6 +75,7 @@ def test_tier_floor_can_never_raise_past_the_python_max_tier():
 def test_shipped_tier_floor_covers_exactly_the_undoable_listing_capabilities():
     floor = ops_config.load_ops_config().autonomy.tier_floor
     assert set(floor) == {
+        "listing.autorenew_on",
         "listing.catalog_expand",
         "listing.seo_edit",
         "listing.size_claims_fix",
@@ -93,8 +94,8 @@ def test_shipped_tier_floor_covers_exactly_the_undoable_listing_capabilities():
     # while queued); without one it stays PROPOSE/draft-only (the clamp holds).
     assert floor["social.pinterest_post"] == floor["social.caption_draft"] == int(Tier.NOTIFY)
     # no-undo / non-listing capabilities are deliberately absent (stay PROPOSE);
-    # autorenew_on starts recurring renewal fees the $20 cap can't see (reviewer)
-    assert not {"listing.gapfill_reprint", "listing.autorenew_on"} & set(floor)
+    # autorenew_on is AUTO only behind the sold-in-window guard (operator 2026-11-27)
+    assert "listing.gapfill_reprint" not in floor
 
 
 def test_promote_t2_t1_needs_both_the_count_and_the_clock():

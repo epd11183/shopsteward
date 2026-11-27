@@ -32,7 +32,7 @@ from shopsteward.pipeline.ops.models import Tier
 from shopsteward.pipeline.ops.projections import rebuild_ops
 from shopsteward.pipeline.ops.registry import REGISTRY, register
 from shopsteward.pipeline.ops.runner import approve_action, run
-from tests.pipeline.ops.helpers import seed_listing_observed_on
+from tests.pipeline.ops.helpers import seed_listing_observed_on, seed_sale_observed
 
 USER_ID = 1
 TODAY = datetime.now(UTC).date()
@@ -96,6 +96,18 @@ def _seed_renewal_posture_executed(
     )
 
 
+_receipt = iter(range(9000, 9999))
+
+
+def _seed_sale(conn, listing_id: int, days_ago: int) -> None:
+    seed_sale_observed(
+        conn,
+        receipt_id=next(_receipt),
+        day=TODAY - timedelta(days=days_ago),
+        transactions=[(listing_id, next(_receipt), 1, 25.0)],
+    )
+
+
 def _seed_renew_executed(conn, *, listing_id: int, user_id: int = USER_ID) -> None:
     """Seeds a real `listing.renew` action.proposed + action.executed pair
     for `listing_id` -- the only way `_candidates()` can now find this
@@ -135,6 +147,7 @@ def _seed_scenario(conn) -> None:
         should_auto_renew=False,
     )
     _seed_renew_executed(conn, listing_id=LISTING_ACTIVE_OFF)
+    _seed_sale(conn, LISTING_ACTIVE_OFF, 10)
     seed_listing_observed_on(
         conn,
         listing_id=LISTING_ACTIVE_ON,
@@ -183,6 +196,8 @@ def _seed_scenario(conn) -> None:
 
 def _cfg(**autonomy_overrides):
     cfg = ops_config.load_ops_config()
+    if "tier_floor" not in autonomy_overrides:
+        cfg.autonomy.tier_floor = {}  # PROPOSE-tier flow; AUTO tests pass the shipped floor
     for k, v in autonomy_overrides.items():
         setattr(cfg.autonomy, k, v)
     return cfg
@@ -419,6 +434,10 @@ def test_renewed_listing_that_goes_dead_again_is_not_reproposed_after_off_but_re
     rebuild_core(conn)
     rebuild_ops(conn)
 
+    _seed_sale(conn, LISTING_RENEWED_THEN_DEAD_AGAIN, 3)  # AUTO guard: needs an in-window sale
+    rebuild_core(conn)
+    rebuild_ops(conn)
+
     dead_after_fresh_renew = {d.listing_id for d in analytics.dead_listings(conn, USER_ID, cfg)}
     assert LISTING_RENEWED_THEN_DEAD_AGAIN not in dead_after_fresh_renew
 
@@ -440,6 +459,7 @@ def test_on_proposes_a_listing_with_a_real_renew_execution_event(conn):
         should_auto_renew=False,
     )
     _seed_renew_executed(conn, listing_id=LISTING_GENUINELY_RENEWED)
+    _seed_sale(conn, LISTING_GENUINELY_RENEWED, 10)
     ops_config.seed(conn, USER_ID)
     rebuild_core(conn)
     rebuild_ops(conn)
@@ -557,7 +577,7 @@ def test_e2e_run_approve_executes_via_the_full_pipeline(conn):
 
     report = run(conn, USER_ID, cfg, [cap], today=TODAY)
     assert report.proposed == 1
-    assert report.executed == 0  # fresh capability starts at T2/PROPOSE
+    assert report.executed == 0  # no floor here: PROPOSE
 
     action_id = next(
         e.payload["action_id"]
@@ -687,3 +707,98 @@ def test_fake_update_listing_applies_should_auto_renew_true_and_records_the_call
     assert ("update_listing", {"listing_id": 998, "fields": {"should_auto_renew": True}}) in (
         fake.calls
     )
+
+
+# --- 9. AUTO guard (2026-11-27): only listings that SOLD in the dead_listings window ---
+
+LISTING_SOLD_OLD = 709  # renewed, off, last sale OUTSIDE the window (but views grew: not dead)
+LISTING_PINGPONG = 710  # dead + auto-renew ON: autorenew_off's target
+
+
+def _seed_two_obs(conn, listing_id: int, *, views_then: int, views_now: int, auto: bool) -> None:
+    for day, views in (
+        (TODAY - timedelta(days=100), views_then),
+        (TODAY - timedelta(days=1), views_now),
+    ):
+        seed_listing_observed_on(
+            conn,
+            listing_id=listing_id,
+            title=f"Print {listing_id}",
+            day=day,
+            views=views,
+            state="active",
+            should_auto_renew=auto,
+        )
+
+
+def test_sold_in_window_is_proposed_and_executes_at_auto_but_sold_outside_is_not(conn):
+    _seed_two_obs(conn, LISTING_ACTIVE_OFF, views_then=5, views_now=5, auto=False)
+    _seed_renew_executed(conn, listing_id=LISTING_ACTIVE_OFF)
+    _seed_sale(conn, LISTING_ACTIVE_OFF, 10)  # inside the 180d window
+    _seed_two_obs(conn, LISTING_SOLD_OLD, views_then=5, views_now=50, auto=False)
+    _seed_renew_executed(conn, listing_id=LISTING_SOLD_OLD)
+    _seed_sale(conn, LISTING_SOLD_OLD, 400)  # lifetime sale only
+    ops_config.seed(conn, USER_ID)
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    fake = FakeEtsyWriteAdapter()
+    fake.seed_listing(LISTING_ACTIVE_OFF, should_auto_renew=False, state="active")
+    fake.seed_listing(LISTING_SOLD_OLD, should_auto_renew=False, state="active")
+    cap = ListingAutorenewOn(fake)
+    shipped_floor = ops_config.load_ops_config().autonomy.tier_floor
+    assert shipped_floor["listing.autorenew_on"] == int(Tier.AUTO)
+    cfg = _cfg(enabled=True, weekly_catalog_pct_cap=1.0, tier_floor=shipped_floor)
+
+    assert {a.target_id for a in cap.propose(conn, USER_ID, cfg)} == {str(LISTING_ACTIVE_OFF)}
+
+    report = run(conn, USER_ID, cfg, [cap], today=TODAY, live_autonomy=True)
+
+    assert report.executed == 1
+    assert fake.listings[LISTING_ACTIVE_OFF]["should_auto_renew"] is True
+    assert fake.listings[LISTING_SOLD_OLD]["should_auto_renew"] is False
+
+
+def test_no_ping_pong_when_off_and_on_run_in_the_same_cycle(conn):
+    _seed_two_obs(conn, LISTING_ACTIVE_OFF, views_then=5, views_now=5, auto=False)
+    _seed_renew_executed(conn, listing_id=LISTING_ACTIVE_OFF)
+    _seed_sale(conn, LISTING_ACTIVE_OFF, 10)
+    _seed_two_obs(conn, LISTING_PINGPONG, views_then=5, views_now=5, auto=True)
+    ops_config.seed(conn, USER_ID)
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    fake = FakeEtsyWriteAdapter()
+    fake.seed_listing(LISTING_ACTIVE_OFF, should_auto_renew=False, state="active")
+    fake.seed_listing(LISTING_PINGPONG, should_auto_renew=True, state="active")
+    cfg = _cfg(
+        enabled=True,
+        weekly_catalog_pct_cap=1.0,
+        tier_floor=ops_config.load_ops_config().autonomy.tier_floor,
+    )
+    off_cap, on_cap = ListingAutorenewOff(fake), ListingAutorenewOn(fake)
+
+    off_ids = {a.target_id for a in off_cap.propose(conn, USER_ID, cfg)}
+    on_ids = {a.target_id for a in on_cap.propose(conn, USER_ID, cfg)}
+    assert off_ids == {str(LISTING_PINGPONG)}
+    assert on_ids == {str(LISTING_ACTIVE_OFF)}
+    assert not off_ids & on_ids
+
+    run(conn, USER_ID, cfg, [off_cap, on_cap], today=TODAY, live_autonomy=True)
+    assert fake.listings[LISTING_PINGPONG]["should_auto_renew"] is False
+    assert fake.listings[LISTING_ACTIVE_OFF]["should_auto_renew"] is True
+    # the sync now sees 701 ON (flat views): autorenew_off must not take it back off
+    seed_listing_observed_on(
+        conn,
+        listing_id=LISTING_ACTIVE_OFF,
+        title=f"Print {LISTING_ACTIVE_OFF}",
+        day=TODAY,
+        views=5,
+        state="active",
+        should_auto_renew=True,
+    )
+    rebuild_core(conn)
+    rebuild_ops(conn)
+    assert str(LISTING_ACTIVE_OFF) not in {a.target_id for a in off_cap.propose(conn, USER_ID, cfg)}
+    # second cycle: neither flips the other back
+    run(conn, USER_ID, cfg, [off_cap, on_cap], today=TODAY + timedelta(days=1), live_autonomy=True)
+    assert fake.listings[LISTING_PINGPONG]["should_auto_renew"] is False
+    assert fake.listings[LISTING_ACTIVE_OFF]["should_auto_renew"] is True
