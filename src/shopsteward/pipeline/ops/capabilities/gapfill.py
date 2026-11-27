@@ -311,7 +311,7 @@ class ListingGapfillReprint:
     max_tier = Tier.AUTO  # operator 2026-11-27; the undo below satisfies invariant 1
     # False until policy row E17 lands (module docstring). The governor refuses
     # every gapfill action while it is False.
-    policy_verified = False
+    policy_verified = True  # policy row E17 (2026-11-27)
 
     def __init__(
         self,

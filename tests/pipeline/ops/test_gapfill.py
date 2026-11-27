@@ -435,7 +435,7 @@ def test_a_hallucinated_target_is_ungrounded(conn, tmp_path):
 # --- registration --------------------------------------------------------
 
 
-def test_registers_at_auto_with_a_real_undo_and_policy_unverified():
+def test_registers_at_auto_with_a_real_undo_and_policy_verified():
     cap = ListingGapfillReprint(FakePrintFileHost())
 
     register(cap)
@@ -443,8 +443,8 @@ def test_registers_at_auto_with_a_real_undo_and_policy_unverified():
     assert REGISTRY["listing.gapfill_reprint"] is cap
     assert cap.max_tier == Tier.AUTO
     assert callable(cap.undo)
-    # Stays False until policy row E17 exists (the PR that adds it flips it).
-    assert cap.policy_verified is False
+    # Policy row E17 (2026-11-27).
+    assert cap.policy_verified is True
     # Offline construction (no adapters, no live gates): the governor refuses.
     assert cap.precondition_ok is False
 

@@ -290,9 +290,13 @@ selection): `listing.autorenew_on` and `listing.file_replace` to AUTO.**
   Otherwise the action is held at PROPOSE with the reason under NEEDS YOU
   (adopted and hand-uploaded listings usually are). Undo re-uploads the old bytes
   under the old name.
-- `gapfill_reprint`: the operator chose a full autonomous chain at 1/week; it
-  stays PROPOSE until that ships. Design:
-  `docs/designs/2026-11-27-gapfill-reprint-autonomous.md`. The premise above
+- `gapfill_reprint`: AUTO (operator chose the full autonomous chain,
+  2026-11-27), at most `gapfill.max_per_week` (1) new Gelato products a week:
+  build, Gelato create, enrich, auto-renew off, physical read-back gate
+  (inventory price above the margin floor, no digital wording or panel,
+  production partner present, vision copy check), then publish. Undo deactivates
+  the listing; the Gelato product is left (deleting it deletes the Etsy listing).
+  Policy row E17. Design: `docs/designs/2026-11-27-gapfill-reprint-autonomous.md`. The premise above
   ("POD SKU base cost at Gate-3-approval time") is wrong: Gelato bills per order
   (free plan, operator 2026-11-27), so the only up-front cost is the $0.20 listing
   fee.

@@ -491,10 +491,10 @@ def test_undo_deactivates_the_listing_and_never_deletes_the_gelato_product(
 # --- governance -------------------------------------------------------------------
 
 
-def test_shipped_policy_unverified_refuses_every_gapfill_action(conn, tmp_path, monkeypatch):
+def test_policy_unverified_refuses_every_gapfill_action(conn, tmp_path, monkeypatch):
+    # The kill switch still works if E17 is ever withdrawn.
     cap, _e, gelato, cfg, _ = _world(conn, tmp_path, monkeypatch)
-    cap.policy_verified = ListingGapfillReprint.policy_verified
-    assert cap.policy_verified is False
+    cap.policy_verified = False
 
     report = _go(conn, cap, cfg)
 
