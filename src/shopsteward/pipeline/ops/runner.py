@@ -398,6 +398,11 @@ def run(
         )
         for action in chain(fresh, stale):
             action = action.model_copy(update={"tier": eff_tier})
+            if action.tier in _AUTO_EXECUTE_TIERS and action.params.get("auto_hold"):
+                # Per-action clamp (file_replace): a capability whose AUTO needs a
+                # per-action guarantee (a verified undo) sets params["auto_hold"] to
+                # the reason it cannot give it; the action waits for the operator.
+                action = action.model_copy(update={"tier": Tier.PROPOSE})
             status = _action_status(conn, user_id, action.action_id)
 
             if status is None:

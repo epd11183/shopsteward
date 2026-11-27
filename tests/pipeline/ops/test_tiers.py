@@ -76,6 +76,7 @@ def test_shipped_tier_floor_covers_exactly_the_undoable_listing_capabilities():
     floor = ops_config.load_ops_config().autonomy.tier_floor
     assert set(floor) == {
         "listing.autorenew_on",
+        "listing.file_replace",
         "listing.catalog_expand",
         "listing.seo_edit",
         "listing.size_claims_fix",

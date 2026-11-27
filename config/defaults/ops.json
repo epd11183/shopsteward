@@ -169,6 +169,7 @@
       "listing.renew": 0,
       "listing.autorenew_off": 0,
       "listing.autorenew_on": 0,
+      "listing.file_replace": 0,
       "listing.catalog_expand": 0,
       "social.pinterest_post": 1,
       "social.caption_draft": 1
