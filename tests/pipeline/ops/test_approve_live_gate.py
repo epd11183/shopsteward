@@ -57,8 +57,7 @@ def test_live_gated_capabilities_matches_the_real_registered_keys():
     that set. `hasattr(cap, "_adapter")` distinguishes an Etsy-write-adapter
     -backed capability (autorenew_off/on, reprice, seo_edit, deactivate,
     renew) from one with no adapter at all (tune_threshold, caption_draft,
-    pinterest_post) or an offline, non-Etsy adapter (gapfill_reprint's
-    `_host`)."""
+    pinterest_post)."""
     from shopsteward.pipeline.ops.cli import _register_autorenew
     from shopsteward.pipeline.ops.registry import REGISTRY
 

@@ -30,13 +30,10 @@ spec §4) unconditionally -- it holds no adapter (pure `conn` reads/writes of
 coexists in the registry alongside `listing.autorenew_off` regardless of
 that flag.
 
-`ops run`/`approve`/`undo` also register `listing.gapfill_reprint` (M8b,
-gap-fill step 2) unconditionally against the OFFLINE `build_print_file_host
-(live=False)` -- its `execute()` only reaches `build_pod_reprint`'s local
-`print_file_hosted` stop, never Gelato/Etsy, so it needs no `--live-autonomy`
-gate at all. The resulting reprint POD draft reaches Gate 3 (and any live
-Gelato/Etsy call) only when the operator next runs the existing, separately
-gated `shop build` link step.
+`ops run`/`approve`/`undo` also register `listing.gapfill_reprint` via
+`_gapfill()`: since 2026-11-27 it is autonomous (Gelato create, Etsy enrich and
+publish behind a read-back gate), so it is in `LIVE_GATED_CAPABILITIES` and every
+live gate (Gelato, print-file host, copy, vision, Etsy read) is resolved there.
 
 `ops run`/`approve`/`undo` also register `social.caption_draft` (M8b slice
 6) unconditionally -- it holds NO adapter at all (execute() only ever
@@ -58,6 +55,7 @@ if TYPE_CHECKING:
     from shopsteward.adapters.etsy.live import LiveEtsyAdapter
     from shopsteward.pipeline.ops.buffer_publish import BufferPublisherAdapter
     from shopsteward.pipeline.ops.capabilities.catalog_expand import ListingCatalogExpand
+    from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
     from shopsteward.pipeline.ops.models import OpsConfig
     from shopsteward.pipeline.ops.registry import Capability
 
@@ -319,7 +317,6 @@ def run_cmd(
     live adapter constructed on the default path."""
     from shopsteward.core.db import connect, migrate
     from shopsteward.core.projections import rebuild as rebuild_core
-    from shopsteward.pipeline.listings.pod.factory import build_print_file_host
     from shopsteward.pipeline.listings.push import build_etsy_write_adapter
     from shopsteward.pipeline.live_gate import (
         live_autonomy_error,
@@ -332,7 +329,6 @@ def run_cmd(
     from shopsteward.pipeline.ops.capabilities.caption_draft import SocialCaptionDraft
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
     from shopsteward.pipeline.ops.capabilities.file_replace import ListingFileReplace
-    from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
     from shopsteward.pipeline.ops.capabilities.panel_replace import ListingPanelReplace
     from shopsteward.pipeline.ops.capabilities.pinterest_post import SocialPinterestPost
     from shopsteward.pipeline.ops.capabilities.renew import ListingRenew
@@ -369,7 +365,7 @@ def run_cmd(
     register(_catalog_expand(adapter))
     # Always the offline print-file host -- this capability's execute() never
     # reaches Gelato/Etsy, so it is never gated on --live-autonomy.
-    register(ListingGapfillReprint(build_print_file_host(live=False)))
+    register(_gapfill(adapter))
     # No adapter at all -- execute() only ever appends an event, so this is
     # never gated on --live-autonomy either (no Meta/IG/FB call anywhere).
     # Variant A (draft-only) unless live-autonomy AND the Buffer gates are open.
@@ -645,20 +641,73 @@ def _catalog_expand(adapter: "EtsyWriteAdapter") -> "ListingCatalogExpand":
     )
 
 
+def _gapfill(adapter: "EtsyWriteAdapter") -> "ListingGapfillReprint":
+    """`listing.gapfill_reprint` with every live gate resolved independently
+    (design 2026-11-27 §5): SHOPSTEWARD_LIVE_GELATO (+ key + store id),
+    SHOPSTEWARD_LIVE_PRINTFILE (+ the 4 R2 vars), SHOPSTEWARD_LIVE_COPY, the live
+    copy checker (openrouter + SHOPSTEWARD_LIVE_VISION) and SHOPSTEWARD_LIVE_ETSY_READ
+    (the inventory read). A closed gate gets the fake/fixture twin -- never a
+    live adapter -- and `precondition_ok` goes False so the governor refuses."""
+    import json
+
+    from shopsteward.pipeline.config import TUNING_PROFILE_PATH
+    from shopsteward.pipeline.listings import config as listing_config
+    from shopsteward.pipeline.listings.copy import build_copy_adapter
+    from shopsteward.pipeline.listings.pod import config as pod_config
+    from shopsteward.pipeline.listings.pod.factory import build_pod_adapter, build_print_file_host
+    from shopsteward.pipeline.live_gate import (
+        live_copy_open,
+        live_etsy_read_open,
+        live_gelato_open,
+        live_printfile_open,
+        live_vision_open,
+    )
+    from shopsteward.pipeline.models import TuningProfile
+    from shopsteward.pipeline.ops import config as ops_config
+    from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
+    from shopsteward.pipeline.vision_factory import build_copy_checker
+
+    profile = TuningProfile.model_validate(
+        json.loads(TUNING_PROFILE_PATH.read_text(encoding="utf-8"))
+    )
+    live_check = profile.vision.provider == "openrouter" and live_vision_open("openrouter")
+    live_gelato, live_printfile = live_gelato_open(), live_printfile_open()
+    live_read, live_copy = live_etsy_read_open(), live_copy_open()
+    pod_cfg = pod_config.load_pod_config()
+    return ListingGapfillReprint(
+        build_print_file_host(live=live_printfile),
+        pod_adapter=build_pod_adapter(
+            live=live_gelato,
+            etsy_listings=getattr(adapter, "listings", None),
+            store_id=pod_config.resolve_store_id(pod_cfg) if live_gelato else None,
+        ),
+        adapter=adapter,
+        # No offline read twin: without the live read gate there is no inventory
+        # to check, so precondition_ok stays False (None read adapter).
+        read_adapter=_build_live_etsy_read_adapter() if live_read else None,
+        copy_adapter=build_copy_adapter(listing_config.load_listing_config(), live=live_copy),
+        checker=build_copy_checker(profile, live_check),
+        live_gelato=live_gelato,
+        live_printfile=live_printfile,
+        live_copy=live_copy,
+        live_check=live_check,
+        live_etsy_read=live_read,
+        listing_fee_usd=ops_config.load_ops_config().catalog_expansion.listing_fee_usd,
+    )
+
+
 def _register_autorenew(live_autonomy: bool, *, announce: bool = True) -> None:
     """Shared by `approve`/`undo`: same fake-vs-live construction as `ops
     run` (module docstring). Registers into the module-global REGISTRY so
     approve_action/undo_action can look the capability up by key. Also
     registers `ops.tune_threshold`, which holds no adapter and so is never
     gated on `live_autonomy`."""
-    from shopsteward.pipeline.listings.pod.factory import build_print_file_host
     from shopsteward.pipeline.listings.push import build_etsy_write_adapter
     from shopsteward.pipeline.ops.capabilities.autorenew import ListingAutorenewOff
     from shopsteward.pipeline.ops.capabilities.autorenew_on import ListingAutorenewOn
     from shopsteward.pipeline.ops.capabilities.caption_draft import SocialCaptionDraft
     from shopsteward.pipeline.ops.capabilities.deactivate import ListingDeactivate
     from shopsteward.pipeline.ops.capabilities.file_replace import ListingFileReplace
-    from shopsteward.pipeline.ops.capabilities.gapfill import ListingGapfillReprint
     from shopsteward.pipeline.ops.capabilities.panel_replace import ListingPanelReplace
     from shopsteward.pipeline.ops.capabilities.pinterest_post import SocialPinterestPost
     from shopsteward.pipeline.ops.capabilities.renew import ListingRenew
@@ -682,7 +731,7 @@ def _register_autorenew(live_autonomy: bool, *, announce: bool = True) -> None:
     register(ListingRenew(adapter))
     register(OpsTuneThreshold())
     register(_catalog_expand(adapter))
-    register(ListingGapfillReprint(build_print_file_host(live=False)))
+    register(_gapfill(adapter))
     register(SocialCaptionDraft(_build_buffer_publisher(live_autonomy)))
     register(SocialPinterestPost(_build_buffer_publisher(live_autonomy)))
 

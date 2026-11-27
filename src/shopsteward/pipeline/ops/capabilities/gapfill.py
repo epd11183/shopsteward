@@ -1,53 +1,88 @@
-"""`listing.gapfill_reprint` -- gap-fill step 2 (M8b, design §4/§8): Claude
-proposes reprinting a PROVEN best-seller into a NEW POD format; on approval,
-`execute()` calls `build_pod_reprint` (pod/build.py, gap-fill step 1, merged)
-OFFLINE -- the reprint POD draft is created locally, stopping at
-`print_file_hosted`, exactly like every other POD build. **Zero live surface
-here**: the reprint reaches Gate 3 (and any live Gelato/Etsy call) only later,
-via the operator's existing, already-gated `shop build` link step -- this
-capability never runs link/enrich/push.
+"""`listing.gapfill_reprint` -- autonomous gap-fill (design
+docs/designs/2026-11-27-gapfill-reprint-autonomous.md): Claude reprints a
+PROVEN best-seller into a NEW POD format and, behind a physical read-back gate,
+publishes it. `max_tier = Tier.AUTO` (operator, 2026-11-27); config
+`autonomy.tier_floor` starts it at AUTO.
 
-T2 ceiling, never auto/promotable (`max_tier = Tier.PROPOSE`, registry.py's
-invariant 2 -- creating catalog stays operator-approved, full stop) and
-**`undo = None`** explicitly: allowed because max_tier is not below PROPOSE
-(registry.py invariant 1), and there is nothing to reverse programmatically
-anyway -- draft #16: "a capability whose output is an unpublished Etsy DRAFT
-needs no autonomy tier -- Gate 3 is already its approval." The operator's
-reversal is simply declining to publish at Gate 3.
+The chain (steps 0-4 raise = a non-terminal refusal that counts as an attempt;
+after step 5 nothing raises):
 
-`_candidates()` is the ONE grounding function shared by propose()/
-materialize() (M8b slice-2 planner-safety contract, every capability here
-follows it): the reprint ceiling is honest -- only a listing that is (1) a
-PROVEN listing (`analytics.proven_listings` -- T12 2026-08-25: a sale within
-the trailing 90 days, OR at least one lifetime sale, OR a views-velocity
-signal on a zero-sales listing; see that function's docstring), AND
-(2) has an archived, reprintable source (`source_assets.resolve_source` ->
-`archived=True`), is ever proposed for ANY missing POD product_type. A
-best-seller with no archived source is simply not reprintable; no proposal,
-no guess. Draft existence is checked by computing the SAME `draft_id`
-`build_pod_reprint` would (photo_id|pod_config_hash|provider|product_type) --
-a product_type the photo already has a draft for is never re-proposed.
+0. re-validate the target against `_candidates()`;
+1. local preflight, no network: the print master resolves (archive fallback)
+   and the mockup set exists (built via the mockups hook if not);
+2. `build_pod_reprint` with the live print-file host (an existing own draft is
+   resumed);
+3. `link_pod_drafts(draft_ids={draft})` -- the filter is the point: unfiltered
+   it would create a Gelato product for EVERY unlinked POD draft;
+4. `enrich_pod_drafts(draft_ids={draft})` (POD copy, no digital panel);
+5. auto-renew off if Etsy shows it on (a listing field, never a SKU/variation);
+6. `run_physical_readback`; pass -> `gate3.publish` (the sole publish site).
+   Fail -> the draft stays a draft under NEEDS YOU. Either way the action is
+   `executed` with `after={draft_id, etsy_listing_id, provider_product_id,
+   published, problems}`.
 
-Holds a `print_file_host` injected at construction (the chassis contract --
-autorenew.py precedent), but unlike the Etsy-write capabilities this is
-ALWAYS the offline host in practice (the CLI passes
-`build_print_file_host(live=False)` unconditionally for this capability --
-see cli.py): `build_pod_reprint` only needs a host to reach
-`print_file_hosted` locally; nothing here ever reaches Gelato or Etsy. This
-module constructs no adapter/host itself."""
+POD-first: provider SKUs, variations and price are read, never written.
+
+**Money.** Gelato create costs nothing up front (Gelato is on the free plan);
+the Etsy $0.20 listing fee is charged at publish and booked by
+`governor.month_spend_parts` from `gate3.published`. `estimated_cost_usd` is
+that fee so the governor reserves it; `ExecutionResult.cost_usd` is 0.
+
+**Pace unit = one new Gelato product** (first `provider_create_attempted`),
+not one execution -- see `pace_exceeded()`, called by `governor.govern()`.
+
+**Own drafts only.** A draft is resumable/finished-checked only if this
+capability claimed it (`listingdraft.gapfill_claimed`, or an old offline
+`action.executed` that built it). A POD draft built by `shop build` for the
+same photo is never taken over: it stays operator-driven.
+
+**Ambiguous create.** A create attempt with no `provider_created` is never
+retried (the live create has no idempotency key): the draft is closed with a
+`listingdraft.readback` failure telling the operator to check the Gelato
+dashboard.
+
+**Undo** deactivates the published listing (fee not refunded). The Gelato
+product is left in place: `delete_product` removes the connected Etsy listing
+and its history. `provider_product_id` stays in `after` for manual cleanup.
+
+`policy_verified` stays False until policy row E17 exists in
+docs/policy/2026-08-11-autonomy-platform-policy.md; until then the governor
+refuses every gapfill action with POLICY_UNVERIFIED."""
 
 import hashlib
 import sqlite3
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
+from shopsteward.adapters.copy.interface import CopyAdapter
+from shopsteward.adapters.etsy.interface import EtsyAdapter, EtsyWriteAdapter, EtsyWriteError
+from shopsteward.adapters.etsy.models import EtsyListingUpdate
 from shopsteward.adapters.planner.interface import ProposalIntent
+from shopsteward.adapters.pod.interface import PodAdapter
 from shopsteward.adapters.printfile.interface import PrintFileHost
+from shopsteward.adapters.vision.interface import CopyChecker
+from shopsteward.core.events import Event, append, read_all
+from shopsteward.pipeline import tuning
+from shopsteward.pipeline.config import TUNING_PROFILE_PATH
+from shopsteward.pipeline.listings import config as listing_config
+from shopsteward.pipeline.listings import gate3
+from shopsteward.pipeline.listings.drafts import _completed_mockup_set, _mockup_projections_ready
 from shopsteward.pipeline.listings.pod import config as pod_config
-from shopsteward.pipeline.listings.pod.build import build_pod_reprint
+from shopsteward.pipeline.listings.pod import printfile
+from shopsteward.pipeline.listings.pod.build import _archived_row_for_photo, build_pod_reprint
+from shopsteward.pipeline.listings.pod.enrich import enrich_pod_drafts
+from shopsteward.pipeline.listings.pod.provider import link_pod_drafts
+from shopsteward.pipeline.listings.projections import rebuild_listings
+from shopsteward.pipeline.listings.readback import run_physical_readback
 from shopsteward.pipeline.listings.source_assets import resolve_source
+from shopsteward.pipeline.mockup_hooks import get as mockup_hook
 from shopsteward.pipeline.ops import analytics
+from shopsteward.pipeline.ops.capabilities.catalog_expand import _failed_attempts
 from shopsteward.pipeline.ops.models import ExecutionResult, OpsConfig, ProposedAction, Tier
 from shopsteward.pipeline.ops.registry import StaleTargetError, compute_action_id
+from shopsteward.pipeline.ops.timeutil import parse_ts
+
+_CAPABILITY = "listing.gapfill_reprint"
+ATTEMPT_TAG = "gapfill"
 
 
 def _draft_exists(conn: sqlite3.Connection, user_id: int, draft_id: str) -> bool:
@@ -60,31 +95,157 @@ def _draft_exists(conn: sqlite3.Connection, user_id: int, draft_id: str) -> bool
     )
 
 
+def compute_draft_id(photo_id: str, pod_cfg_hash: str, provider: str, product_type: str) -> str:
+    """The same id `build_pod_reprint` derives (photo|config hash|provider|type)."""
+    raw = f"{photo_id}|{pod_cfg_hash}|{provider}|{product_type}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _has_mockups(conn: sqlite3.Connection, user_id: int, file_id: str) -> bool:
+    return (
+        _mockup_projections_ready(conn)
+        and _completed_mockup_set(conn, user_id, file_id) is not None
+    )
+
+
+def _provider_by_type(pod_cfg: pod_config.PodConfig) -> dict[str, str]:
+    # ponytail: assumes a 1:1 product_type -> provider catalog (true today,
+    # every product_type in pod.json has exactly one provider). Under a
+    # many-providers catalog this dedup-only pick could differ from the
+    # provider build_pod_reprint's own variant selection uses -- at worst a
+    # noisy proposal that fails loudly at execute(), never a duplicate draft.
+    out: dict[str, str] = {}
+    for provider, provider_cat in pod_cfg.catalog.items():
+        for product_type in provider_cat.products:
+            out.setdefault(product_type, provider)
+    return out
+
+
+def action_draft_id(conn: sqlite3.Connection, user_id: int, action: ProposedAction) -> str | None:
+    """The draft this action works on: `params.draft_id` when minted by the
+    autonomous version, else recomputed (proposals stored before it existed)."""
+    stored = action.params.get("draft_id")
+    if stored:
+        return str(stored)
+    photo_id, product_type = action.params.get("photo_id"), action.params.get("product_type")
+    if not photo_id or not product_type:
+        return None
+    pod_cfg = pod_config.get_pod_config(conn, user_id)
+    provider = _provider_by_type(pod_cfg).get(str(product_type))
+    if provider is None:
+        return None
+    return compute_draft_id(
+        str(photo_id), pod_config.pod_config_hash(pod_cfg), provider, str(product_type)
+    )
+
+
+# -- event-derived state per draft ------------------------------------------------
+
+
+def _draft_ids(conn: sqlite3.Connection, user_id: int, event_type: str) -> set[str]:
+    return {
+        e.payload["draft_id"]
+        for e in read_all(conn, event_type)
+        if e.user_id == user_id and e.payload.get("draft_id")
+    }
+
+
+def _claimed(conn: sqlite3.Connection, user_id: int) -> set[str]:
+    """Drafts this capability built: an explicit claim, or an old offline
+    execution's `after.draft_id`."""
+    out = _draft_ids(conn, user_id, "listingdraft.gapfill_claimed")
+    capability_of = {
+        e.payload["action_id"]: e.payload["capability"]
+        for e in read_all(conn, "action.proposed")
+        if e.user_id == user_id
+    }
+    for e in read_all(conn, "action.executed"):
+        if e.user_id != user_id or capability_of.get(e.payload.get("action_id")) != _CAPABILITY:
+            continue
+        draft_id = (e.payload.get("after") or {}).get("draft_id")
+        if draft_id:
+            out.add(draft_id)
+    return out
+
+
+def _finished(conn: sqlite3.Connection, user_id: int) -> set[str]:
+    """Published, or the read-back gate ran (pass-then-publish-failed and every
+    gate failure append a `listingdraft.readback`)."""
+    return _draft_ids(conn, user_id, "gate3.published") | _draft_ids(
+        conn, user_id, "listingdraft.readback"
+    )
+
+
+def _unconfirmed(conn: sqlite3.Connection, user_id: int) -> set[str]:
+    """Create attempted, never confirmed: never re-created."""
+    return _draft_ids(conn, user_id, "listingdraft.provider_create_attempted") - _draft_ids(
+        conn, user_id, "listingdraft.provider_created"
+    )
+
+
+def _first_attempts(conn: sqlite3.Connection, user_id: int) -> dict[str, date]:
+    """draft_id -> date of its first gapfill-tagged `provider_create_attempted`."""
+    out: dict[str, date] = {}
+    for e in read_all(conn, "listingdraft.provider_create_attempted"):
+        if e.user_id != user_id or e.payload.get("tag") != ATTEMPT_TAG or not e.created_at:
+            continue
+        out.setdefault(e.payload["draft_id"], parse_ts(e.created_at).date())
+    return out
+
+
+def in_flight(conn: sqlite3.Connection, user_id: int) -> set[str]:
+    """Own drafts whose Gelato product exists and whose chain has not finished."""
+    return (
+        set(_first_attempts(conn, user_id))
+        & _draft_ids(conn, user_id, "listingdraft.provider_created")
+        & _claimed(conn, user_id)
+    ) - _finished(conn, user_id)
+
+
+def pace_exceeded(
+    conn: sqlite3.Connection,
+    user_id: int,
+    action: ProposedAction,
+    cfg: OpsConfig,
+    today: date,
+) -> bool:
+    """Governor PACE for a NEW Gelato product (design §4): this ISO week already
+    has `max_per_week` first create attempts on gapfill drafts, or another
+    gapfill draft is in flight. Resuming a draft that already attempted its
+    create is never pace-refused."""
+    draft_id = action_draft_id(conn, user_id, action)
+    attempts = _first_attempts(conn, user_id)
+    if draft_id is not None and draft_id in attempts:
+        return False
+    this_week = sum(1 for d in attempts.values() if d.isocalendar()[:2] == today.isocalendar()[:2])
+    if this_week >= cfg.gapfill.max_per_week:
+        return True
+    return bool(in_flight(conn, user_id) - {draft_id})
+
+
+# -- candidates --------------------------------------------------------------------
+
+
 def _candidates(
     conn: sqlite3.Connection, user_id: int, cfg: OpsConfig
 ) -> dict[str, ProposedAction]:
     """`f"{listing_id}:{product_type}"` -> the ProposedAction propose() would
-    build for it -- see module docstring for the honest reprint ceiling
-    (proven seller AND archived source AND missing format, no exceptions)."""
+    build. The reprint ceiling: a PROVEN listing with an ARCHIVED source and a
+    format the photo has no draft for -- or an own draft that is unfinished,
+    unambiguous and under `max_attempts` failures (resumed). Pace is NOT
+    here (this is also execute()'s re-validation predicate; a pace-only
+    exclusion would terminalize a re-approvable action): `governor.govern()`
+    owns it."""
     sellers = analytics.proven_listings(conn, user_id, cfg)
     if not sellers:
         return {}
 
     pod_cfg = pod_config.get_pod_config(conn, user_id)
     pod_cfg_hash = pod_config.pod_config_hash(pod_cfg)
-    # product_type -> its (single) provider in the catalog -- pod.json's
-    # `catalog` is keyed by provider name (pod/models.py's PodProviderCatalog).
-    # ponytail: assumes a 1:1 product_type -> provider catalog (true today,
-    # every product_type in pod.json has exactly one provider). Under a
-    # future many-providers catalog this dedup-only `provider` pick could
-    # differ from the provider build_pod_reprint's own variant selection
-    # actually uses -- at worst a noisy proposal that fails loudly at
-    # execute() (build_pod_reprint's own guard), never a duplicate draft.
-    # Upgrade if/when a product_type ever routes to >1 provider.
-    provider_by_type: dict[str, str] = {}
-    for provider, provider_cat in pod_cfg.catalog.items():
-        for product_type in provider_cat.products:
-            provider_by_type.setdefault(product_type, provider)
+    provider_by_type = _provider_by_type(pod_cfg)
+    claimed = _claimed(conn, user_id)
+    skip = _finished(conn, user_id) | _unconfirmed(conn, user_id)
+    attempts = _failed_attempts(conn, user_id, _CAPABILITY)
 
     today_date = datetime.now(UTC).date()
     today = today_date.isoformat()
@@ -94,69 +255,98 @@ def _candidates(
     for seller in sellers:
         source = resolve_source(conn, user_id, seller.listing_id)
         if source is None or not source.archived or source.photo_id is None:
-            # Not reprintable -- no archived source. Honest ceiling: never
-            # guess a reprint for a best-seller we can't actually rebuild.
-            continue
+            continue  # no archived source: never guess a reprint
 
         for product_type, provider in provider_by_type.items():
-            draft_id = hashlib.sha256(
-                f"{source.photo_id}|{pod_cfg_hash}|{provider}|{product_type}".encode()
-            ).hexdigest()
-            if _draft_exists(conn, user_id, draft_id):
-                continue  # this photo already has (or is building) this format
-
+            draft_id = compute_draft_id(source.photo_id, pod_cfg_hash, provider, product_type)
+            if _draft_exists(conn, user_id, draft_id) and (
+                draft_id not in claimed or draft_id in skip
+            ):
+                continue  # not ours, or finished/ambiguous: never re-proposed
             target_id = f"{seller.listing_id}:{product_type}"
+            if attempts.get(target_id, 0) >= cfg.gapfill.max_attempts:
+                continue  # needs the operator (a NEEDS YOU line was written)
+
             raw = "|".join((source.photo_id, product_type, str(seller.units)))
             inputs_hash = hashlib.sha256(raw.encode()).hexdigest()
-            action_id = compute_action_id(
-                "listing.gapfill_reprint", target_id, inputs_hash, pod_cfg_hash, today
-            )
-            # M2 (guardrail review, 2026-08-25): the trailing clause must be
-            # as conditional as `analytics.proof_phrase()`'s own prefix --
-            # this reason lands verbatim on the Gate-3 card that authorizes
-            # a REAL PAID POD SKU. `seller.units == 0` is only possible via
-            # `proven_listings()`'s views-velocity arm (proof_phrase's own
-            # docstring): that listing has never sold, so it must never be
-            # called "the proven winner".
+            action_id = compute_action_id(_CAPABILITY, target_id, inputs_hash, pod_cfg_hash, today)
             trailing = (
                 "reprint the proven winner."
                 if seller.units > 0
                 else "print a first physical copy -- rising views, still no sale."
             )
+            fee = cfg.catalog_expansion.listing_fee_usd
             out[target_id] = ProposedAction(
                 action_id=action_id,
-                capability="listing.gapfill_reprint",
+                capability=_CAPABILITY,
                 target_type="listing_reprint",
                 target_id=target_id,
                 tier=Tier.PROPOSE,  # overwritten by the runner with the effective tier
-                reason=f"{analytics.proof_phrase(seller)}; no {product_type} yet -- {trailing}",
+                reason=(
+                    f"{analytics.proof_phrase(seller)}; no {product_type} yet -- {trailing} "
+                    f"Auto-published if it passes the read-back gate (${fee:.2f} at publish, "
+                    "non-refundable)."
+                ),
                 inputs_hash=inputs_hash,
-                estimated_cost_usd=0.0,
-                undo_available=False,
+                estimated_cost_usd=fee,
+                undo_available=True,
                 expires_at=expires_at,
                 params={
                     "photo_id": source.photo_id,
                     "product_type": product_type,
                     "listing_id": seller.listing_id,
+                    "draft_id": draft_id,
                 },
             )
-    return out
+    # most units sold first (CMO), then target for determinism
+    units = {s.listing_id: s.units for s in sellers}
+    return dict(
+        sorted(out.items(), key=lambda kv: (-units.get(int(kv[1].params["listing_id"]), 0), kv[0]))
+    )
 
 
 class ListingGapfillReprint:
-    key = "listing.gapfill_reprint"
-    # T2 ceiling -- NEVER promotable (creates catalog; draft #16 keeps this
-    # operator-approved regardless of the ladder). registry.py's invariant 2
-    # enforces there is no config path that can raise this Python ceiling.
-    max_tier = Tier.PROPOSE
-    policy_verified = True  # Etsy E5 -- an unpublished draft; Gate 3 is the publish authority.
-    # No undo path: allowed because max_tier is not below PROPOSE
-    # (registry.py invariant 1) -- the reversal is Gate 3 (decline to
-    # publish), never a programmatic undo (draft #16).
-    undo = None
+    key = _CAPABILITY
+    max_tier = Tier.AUTO  # operator 2026-11-27; the undo below satisfies invariant 1
+    # False until policy row E17 lands (module docstring). The governor refuses
+    # every gapfill action while it is False.
+    policy_verified = False
 
-    def __init__(self, print_file_host: PrintFileHost) -> None:
+    def __init__(
+        self,
+        print_file_host: PrintFileHost,
+        *,
+        pod_adapter: PodAdapter | None = None,
+        adapter: EtsyWriteAdapter | None = None,
+        read_adapter: EtsyAdapter | None = None,
+        copy_adapter: CopyAdapter | None = None,
+        checker: CopyChecker | None = None,
+        live_gelato: bool = False,
+        live_printfile: bool = False,
+        live_copy: bool = False,
+        live_check: bool = False,
+        live_etsy_read: bool = False,
+        listing_fee_usd: float | None = None,
+    ) -> None:
         self._host = print_file_host
+        self._pod = pod_adapter
+        self._adapter = adapter
+        self._read = read_adapter
+        self._copy = copy_adapter
+        self._checker = checker
+        self._live_copy = live_copy
+        self._fee = listing_fee_usd
+        # Every dependency present AND every live gate open (design §5): the
+        # control stopping fixture copy, a fixture checker or an unreachable
+        # Gelato/R2/Etsy-read from reaching a real listing.
+        self.precondition_ok = (
+            all(x is not None for x in (pod_adapter, adapter, read_adapter, copy_adapter, checker))
+            and live_gelato
+            and live_printfile
+            and live_copy
+            and live_check
+            and live_etsy_read
+        )
 
     def propose(
         self, conn: sqlite3.Connection, user_id: int, cfg: OpsConfig
@@ -168,38 +358,253 @@ class ListingGapfillReprint:
     ) -> ProposedAction | None:
         return _candidates(conn, user_id, cfg).get(intent.target_id)
 
+    # -- execute -----------------------------------------------------------------
+
     def execute(
         self, conn: sqlite3.Connection, user_id: int, action: ProposedAction
     ) -> ExecutionResult:
+        from shopsteward.pipeline.ops.config import get_ops_config
+
+        if (
+            self._pod is None
+            or self._adapter is None
+            or self._read is None
+            or self._copy is None
+            or self._checker is None
+        ):
+            raise RuntimeError("gapfill_reprint is not wired for execution (offline construction)")
+        pod_adapter, adapter, read_adapter, copy_adapter, checker = (
+            self._pod,
+            self._adapter,
+            self._read,
+            self._copy,
+            self._checker,
+        )
+
+        cfg = get_ops_config(conn, user_id)
+        # Step 0: re-validate (renew.py precedent) -- genuine staleness terminalizes.
+        if action.target_id not in _candidates(conn, user_id, cfg):
+            raise StaleTargetError(
+                f"gapfill target {action.target_id!r}: no longer eligible -- refusing to reprint"
+            )
         photo_id = str(action.params["photo_id"])
         product_type = str(action.params["product_type"])
+        draft_id = action_draft_id(conn, user_id, action)
+        if draft_id is None:
+            raise StaleTargetError(f"gapfill target {action.target_id!r}: no draft id")
         pod_cfg = pod_config.get_pod_config(conn, user_id)
 
-        result = build_pod_reprint(
+        def fail(message: str) -> RuntimeError:
+            """A retryable raise; the LAST allowed attempt also writes the
+            NEEDS YOU line (a `listingdraft.readback` failure)."""
+            tried = _failed_attempts(conn, user_id, _CAPABILITY).get(action.target_id, 0)
+            if tried + 1 >= cfg.gapfill.max_attempts:
+                self._close(conn, user_id, draft_id, [f"gapfill gave up: {message}"])
+            return RuntimeError(message)
+
+        try:
+            self._preflight(conn, user_id, photo_id, pod_cfg)
+            self._build(conn, user_id, action, photo_id, product_type, draft_id, pod_cfg)
+            self._link(conn, user_id, draft_id, pod_adapter, pod_cfg)
+        except StaleTargetError:
+            raise  # genuine staleness terminalizes (a ValueError subclass: keep it first)
+        except (OSError, LookupError, ValueError, RuntimeError) as exc:
+            raise fail(f"{type(exc).__name__}: {str(exc)[:300]}") from exc
+
+        row = self._row(conn, user_id, draft_id)
+        if row is None or row["etsy_listing_id"] is None:
+            if draft_id in _unconfirmed(conn, user_id):
+                # Never re-create: ambiguous (timeout) or definitively failed
+                # create -- the operator checks the Gelato dashboard.
+                problems = [
+                    f"Gelato create unconfirmed -- check the Gelato dashboard for draft "
+                    f"{draft_id}; never re-created"
+                ]
+                self._close(conn, user_id, draft_id, problems)
+                return self._result(conn, user_id, draft_id, False, problems)
+            raise fail("Gelato product not linked yet (will re-poll next run)")
+
+        try:
+            listing_cfg = listing_config.get_config(conn, user_id)
+            enrich_pod_drafts(
+                conn,
+                user_id,
+                etsy_adapter=adapter,
+                copy_adapter=copy_adapter,
+                cfg=listing_cfg,
+                live=self._live_copy,
+                draft_ids={draft_id},
+            )
+        except (OSError, LookupError, ValueError, RuntimeError, EtsyWriteError) as exc:
+            raise fail(f"enrich failed: {type(exc).__name__}: {str(exc)[:300]}") from exc
+        row = self._row(conn, user_id, draft_id)
+        if row is None or row["pod_status"] != "enriched":
+            raise fail(f"draft not enriched (pod_status={row['pod_status'] if row else None})")
+
+        # From here a real draft exists on Etsy: nothing below may raise.
+        listing_id = int(row["etsy_listing_id"])
+        try:  # step 5: auto-renew off (the gate re-reads it, so a failure here fails the gate)
+            if adapter.get_listing(listing_id).should_auto_renew:
+                adapter.update_listing(listing_id, EtsyListingUpdate(should_auto_renew=False))
+        except EtsyWriteError:
+            pass  # the read-back below re-reads should_auto_renew and fails the gate
+
+        model = tuning.get_profile(conn, user_id).vision.copy_check_model
+        gate = run_physical_readback(
             conn,
             user_id,
-            photo_id,
-            product_type,
-            print_file_host=self._host,
+            draft_id,
+            adapter=adapter,
+            read_adapter=read_adapter,
+            checker=checker,
+            model=model,
             pod_cfg=pod_cfg,
         )
-        if not result.built:
-            # Became ineligible or already exists between propose() and
-            # approval -- must fail loudly (action.failed), never silently
-            # claim a draft that was never actually built.
-            # StaleTargetError (H2b, guardrail review 2026-08-25): genuine
-            # per-target staleness -> the runner terminalizes this one.
+        problems = list(gate.problems)
+        published = False
+        if gate.ok:
+            try:
+                card = gate3.publish(conn, user_id, draft_id, adapter)  # sole publish site
+                published = card.state == "published"
+                if not published:
+                    problems = [f"publish failed: {card.retry_error or card.state}"]
+            except ValueError as exc:
+                problems = [f"publish failed: {str(exc)[:200]}"]
+            if not published:
+                self._close(conn, user_id, draft_id, problems)
+        return self._result(conn, user_id, draft_id, published, problems)
+
+    # -- steps ---------------------------------------------------------------------
+
+    @staticmethod
+    def _row(conn: sqlite3.Connection, user_id: int, draft_id: str) -> sqlite3.Row | None:
+        rebuild_listings(conn)
+        return conn.execute(
+            "SELECT etsy_listing_id, pod_status, provider_product_id FROM proj_listing_drafts "
+            "WHERE user_id=? AND draft_id=?",
+            (user_id, draft_id),
+        ).fetchone()
+
+    @staticmethod
+    def _close(conn: sqlite3.Connection, user_id: int, draft_id: str, problems: list[str]) -> None:
+        """Mark the draft finished and put it under NEEDS YOU (the brief reads
+        the latest `listingdraft.readback`)."""
+        append(
+            conn,
+            Event(
+                user_id=user_id,
+                type="listingdraft.readback",
+                payload={"draft_id": draft_id, "ok": False, "problems": problems},
+            ),
+        )
+
+    def _result(
+        self,
+        conn: sqlite3.Connection,
+        user_id: int,
+        draft_id: str,
+        published: bool,
+        problems: list[str],
+    ) -> ExecutionResult:
+        row = self._row(conn, user_id, draft_id)
+        return ExecutionResult(
+            before={"draft_id": None},
+            after={
+                "draft_id": draft_id,
+                "etsy_listing_id": row["etsy_listing_id"] if row else None,
+                "provider_product_id": row["provider_product_id"] if row else None,
+                "published": published,
+                "problems": problems,
+            },
+            # ponytail: the $0.20 is booked once, at gate3.published
+            # (governor.month_spend_parts); estimated_cost_usd reserves it.
+            cost_usd=0.0,
+            duration_ms=0,
+        )
+
+    def _preflight(
+        self, conn: sqlite3.Connection, user_id: int, photo_id: str, pod_cfg: pod_config.PodConfig
+    ) -> None:
+        """Step 1, no network and no provider write: the print master resolves
+        (archive fallback) and the mockup set exists."""
+        tuning.seed(conn, user_id, TUNING_PROFILE_PATH)
+        archived = _archived_row_for_photo(conn, user_id, photo_id, pod_cfg.print_file.prefer)
+        if archived is None:
+            raise LookupError(f"photo {photo_id!r} has no archived master")
+        file_id = archived["source_landing_file_id"]
+        printfile.resolve_print_source_path(conn, user_id, file_id, pod_cfg.print_file.prefer)
+        if not _has_mockups(conn, user_id, file_id):
+            mockup_hook("run_mockups")(conn, user_id, photo_id=photo_id, file_id=file_id)
+            if not _has_mockups(conn, user_id, file_id):
+                raise LookupError(f"no mockup set could be built for file {file_id[:12]}")
+
+    def _build(
+        self,
+        conn: sqlite3.Connection,
+        user_id: int,
+        action: ProposedAction,
+        photo_id: str,
+        product_type: str,
+        draft_id: str,
+        pod_cfg: pod_config.PodConfig,
+    ) -> None:
+        """Step 2. The claim is appended BEFORE the build so a crash between the
+        two can never orphan an own draft; `_candidates` guarantees any draft
+        already present at this point is already ours."""
+        if draft_id not in _claimed(conn, user_id):
+            append(
+                conn,
+                Event(
+                    user_id=user_id,
+                    type="listingdraft.gapfill_claimed",
+                    payload={"draft_id": draft_id, "target_id": action.target_id},
+                ),
+            )
+        result = build_pod_reprint(
+            conn, user_id, photo_id, product_type, print_file_host=self._host, pod_cfg=pod_cfg
+        )
+        if not result.built and result.reason != "already_exists":
             raise StaleTargetError(
                 f"gapfill reprint photo_id={photo_id!r} product_type={product_type!r}: "
                 f"build_pod_reprint refused ({result.reason})"
             )
 
-        return ExecutionResult(
-            before={"draft_exists": False},
-            after={"draft_id": result.draft_id, "product_type": product_type},
-            cost_usd=0.0,
-            duration_ms=0,
+    def _link(
+        self,
+        conn: sqlite3.Connection,
+        user_id: int,
+        draft_id: str,
+        pod_adapter: PodAdapter,
+        pod_cfg: pod_config.PodConfig,
+    ) -> None:
+        """Step 3: ONLY this draft (a filter, never the fan-out)."""
+        link_pod_drafts(
+            conn,
+            user_id,
+            adapter=pod_adapter,
+            print_file_host=self._host,
+            cfg=pod_cfg,
+            draft_ids={draft_id},
+            attempt_tag=ATTEMPT_TAG,
         )
 
+    def undo(self, conn: sqlite3.Connection, user_id: int, action: ProposedAction) -> None:
+        """Deactivate the published listing (fee not refunded). Never
+        `delete_product`: that removes the connected Etsy listing and its
+        history. A draft that was never published has nothing to undo."""
+        after: dict = {}
+        for e in read_all(conn, "action.executed"):
+            if e.user_id == user_id and e.payload.get("action_id") == action.action_id:
+                after = e.payload.get("after") or {}
+        if not after.get("published"):
+            return
+        if after.get("etsy_listing_id") is None:
+            raise RuntimeError(f"action {action.action_id}: published listing has no etsy id")
+        if self._adapter is None:
+            raise RuntimeError("gapfill_reprint has no Etsy write adapter for undo")
+        self._adapter.update_listing_state(int(after["etsy_listing_id"]), "inactive")
+
     def estimate_cost_usd(self, action: ProposedAction) -> float:
-        return 0.0
+        """The Etsy listing fee (injected from config); stored proposals carry
+        0.0, so the governor takes max(action, this)."""
+        return self._fee if self._fee is not None else action.estimated_cost_usd

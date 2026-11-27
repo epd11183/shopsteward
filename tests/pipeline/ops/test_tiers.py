@@ -78,6 +78,7 @@ def test_shipped_tier_floor_covers_exactly_the_undoable_listing_capabilities():
         "listing.autorenew_on",
         "listing.file_replace",
         "listing.catalog_expand",
+        "listing.gapfill_reprint",
         "listing.seo_edit",
         "listing.size_claims_fix",
         "listing.panel_replace",
@@ -94,9 +95,10 @@ def test_shipped_tier_floor_covers_exactly_the_undoable_listing_capabilities():
     # max_tier is NOTIFY only with a live Buffer publisher (undo = deletePost
     # while queued); without one it stays PROPOSE/draft-only (the clamp holds).
     assert floor["social.pinterest_post"] == floor["social.caption_draft"] == int(Tier.NOTIFY)
-    # no-undo / non-listing capabilities are deliberately absent (stay PROPOSE);
-    # autorenew_on is AUTO only behind the sold-in-window guard (operator 2026-11-27)
-    assert "listing.gapfill_reprint" not in floor
+    # non-listing capabilities are deliberately absent (stay PROPOSE);
+    # autorenew_on is AUTO only behind the sold-in-window guard (operator 2026-11-27);
+    # gapfill_reprint is AUTO behind the physical read-back gate (operator 2026-11-27)
+    assert floor["listing.gapfill_reprint"] == int(Tier.AUTO)
 
 
 def test_promote_t2_t1_needs_both_the_count_and_the_clock():
