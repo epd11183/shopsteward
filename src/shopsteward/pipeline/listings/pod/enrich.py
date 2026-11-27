@@ -111,7 +111,12 @@ def _planned_images(
     mockup_set = _completed_mockup_set(conn, user_id, landing_file_id)
     if mockup_set is None:
         return None
-    mockups = _mockup_rows(conn, user_id, mockup_set["set_key"])
+    # A canvas/acrylic listing must never carry the "5 digital files" panel.
+    mockups = [
+        m
+        for m in _mockup_rows(conn, user_id, mockup_set["set_key"])
+        if m["intent"] != "digital_whatyougot"
+    ]
     return order_listing_images(mockups, cfg)
 
 
@@ -251,12 +256,14 @@ def enrich_pod_drafts(
     cfg: ListingConfig,
     live: bool = False,
     soft_cap_usd: float | None = None,
+    draft_ids: set[str] | None = None,
 ) -> PodEnrichReport:
     """cfg is the DIGITAL listing config (listing.json) -- copy generation
     and image ordering are the exact same machinery build_drafts uses for
     digital drafts (see module docstring); pod.json carries no image_order/
     image_cap of its own. Callers seed/rebuild listing config the same way
-    build_drafts does; this only rebuilds the listings projection."""
+    build_drafts does; this only rebuilds the listings projection.
+    `draft_ids` restricts the pass (None = every eligible draft)."""
     rebuild_listings(conn)
 
     if soft_cap_usd is None:
@@ -266,6 +273,8 @@ def enrich_pod_drafts(
 
     report = PodEnrichReport()
     for row in _eligible_drafts(conn, user_id):
+        if draft_ids is not None and row["draft_id"] not in draft_ids:
+            continue  # `is not None`: an empty set means none
         outcome = _enrich_one(
             conn,
             user_id,

@@ -178,7 +178,7 @@ def test_enriches_linked_draft_with_copy_reflecting_vision_subject_and_uploads_i
     assert adapter.listings[LISTING_ID]["price"] == 42.0
 
     upload_calls = [c for c in adapter.calls if c[0] == "upload_listing_image"]
-    assert len(upload_calls) == 2  # single + digital_whatyougot mockups
+    assert len(upload_calls) == 1  # single only: the digital_whatyougot panel is dropped for POD
     assert {c[1]["listing_id"] for c in upload_calls} == {LISTING_ID}
 
     row = conn.execute(
