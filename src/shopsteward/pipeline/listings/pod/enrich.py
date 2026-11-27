@@ -54,6 +54,7 @@ from shopsteward.pipeline.listings.drafts import (
 )
 from shopsteward.pipeline.listings.images import order_listing_images
 from shopsteward.pipeline.listings.models import ListingConfig, ListingImage
+from shopsteward.pipeline.listings.pod.provider import claimed_by_gapfill
 from shopsteward.pipeline.listings.projections import rebuild_listings
 from shopsteward.pipeline.listings.push import _images_stage, _update_stage
 
@@ -272,9 +273,12 @@ def enrich_pod_drafts(
         soft_cap_usd = profile.vision.monthly_soft_cap_usd
 
     report = PodEnrichReport()
+    claimed = claimed_by_gapfill(conn, user_id) if draft_ids is None else set()
     for row in _eligible_drafts(conn, user_id):
         if draft_ids is not None and row["draft_id"] not in draft_ids:
             continue  # `is not None`: an empty set means none
+        if row["draft_id"] in claimed:
+            continue  # gapfill-owned: advanced only by the capability
         outcome = _enrich_one(
             conn,
             user_id,

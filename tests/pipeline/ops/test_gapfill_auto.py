@@ -237,9 +237,7 @@ def test_one_proven_seller_gives_one_create_one_publish_and_020_of_spend(
     assert after["provider_product_id"]
 
 
-def test_second_target_same_week_is_pace_refused_and_the_operator_can_approve_it(
-    conn, tmp_path, monkeypatch
-):
+def test_second_target_same_week_is_pace_refused_even_when_approved(conn, tmp_path, monkeypatch):
     cap, _etsy, gelato, cfg, _ = _world(conn, tmp_path, monkeypatch)
     report = _go(conn, cap, cfg)
     assert report.executed == 1 and report.refused >= 1
@@ -258,13 +256,13 @@ def test_second_target_same_week_is_pace_refused_and_the_operator_can_approve_it
     assert canvas_id in refused
     assert gelato.creates() == 1  # still one create after the agent run
 
-    # the agent path stays pace-refused; the operator's explicit approve executes
+    # `ops approve` is pace-limited too (the weekly agent run approves through it)
     approved = approve_action(
         conn, USER_ID, canvas_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True
     )
-    assert approved.executed == 1
-    assert gelato.creates() == 2
-    assert len(_published(conn)) == 2
+    assert approved.executed == 0 and approved.refused == 1
+    assert gelato.creates() == 1  # no second create
+    assert len(_published(conn)) == 1
 
 
 def test_unrelated_existing_pod_draft_is_untouched_by_the_chain(conn, tmp_path, monkeypatch):
@@ -386,6 +384,47 @@ def test_an_attempted_but_unconfirmed_create_is_never_recreated(conn, tmp_path, 
     with pytest.raises(StaleTargetError):
         cap.execute(conn, USER_ID, acrylic)
     assert gelato.creates() == 1
+
+
+def test_a_generic_error_from_create_still_gets_the_dashboard_line(conn, tmp_path, monkeypatch):
+    class _Boom(_Gelato):
+        def create_product(self, spec):
+            self.calls.append(("create_product", {}))
+            raise RuntimeError("socket exploded")  # not a PodWriteError: provider.py lets it out
+
+    etsy = FakeEtsyWriteAdapter()
+    cap, _e, gelato, cfg, _ = _world(conn, tmp_path, monkeypatch, gelato=_Boom(etsy))
+    cap._adapter = etsy
+
+    _go(conn, cap, cfg)
+
+    (executed,) = read_all(conn, "action.executed")
+    after = executed.payload["after"]
+    assert after["published"] is False
+    assert "check the Gelato dashboard" in after["problems"][0]
+    assert read_all(conn, "listingdraft.readback")[-1].payload["ok"] is False
+    assert gelato.creates() == 1
+
+
+def test_a_crash_between_attempt_and_created_gets_the_line_on_the_next_run(
+    conn, tmp_path, monkeypatch
+):
+    cap, _e, gelato, cfg, _ = _world(conn, tmp_path, monkeypatch)
+    action = next(
+        a for a in cap.propose(conn, USER_ID, cfg) if a.params["product_type"] == "acrylic"
+    )
+    draft_id = action.params["draft_id"]
+    for event_type, payload in (
+        ("listingdraft.gapfill_claimed", {"draft_id": draft_id, "target_id": action.target_id}),
+        ("listingdraft.provider_create_attempted", {"draft_id": draft_id, "tag": "gapfill"}),
+    ):
+        append(conn, Event(user_id=USER_ID, type=event_type, payload=payload))
+
+    result = cap.execute(conn, USER_ID, action)  # not a StaleTargetError
+
+    assert "check the Gelato dashboard" in result.after["problems"][0]
+    assert result.after["published"] is False
+    assert gelato.creates() == 0
 
 
 # --- the read-back gate --------------------------------------------------------

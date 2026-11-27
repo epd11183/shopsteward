@@ -225,3 +225,29 @@ def test_draft_ids_filter_limits_the_pass_and_an_empty_set_means_none(conn, tmp_
         if e.payload["draft_id"] == acrylic
     ]
     assert [e.payload["tag"] for e in attempted] == ["gapfill"]
+
+
+def test_unfiltered_link_skips_gapfill_claimed_drafts(conn, tmp_path):
+    # `shop build` / `pod link` call link unfiltered: gapfill-owned drafts are
+    # advanced only by the capability (which names them in draft_ids).
+    _seed_hosted_drafts(conn, tmp_path, "p1")
+    cfg = pod_config.get_pod_config(conn, USER_ID)
+    adapter = FakeGelatoAdapter()
+    acrylic = _row(conn, "acrylic", "p1")["draft_id"]
+    append(
+        conn,
+        Event(
+            user_id=USER_ID,
+            type="listingdraft.gapfill_claimed",
+            payload={"draft_id": acrylic, "target_id": "1:acrylic"},
+        ),
+    )
+
+    report = link_pod_drafts(
+        conn, USER_ID, adapter=adapter, print_file_host=FakePrintFileHost(), cfg=cfg
+    )
+
+    assert report.created == 2  # poster and canvas, never the claimed acrylic
+    assert not [
+        e for e in read_all(conn, "listingdraft.provider_") if e.payload["draft_id"] == acrylic
+    ]

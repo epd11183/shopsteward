@@ -363,8 +363,8 @@ def run_cmd(
     # live_copy resolves independently (SHOPSTEWARD_LIVE_COPY, its own gate)
     # and is the sole precondition_ok control (module docstring).
     register(_catalog_expand(adapter))
-    # Always the offline print-file host -- this capability's execute() never
-    # reaches Gelato/Etsy, so it is never gated on --live-autonomy.
+    # Autonomous since 2026-11-27: Gelato create + Etsy publish, so it is in
+    # LIVE_GATED_CAPABILITIES; _gapfill() resolves every live gate.
     register(_gapfill(adapter))
     # No adapter at all -- execute() only ever appends an event, so this is
     # never gated on --live-autonomy either (no Meta/IG/FB call anywhere).

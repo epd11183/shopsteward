@@ -333,8 +333,6 @@ def _refusal_reason(
     cap: Capability,
     cfg: OpsConfig,
     today: date,
-    *,
-    operator: bool = False,
 ) -> RefusalReason | None:
     if is_halted(conn, user_id):
         return RefusalReason.HALTED
@@ -373,16 +371,14 @@ def _refusal_reason(
     if today_counts.get(cap.key, 0) >= cfg.autonomy.per_capability_daily_cap:
         return RefusalReason.PER_CAPABILITY_CAP
 
-    # `operator=True` (an explicit `ops approve`) skips ONLY the two weekly
-    # listing-creation paces below; HALT/EXPIRED/BUDGET/PRECONDITION and the
-    # Buffer cadence (a different PACE) still apply, and an operator create
-    # still uses up that week's agent slot (it is counted from its events).
-    if cap.key == _CATALOG_EXPAND_CAPABILITY and not operator:
+    # Both weekly listing-creation paces also bind `ops approve` (the weekly
+    # agent run approves through this same govern()): no operator bypass.
+    if cap.key == _CATALOG_EXPAND_CAPABILITY:
         week_counts = _executed_this_iso_week(conn, user_id, capability_of, today)
         if week_counts.get(cap.key, 0) >= cfg.catalog_expansion.max_new_per_week:
             return RefusalReason.PACE
 
-    if cap.key == _GAPFILL_CAPABILITY and not operator:
+    if cap.key == _GAPFILL_CAPABILITY:
         from shopsteward.pipeline.ops.capabilities.gapfill import pace_exceeded
 
         if pace_exceeded(conn, user_id, action, cfg, today):
@@ -457,12 +453,9 @@ def govern(
     today: date,
     *,
     record: bool = True,
-    operator: bool = False,
 ) -> Decision:
-    """`record=False` (dry runs) decides without appending `action.refused`.
-    `operator=True` (`approve_action`) skips only the weekly listing-creation
-    paces (see `_refusal_reason`)."""
-    reason = _refusal_reason(conn, user_id, action, cap, cfg, today, operator=operator)
+    """`record=False` (dry runs) decides without appending `action.refused`."""
+    reason = _refusal_reason(conn, user_id, action, cap, cfg, today)
     if reason is None:
         return approve()
     if record:

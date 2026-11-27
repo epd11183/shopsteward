@@ -31,10 +31,13 @@ that fee so the governor reserves it; `ExecutionResult.cost_usd` is 0.
 **Pace unit = one new Gelato product** (first `provider_create_attempted`),
 not one execution -- see `pace_exceeded()`, called by `governor.govern()`.
 
-**Own drafts only.** A draft is resumable/finished-checked only if this
-capability claimed it (`listingdraft.gapfill_claimed`, or an old offline
-`action.executed` that built it). A POD draft built by `shop build` for the
-same photo is never taken over: it stays operator-driven.
+**Own drafts only.** A draft is resumed and auto-published only if it carries
+a `listingdraft.gapfill_claimed` event. Drafts built by older offline,
+operator-approved gapfill runs and drafts built by `shop build` are
+operator-owned: never resumed, never auto-published. `link_pod_drafts` and
+`enrich_pod_drafts` skip claimed drafts unless the caller names them in
+`draft_ids`, so `shop build`/`pod link`/`pod enrich` never advance them: only
+this capability does, under its pace.
 
 **Ambiguous create.** A create attempt with no `provider_created` is never
 retried (the live create has no idempotency key): the draft is closed with a
@@ -45,9 +48,8 @@ dashboard.
 product is left in place: `delete_product` removes the connected Etsy listing
 and its history. `provider_product_id` stays in `after` for manual cleanup.
 
-`policy_verified` stays False until policy row E17 exists in
-docs/policy/2026-08-11-autonomy-platform-policy.md; until then the governor
-refuses every gapfill action with POLICY_UNVERIFIED."""
+`policy_verified` is True: policy row E17 (docs/policy/
+2026-08-11-autonomy-platform-policy.md, 2026-11-27)."""
 
 import contextlib
 import hashlib
@@ -71,7 +73,7 @@ from shopsteward.pipeline.listings.pod import config as pod_config
 from shopsteward.pipeline.listings.pod import printfile
 from shopsteward.pipeline.listings.pod.build import _archived_row_for_photo, build_pod_reprint
 from shopsteward.pipeline.listings.pod.enrich import enrich_pod_drafts
-from shopsteward.pipeline.listings.pod.provider import link_pod_drafts
+from shopsteward.pipeline.listings.pod.provider import claimed_by_gapfill, link_pod_drafts
 from shopsteward.pipeline.listings.projections import rebuild_listings
 from shopsteward.pipeline.listings.readback import run_physical_readback
 from shopsteward.pipeline.listings.source_assets import resolve_source
@@ -152,21 +154,9 @@ def _draft_ids(conn: sqlite3.Connection, user_id: int, event_type: str) -> set[s
 
 
 def _claimed(conn: sqlite3.Connection, user_id: int) -> set[str]:
-    """Drafts this capability built: an explicit claim, or an old offline
-    execution's `after.draft_id`."""
-    out = _draft_ids(conn, user_id, "listingdraft.gapfill_claimed")
-    capability_of = {
-        e.payload["action_id"]: e.payload["capability"]
-        for e in read_all(conn, "action.proposed")
-        if e.user_id == user_id
-    }
-    for e in read_all(conn, "action.executed"):
-        if e.user_id != user_id or capability_of.get(e.payload.get("action_id")) != _CAPABILITY:
-            continue
-        draft_id = (e.payload.get("after") or {}).get("draft_id")
-        if draft_id:
-            out.add(draft_id)
-    return out
+    """Drafts this capability built, by explicit claim only. Older offline
+    runs' drafts are operator-owned (module docstring)."""
+    return claimed_by_gapfill(conn, user_id)
 
 
 def _finished(conn: sqlite3.Connection, user_id: int) -> set[str]:
@@ -309,8 +299,6 @@ def _candidates(
 class ListingGapfillReprint:
     key = _CAPABILITY
     max_tier = Tier.AUTO  # operator 2026-11-27; the undo below satisfies invariant 1
-    # False until policy row E17 lands (module docstring). The governor refuses
-    # every gapfill action while it is False.
     policy_verified = True  # policy row E17 (2026-11-27)
 
     def __init__(
@@ -383,6 +371,16 @@ class ListingGapfillReprint:
         )
 
         cfg = get_ops_config(conn, user_id)
+        # An attempted-but-unconfirmed create (a crash, or an error provider.py does
+        # not catch) is never re-created and always gets its NEEDS YOU line, even
+        # though the draft is no longer a candidate.
+        unconfirmed_id = action_draft_id(conn, user_id, action)
+        if (
+            unconfirmed_id is not None
+            and unconfirmed_id in _unconfirmed(conn, user_id) - _finished(conn, user_id)
+            and unconfirmed_id in _claimed(conn, user_id)
+        ):
+            return self._close_unconfirmed(conn, user_id, unconfirmed_id)
         # Step 0: re-validate (renew.py precedent) -- genuine staleness terminalizes.
         if action.target_id not in _candidates(conn, user_id, cfg):
             raise StaleTargetError(
@@ -410,19 +408,14 @@ class ListingGapfillReprint:
         except StaleTargetError:
             raise  # genuine staleness terminalizes (a ValueError subclass: keep it first)
         except Exception as exc:  # noqa: BLE001 - any pre-publish failure is a counted, retryable refusal
+            if draft_id in _unconfirmed(conn, user_id):
+                return self._close_unconfirmed(conn, user_id, draft_id)
             raise fail(f"{type(exc).__name__}: {str(exc)[:300]}") from exc
 
         row = self._row(conn, user_id, draft_id)
         if row is None or row["etsy_listing_id"] is None:
             if draft_id in _unconfirmed(conn, user_id):
-                # Never re-create: ambiguous (timeout) or definitively failed
-                # create -- the operator checks the Gelato dashboard.
-                problems = [
-                    f"Gelato create unconfirmed -- check the Gelato dashboard for draft "
-                    f"{draft_id}; never re-created"
-                ]
-                self._close(conn, user_id, draft_id, problems)
-                return self._result(conn, user_id, draft_id, False, problems)
+                return self._close_unconfirmed(conn, user_id, draft_id)
             raise fail("Gelato product not linked yet (will re-poll next run)")
 
         try:
@@ -507,6 +500,18 @@ class ListingGapfillReprint:
         return self._result(conn, user_id, draft_id, published, problems)
 
     # -- steps ---------------------------------------------------------------------
+
+    def _close_unconfirmed(
+        self, conn: sqlite3.Connection, user_id: int, draft_id: str
+    ) -> ExecutionResult:
+        """Never re-create (ambiguous timeout, crash, or a failed create): the
+        operator checks the Gelato dashboard."""
+        problems = [
+            f"Gelato create unconfirmed -- check the Gelato dashboard for draft "
+            f"{draft_id}; never re-created"
+        ]
+        self._close(conn, user_id, draft_id, problems)
+        return self._result(conn, user_id, draft_id, False, problems)
 
     @staticmethod
     def _row(conn: sqlite3.Connection, user_id: int, draft_id: str) -> sqlite3.Row | None:

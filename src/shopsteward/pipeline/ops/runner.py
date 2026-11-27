@@ -727,7 +727,7 @@ def approve_action(
         report.live_gate_blocked = True
         return report
 
-    decision = govern(conn, user_id, action, cap, cfg, today, operator=True)
+    decision = govern(conn, user_id, action, cap, cfg, today)
     if not decision.approved:
         report.refused += 1
         return report

@@ -42,7 +42,7 @@ from pydantic import BaseModel, ValidationError
 from shopsteward.adapters.pod.interface import PodAdapter, PodWriteError
 from shopsteward.adapters.pod.models import PodProductSpec, PodProviderRef, PodVariantSpec
 from shopsteward.adapters.printfile.interface import PrintFileHost
-from shopsteward.core.events import Event, append
+from shopsteward.core.events import Event, append, read_all
 from shopsteward.pipeline.listings.pod import printfile
 from shopsteward.pipeline.listings.pod.config import resolve_store_id
 from shopsteward.pipeline.listings.pod.models import PodConfig
@@ -56,6 +56,17 @@ class PodLinkReport(BaseModel):
     linked: int = 0
     failed: int = 0
     skipped_idempotent: int = 0
+
+
+def claimed_by_gapfill(conn: sqlite3.Connection, user_id: int) -> set[str]:
+    """Drafts `listing.gapfill_reprint` built (`listingdraft.gapfill_claimed`).
+    Only that capability advances them, under its own pace: an unfiltered
+    link/enrich pass (`shop build`, `pod link`) skips them."""
+    return {
+        e.payload["draft_id"]
+        for e in read_all(conn, "listingdraft.gapfill_claimed")
+        if e.user_id == user_id
+    }
 
 
 def _eligible_rows(conn: sqlite3.Connection, user_id: int) -> list[sqlite3.Row]:
@@ -156,9 +167,12 @@ def link_pod_drafts(
     max_polls = poll_max if poll_max is not None else cfg.gelato.poll_max
     poll_interval = cfg.gelato.poll_interval_seconds
 
+    claimed = claimed_by_gapfill(conn, user_id) if draft_ids is None else set()
     for row in _eligible_rows(conn, user_id):
         if draft_ids is not None and row["draft_id"] not in draft_ids:
             continue
+        if row["draft_id"] in claimed:
+            continue  # gapfill-owned: advanced only by the capability
         if not force and row["etsy_listing_id"] is not None:
             report.skipped_idempotent += 1
             continue
