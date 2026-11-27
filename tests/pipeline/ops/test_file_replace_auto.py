@@ -2,6 +2,7 @@
 same-photo (pHash) check; everything else stays proposed. Fakes only."""
 
 import json
+from datetime import date, timedelta
 
 import pytest
 from PIL import Image, ImageDraw
@@ -165,3 +166,27 @@ def test_unreproducible_source_stays_proposed(conn, tmp_path):
     action = cap.build_action(conn, USER_ID, cfg, LID, healed)
     assert "not reproducible" in action.params["auto_hold"]
     assert run(conn, USER_ID, cfg, [cap], proposals=[action], live_autonomy=True).executed == 0
+
+
+def test_undo_at_the_cap_leaves_no_resume_marker_and_stash_is_recorded(conn, tmp_path):
+    adapter, cfg, cap, healed, old = _verified(conn, tmp_path, extra_files=4)
+    action = cap.build_action(conn, USER_ID, cfg, LID, healed)
+    assert run(conn, USER_ID, cfg, [cap], proposals=[action], live_autonomy=True).executed == 1
+    (marker,) = read_all(conn, "listingfile.replace_old_deleted")
+    assert marker.payload["action_id"] == action.action_id and marker.payload["old_sha256"]
+
+    undo_action(conn, USER_ID, action.action_id, [cap], live_autonomy=True)
+
+    healed2 = tmp_path / "healed2.jpg"  # a new file => a new action_id
+    _textured(healed2, dust=True, stripes=False)
+    ImageDraw.Draw(img := Image.open(healed2)).ellipse((30, 30, 36, 36), fill=(0, 0, 0))
+    img.save(healed2, "JPEG", quality=95)
+    again = cap.build_action(conn, USER_ID, cfg, LID, healed2)
+    assert again.params["old_file_id"] != 0  # a normal swap, not a resume
+    adapter.calls.clear()
+    next_week = date.today() + timedelta(days=8)  # the first swap used this week's portfolio cap
+    r = run(conn, USER_ID, cfg, [cap], proposals=[again], live_autonomy=True, today=next_week)
+    assert r.executed == 1
+    kinds = [k for k, _ in adapter.calls if k.endswith("listing_file")]
+    assert kinds[-2:] == ["delete_listing_file", "upload_listing_file"]
+    assert len(adapter.list_listing_files(LID)) == 5

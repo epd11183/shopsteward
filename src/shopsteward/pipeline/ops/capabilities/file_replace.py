@@ -52,6 +52,7 @@ Order depends on Etsy's 5-file cap (`_swap`):
 """
 
 import hashlib
+import os
 import sqlite3
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
@@ -82,7 +83,7 @@ KEY = "listing.file_replace"
 OLD_DELETED = "listingfile.replace_old_deleted"
 REPLACED = "listingfile.replaced"
 ORPHANED = "listingfile.replace_orphaned"
-UNDONE = "listingfile.replace_undone"  # not in _events(): never steers resume/orphan logic
+UNDONE = "listingfile.replace_undone"  # in _events(): a finished undo closes any OLD_DELETED
 
 
 def _dcfg(conn: sqlite3.Connection, user_id: int) -> DigitalFilesConfig:
@@ -103,7 +104,7 @@ def _events(conn: sqlite3.Connection, user_id: int, lid: int) -> list[Event]:
     return sorted(
         (
             e
-            for t in (OLD_DELETED, REPLACED, ORPHANED)
+            for t in (OLD_DELETED, REPLACED, ORPHANED, UNDONE)
             for e in read_all(conn, t)
             if e.user_id == user_id and int(e.payload["etsy_listing_id"]) == lid
         ),
@@ -117,6 +118,7 @@ def _recorded_sha(conn: sqlite3.Connection, user_id: int, lid: int, file_id: int
     for etype, id_key, sha_key in (
         ("listingdraft.file_attached", "etsy_file_id", "sha256"),
         (REPLACED, "new_file_id", "new_sha256"),
+        (UNDONE, "restored_file_id", "restored_sha256"),
     ):
         for e in read_all(conn, etype):
             p = e.payload
@@ -148,6 +150,23 @@ def _source_paths(conn: sqlite3.Connection, user_id: int, lid: int) -> list[str]
                 str(root / r["stored_key"]) for r in rows if (root / r["stored_key"]).exists()
             ]
     return paths
+
+
+def _write_durable(path: Path, data: bytes) -> None:
+    """Write + fsync the file, then fsync its directory (best effort: not
+    supported on Windows), so the copy survives a crash right after the delete."""
+    with path.open("wb") as fh:
+        fh.write(data)
+        fh.flush()
+        os.fsync(fh.fileno())
+    try:
+        fd = os.open(path.parent, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def _stash_path(conn: sqlite3.Connection, user_id: int, action_id: str) -> Path:
@@ -319,6 +338,7 @@ class ListingFileReplace:
         data: bytes,
         name: str,
         files: list,
+        marker: dict | None = None,
     ) -> int:
         """Put `data` in as rank 1 and take `remove_id` out; returns the new file
         id. Shared by execute() and undo() so the 5-file-cap ordering, resume
@@ -330,7 +350,12 @@ class ListingFileReplace:
                 Event(
                     user_id=user_id,
                     type=OLD_DELETED,
-                    payload={"etsy_listing_id": lid, "old_file_id": remove_id, "name": name},
+                    payload={
+                        "etsy_listing_id": lid,
+                        "old_file_id": remove_id,
+                        "name": name,
+                        **(marker or {}),
+                    },
                 ),
             )
             self._adapter.delete_listing_file(lid, remove_id)
@@ -398,10 +423,15 @@ class ListingFileReplace:
         if old_bytes is not None:
             stash = _stash_path(conn, user_id, action.action_id)
             stash.parent.mkdir(parents=True, exist_ok=True)
-            stash.write_bytes(old_bytes)
+            _write_durable(stash, old_bytes)
             old_sha = hashlib.sha256(old_bytes).hexdigest()
 
-        new_id = self._swap(conn, user_id, lid, remove_id=old_id, data=data, name=name, files=files)
+        # the at-cap delete marker records the stash, so a crash before REPLACED still
+        # leaves a durable pointer to the undo copy (replaced_files/<action_id>.jpg)
+        marker = {"action_id": action.action_id, "old_sha256": old_sha} if old_sha else None
+        new_id = self._swap(
+            conn, user_id, lid, remove_id=old_id, data=data, name=name, files=files, marker=marker
+        )
         append(
             conn,
             Event(
@@ -449,7 +479,14 @@ class ListingFileReplace:
         if new_id not in {f.listing_file_id for f in files}:
             raise ValueError(f"listing {lid}: replacement file {new_id} is gone; cannot undo")
         restored = self._swap(
-            conn, user_id, lid, remove_id=new_id, data=old_bytes, name=str(rep["name"]), files=files
+            conn,
+            user_id,
+            lid,
+            remove_id=new_id,
+            data=old_bytes,
+            name=str(rep["name"]),
+            files=files,
+            marker={"action_id": action.action_id, "old_sha256": rep["old_sha256"]},
         )
         append(
             conn,
@@ -461,6 +498,7 @@ class ListingFileReplace:
                     "action_id": action.action_id,
                     "removed_file_id": new_id,
                     "restored_file_id": restored,
+                    "restored_sha256": rep["old_sha256"],
                 },
             ),
         )
