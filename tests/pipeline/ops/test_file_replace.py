@@ -23,6 +23,14 @@ class Hook(Flaky):
     fail_delete: set[int] = set()
     fail_upload_after_delete = False
 
+    def __init__(self):
+        super().__init__()
+        self.uploaded: list[bytes] = []
+
+    def upload_listing_file(self, listing_id, file, *, name, rank):
+        self.uploaded.append(file)
+        return super().upload_listing_file(listing_id, file, name=name, rank=rank)
+
     def delete_listing_file(self, listing_id, listing_file_id):
         if listing_file_id in self.fail_delete:
             raise EtsyWriteError(500, "boom")
@@ -74,12 +82,12 @@ def _kinds(adapter):
     return [k for k, _ in adapter.calls if k.endswith("listing_file")]
 
 
-def test_tier_is_propose_with_no_undo_and_gated():
+def test_tier_is_auto_with_a_real_undo_and_gated():
     cap = ListingFileReplace(FakeEtsyWriteAdapter())
-    assert cap.max_tier == Tier.PROPOSE and cap.undo is None
+    assert cap.max_tier == Tier.AUTO and callable(cap.undo)
     assert cap.key in LIVE_GATED_CAPABILITIES
-    assert cap.key not in ops_config.load_ops_config().autonomy.tier_floor
-    register(cap)  # invariant 1 allows undo=None at PROPOSE
+    assert ops_config.load_ops_config().autonomy.tier_floor[cap.key] == int(Tier.AUTO)
+    register(cap)  # invariant 1: AUTO needs a callable undo
 
 
 def test_under_cap_uploads_first_then_deletes_and_keeps_name(conn, tmp_path):

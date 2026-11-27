@@ -277,6 +277,26 @@ the read-back gate holds listings with sensor dust; the weekly run supplies
 its own candidates from Lightroom (rating >= 4) via `listings
 candidate-status`; a daily read-only sync runs in the heartbeat task.
 
+**Amended 2026-11-27, explicit operator authorization (AskUserQuestion
+selection): `listing.autorenew_on` and `listing.file_replace` to AUTO.**
+- `autorenew_on`: AUTO only for a listing with at least one sale inside
+  `dead_listing.window_days` (the window `dead_listings` uses), so it can never
+  fight `autorenew_off`. Undo turns auto-renew back off. This supersedes the
+  "starts at PROPOSE" clause in the 2026-11-22 amendment.
+- `file_replace` (`ops replace-file`): AUTO per action, only when the old rank-1
+  file is reproducible from the archived master and matches its recorded sha256
+  (the bytes are stashed under the asset store before the delete) and the new
+  file's pHash is within `catalog_expansion.dedup_max_distance` of the old.
+  Otherwise the action is held at PROPOSE with the reason under NEEDS YOU
+  (adopted and hand-uploaded listings usually are). Undo re-uploads the old bytes
+  under the old name.
+- `gapfill_reprint`: the operator chose a full autonomous chain at 1/week; it
+  stays PROPOSE until that ships. Design:
+  `docs/designs/2026-11-27-gapfill-reprint-autonomous.md`. The premise above
+  ("POD SKU base cost at Gate-3-approval time") is wrong: Gelato bills per order
+  (free plan, operator 2026-11-27), so the only up-front cost is the $0.20 listing
+  fee.
+
 **Objective — optimize for contribution profit and long-term portfolio
 value, not gross sales or activity.** Trailing-window contribution profit
 (revenue minus Etsy fees, fulfillment cost, and attributed ad spend) is the

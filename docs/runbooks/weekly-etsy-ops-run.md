@@ -49,8 +49,9 @@ on the command itself to act on the real shop.
      price the operator raised by hand. If the operator starts a sale,
      set `blackout_until` to its end date (`ops config` change) before the
      run;
-   - capabilities still at PROPOSE stay pending: `gapfill_reprint` and
-     `autorenew_on`.
+   - `autorenew_on` is AUTO (2026-11-27), only for listings that sold inside the
+     dead-listing window;
+   - `gapfill_reprint` stays pending (PROPOSE) until its autonomous chain ships.
 4. `scripts/ops.sh ops brief`. Its sections are NEEDS YOU, DONE, REFUSED
    and THE SHOP. Report from it.
 5. `scripts/ops.sh ops status`. Shows month spend against the $20 cap and
@@ -68,12 +69,14 @@ so.
 
 ## Tools added 2026-11-22
 
-- `ops replace-file <listing_id> --file PATH --live-autonomy` proposes swapping a
-  live digital listing's rank-1 full-frame download for a re-exported JPEG (for
-  example, dust healed in Lightroom). It keeps the old file name and leaves
-  ranks 2-5 alone. It is PROPOSE with NO undo (Etsy can't re-attach a deleted
-  file), so execute with `ops approve <id> --live-autonomy` only after checking
-  the new file is the same photo. At 5 files it deletes the old file first; if
+- `ops replace-file <listing_id> --file PATH --live-autonomy` swaps a digital
+  listing's rank-1 full-frame download for a re-exported JPEG (for example, dust
+  healed in Lightroom). It keeps the old file name and leaves ranks 2-5 alone.
+  Since 2026-11-27 it runs immediately (AUTO, with undo) when the old file can be
+  rebuilt from the archive and the new file matches the old photo. Otherwise it is
+  HELD with the reason. A held swap has no undo: approve it with
+  `ops approve <id> --live-autonomy` only after checking the new file is the same
+  photo. At 5 files it deletes the old file first; if
   the upload then fails, re-run the command to resume.
 - `ops edit-listing <listing_id> [--title T] [--tags "a,b,c"]
   [--description-file PATH] --reason "why" --live-autonomy`

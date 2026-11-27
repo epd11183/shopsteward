@@ -1082,10 +1082,11 @@ def replace_file_cmd(
         ),
     ] = False,
 ) -> None:
-    """Propose replacing a live digital listing's rank-1 file (`listing.file_replace`,
-    PROPOSE tier, no undo). Builds and records the proposal only; execute it with
-    `ops approve <action_id> --live-autonomy`. Reads Etsy's file list, so it is
-    adapter-gated like every other live command."""
+    """Replace a live digital listing's rank-1 file (`listing.file_replace`). Runs at
+    AUTO when the old file is reproducible from its archived master (a real undo)
+    and the new file is the same photo; otherwise it is recorded as a proposal
+    held for `ops approve <action_id> --live-autonomy`. Reads Etsy's file list,
+    so it is adapter-gated like every other live command."""
     from shopsteward.core.db import connect, migrate
     from shopsteward.core.projections import rebuild as rebuild_core
     from shopsteward.pipeline.live_gate import live_autonomy_error, live_autonomy_open
@@ -1119,7 +1120,7 @@ def replace_file_cmd(
         except ValueError as exc:
             typer.secho(f"replace-file refused: {exc}", fg="red")
             raise typer.Exit(code=1) from exc
-        run(
+        report = run(
             conn,
             DEFAULT_USER_ID,
             cfg,
@@ -1127,8 +1128,11 @@ def replace_file_cmd(
             proposals=[action],
             live_autonomy=live_autonomy,
         )
-        typer.echo(f"proposed: {action.action_id} ({action.reason})")
-        typer.echo(f"execute with: shopsteward ops approve {action.action_id} --live-autonomy")
+        if report.executed:
+            typer.echo(f"replaced: {action.action_id} (undo: ops undo {action.action_id})")
+        else:
+            typer.echo(f"proposed: {action.action_id} ({action.reason})")
+            typer.echo(f"execute with: shopsteward ops approve {action.action_id} --live-autonomy")
     finally:
         conn.close()
 
