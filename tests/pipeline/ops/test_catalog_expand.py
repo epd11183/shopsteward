@@ -6,7 +6,7 @@ programmatically with Pillow."""
 import hashlib
 import json
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -471,12 +471,6 @@ def test_pace_exhausted_refuses_never_raises_never_terminalizes(conn, tmp_path, 
     assert decision.approved is False
     assert decision.reason == RefusalReason.PACE
 
-    approved2 = approve_action(
-        conn, USER_ID, action2.action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True
-    )
-    assert approved2.refused == 1
-    assert approved2.executed == 0  # weekly pace genuinely still limits executions
-
     # The crux of H1: never a terminal state for a pace-only refusal.
     statuses = {
         e.type for e in read_all(conn, "action.") if e.payload.get("action_id") == action2.action_id
@@ -485,12 +479,13 @@ def test_pace_exhausted_refuses_never_raises_never_terminalizes(conn, tmp_path, 
     assert "action.expired" not in statuses
     assert "action.rejected" not in statuses
 
-    # And it is still approvable later, once the pace resets (a new ISO week).
-    next_week = TODAY + timedelta(days=7)
-    approved3 = approve_action(
-        conn, USER_ID, action2.action_id, [cap], cfg=cfg, today=next_week, live_autonomy=True
+    # Operator approval (2026-11-27) skips ONLY the weekly pace: an explicit
+    # `ops approve` of the pace-refused action executes it.
+    approved2 = approve_action(
+        conn, USER_ID, action2.action_id, [cap], cfg=cfg, today=TODAY, live_autonomy=True
     )
-    assert approved3.executed == 1
+    assert approved2.executed == 1
+    assert len(adapter.listings) == 2
 
 
 def test_genuine_staleness_still_raises_and_terminalizes(conn, tmp_path, offline_copy):

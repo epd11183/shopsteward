@@ -395,14 +395,16 @@ def _finished_file_ids(conn: sqlite3.Connection, user_id: int) -> set[str]:
     }
 
 
-def _failed_attempts(conn: sqlite3.Connection, user_id: int) -> dict[str, int]:
+def _failed_attempts(
+    conn: sqlite3.Connection, user_id: int, capability: str = _CAPABILITY
+) -> dict[str, int]:
     """file_id -> failed catalog_expand attempts (`action.failed`, or
     `action.refused` reason `execute_revalidation_error`). action -> target via
     `action.proposed` and `action.proposal_deduped` (both carry target_id)."""
     target_of: dict[str, str] = {}
     for etype in ("action.proposed", "action.proposal_deduped"):
         for e in read_all(conn, etype):
-            if e.user_id == user_id and e.payload.get("capability") == _CAPABILITY:
+            if e.user_id == user_id and e.payload.get("capability") == capability:
                 target_of[e.payload["action_id"]] = str(e.payload["target_id"])
     counts: dict[str, int] = {}
     for e in read_all(conn, "action."):

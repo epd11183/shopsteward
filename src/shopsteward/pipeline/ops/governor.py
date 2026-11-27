@@ -194,7 +194,9 @@ _SEO_EDIT_CAPABILITY = "listing.seo_edit"
 # 0.05) would silently throttle this to one execution/week with no error.
 # The alternative -- tuning the cap upward for everyone -- would re-open
 # churn risk on the existing catalog to solve a problem that isn't churn.
-_PORTFOLIO_CAP_EXEMPT = frozenset({"listing.catalog_expand"})
+_GAPFILL_CAPABILITY = "listing.gapfill_reprint"
+# gapfill_reprint likewise only ADDS a listing (design 2026-11-27 §4).
+_PORTFOLIO_CAP_EXEMPT = frozenset({"listing.catalog_expand", _GAPFILL_CAPABILITY})
 
 
 # ponytail: rebuilds two full action_id -> ... maps (each a full event-log
@@ -331,6 +333,8 @@ def _refusal_reason(
     cap: Capability,
     cfg: OpsConfig,
     today: date,
+    *,
+    operator: bool = False,
 ) -> RefusalReason | None:
     if is_halted(conn, user_id):
         return RefusalReason.HALTED
@@ -355,9 +359,11 @@ def _refusal_reason(
         return RefusalReason.HOLDOUT
 
     month_prefix = today.isoformat()[:7]
-    if month_spend(conn, user_id, month_prefix, cfg) + action.estimated_cost_usd > (
-        cfg.autonomy.monthly_spend_cap_usd
-    ):
+    # Stored proposals can carry 0.0 (minted before a cost was modelled): the
+    # capability's own estimate is the floor for the reservation.
+    estimate = max(action.estimated_cost_usd, cap.estimate_cost_usd(action))
+    spent = month_spend(conn, user_id, month_prefix, cfg)
+    if spent + estimate > cfg.autonomy.monthly_spend_cap_usd:
         return RefusalReason.BUDGET
 
     capability_of = _capability_of_action_id(conn, user_id)
@@ -367,9 +373,19 @@ def _refusal_reason(
     if today_counts.get(cap.key, 0) >= cfg.autonomy.per_capability_daily_cap:
         return RefusalReason.PER_CAPABILITY_CAP
 
-    if cap.key == _CATALOG_EXPAND_CAPABILITY:
+    # `operator=True` (an explicit `ops approve`) skips ONLY the two weekly
+    # listing-creation paces below; HALT/EXPIRED/BUDGET/PRECONDITION and the
+    # Buffer cadence (a different PACE) still apply, and an operator create
+    # still uses up that week's agent slot (it is counted from its events).
+    if cap.key == _CATALOG_EXPAND_CAPABILITY and not operator:
         week_counts = _executed_this_iso_week(conn, user_id, capability_of, today)
         if week_counts.get(cap.key, 0) >= cfg.catalog_expansion.max_new_per_week:
+            return RefusalReason.PACE
+
+    if cap.key == _GAPFILL_CAPABILITY and not operator:
+        from shopsteward.pipeline.ops.capabilities.gapfill import pace_exceeded
+
+        if pace_exceeded(conn, user_id, action, cfg, today):
             return RefusalReason.PACE
 
     # S7 (Buffer design §4): per-channel PACE for Buffer-published posts only,
@@ -441,9 +457,12 @@ def govern(
     today: date,
     *,
     record: bool = True,
+    operator: bool = False,
 ) -> Decision:
-    """`record=False` (dry runs) decides without appending `action.refused`."""
-    reason = _refusal_reason(conn, user_id, action, cap, cfg, today)
+    """`record=False` (dry runs) decides without appending `action.refused`.
+    `operator=True` (`approve_action`) skips only the weekly listing-creation
+    paces (see `_refusal_reason`)."""
+    reason = _refusal_reason(conn, user_id, action, cap, cfg, today, operator=operator)
     if reason is None:
         return approve()
     if record:
