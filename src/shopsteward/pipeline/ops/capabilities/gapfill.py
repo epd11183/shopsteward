@@ -49,6 +49,7 @@ and its history. `provider_product_id` stays in `after` for manual cleanup.
 docs/policy/2026-08-11-autonomy-platform-policy.md; until then the governor
 refuses every gapfill action with POLICY_UNVERIFIED."""
 
+import contextlib
 import hashlib
 import sqlite3
 from datetime import UTC, date, datetime, timedelta
@@ -408,7 +409,7 @@ class ListingGapfillReprint:
             self._link(conn, user_id, draft_id, pod_adapter, pod_cfg)
         except StaleTargetError:
             raise  # genuine staleness terminalizes (a ValueError subclass: keep it first)
-        except (OSError, LookupError, ValueError, RuntimeError) as exc:
+        except Exception as exc:  # noqa: BLE001 - any pre-publish failure is a counted, retryable refusal
             raise fail(f"{type(exc).__name__}: {str(exc)[:300]}") from exc
 
         row = self._row(conn, user_id, draft_id)
@@ -435,19 +436,50 @@ class ListingGapfillReprint:
                 live=self._live_copy,
                 draft_ids={draft_id},
             )
-        except (OSError, LookupError, ValueError, RuntimeError, EtsyWriteError) as exc:
+        except Exception as exc:  # noqa: BLE001 - any enrich failure is a counted, retryable refusal
             raise fail(f"enrich failed: {type(exc).__name__}: {str(exc)[:300]}") from exc
         row = self._row(conn, user_id, draft_id)
         if row is None or row["pod_status"] != "enriched":
             raise fail(f"draft not enriched (pod_status={row['pod_status'] if row else None})")
 
-        # From here a real draft exists on Etsy: nothing below may raise.
-        listing_id = int(row["etsy_listing_id"])
-        try:  # step 5: auto-renew off (the gate re-reads it, so a failure here fails the gate)
+        # From here a real draft exists on Etsy: nothing below may raise. An
+        # escape would leave an ok read-back as the latest event (draft dropped
+        # from the candidates AND from NEEDS YOU), so every failure closes the
+        # draft with a failed read-back instead.
+        try:
+            return self._finish(
+                conn,
+                user_id,
+                draft_id,
+                int(row["etsy_listing_id"]),
+                pod_cfg,
+                adapter,
+                read_adapter,
+                checker,
+            )
+        except Exception as exc:  # noqa: BLE001 - fail closed: never raise past the first live write
+            published = draft_id in _draft_ids(conn, user_id, "gate3.published")
+            problems = [f"gapfill post-enrich step failed: {type(exc).__name__}: {str(exc)[:200]}"]
+            if not published:
+                self._close(conn, user_id, draft_id, problems)
+            return self._result(conn, user_id, draft_id, published, problems)
+
+    def _finish(
+        self,
+        conn: sqlite3.Connection,
+        user_id: int,
+        draft_id: str,
+        listing_id: int,
+        pod_cfg: pod_config.PodConfig,
+        adapter: EtsyWriteAdapter,
+        read_adapter: EtsyAdapter,
+        checker: CopyChecker,
+    ) -> ExecutionResult:
+        """Steps 5-6: auto-renew off, physical read-back, publish."""
+        # step 5 (the gate re-reads should_auto_renew, so a failed write fails the gate)
+        with contextlib.suppress(EtsyWriteError):
             if adapter.get_listing(listing_id).should_auto_renew:
                 adapter.update_listing(listing_id, EtsyListingUpdate(should_auto_renew=False))
-        except EtsyWriteError:
-            pass  # the read-back below re-reads should_auto_renew and fails the gate
 
         model = tuning.get_profile(conn, user_id).vision.copy_check_model
         gate = run_physical_readback(
@@ -468,7 +500,7 @@ class ListingGapfillReprint:
                 published = card.state == "published"
                 if not published:
                     problems = [f"publish failed: {card.retry_error or card.state}"]
-            except ValueError as exc:
+            except ValueError as exc:  # check_publishable: not publishable
                 problems = [f"publish failed: {str(exc)[:200]}"]
             if not published:
                 self._close(conn, user_id, draft_id, problems)

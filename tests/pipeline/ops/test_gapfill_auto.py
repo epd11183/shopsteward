@@ -566,3 +566,43 @@ def test_date_helpers_are_week_scoped(conn, tmp_path, monkeypatch):
     assert govern(conn, USER_ID, other, cap, cfg, TODAY, record=False).reason == RefusalReason.PACE
     next_week = TODAY + timedelta(days=7)
     assert gapfill_mod.pace_exceeded(conn, USER_ID, other, cfg, next_week) is False
+
+
+def test_an_unexpected_error_after_enrich_closes_the_draft_instead_of_raising(
+    conn, tmp_path, monkeypatch
+):
+    cap, etsy, _g, cfg, _ = _world(conn, tmp_path, monkeypatch)
+
+    def boom(*_a, **_k):
+        raise KeyError("not an EtsyWriteError")
+
+    monkeypatch.setattr(gapfill_mod.gate3, "publish", boom)
+
+    report = _go(conn, cap, cfg)
+
+    assert report.executed == 1  # recorded, never raised past a live Etsy draft
+    (executed,) = read_all(conn, "action.executed")
+    after = executed.payload["after"]
+    assert after["published"] is False
+    assert "post-enrich step failed" in after["problems"][0]
+    assert etsy.listings[int(after["etsy_listing_id"])]["state"] == "draft"
+    # the latest read-back is the failure, so the brief lists it under NEEDS YOU
+    assert read_all(conn, "listingdraft.readback")[-1].payload["ok"] is False
+
+
+def test_an_unexpected_error_before_the_provider_call_is_a_counted_refusal(
+    conn, tmp_path, monkeypatch
+):
+    cap, _etsy, gelato, cfg, _ = _world(conn, tmp_path, monkeypatch)
+
+    def boom(*_a, **_k):
+        raise KeyError("mockup hook exploded")
+
+    monkeypatch.setattr(gapfill_mod, "mockup_hook", lambda name: boom)
+
+    report = _go(conn, cap, cfg)
+
+    assert report.executed == 0
+    assert gelato.creates() == 0
+    reasons = {e.payload["reason"] for e in read_all(conn, "action.refused")}
+    assert "execute_revalidation_error" in reasons
