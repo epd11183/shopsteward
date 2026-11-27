@@ -163,7 +163,12 @@ class LiveGelatoAdapter:
                 for v in spec.ref.variants
             ],
         }
-        resp = self._client.post(url, json=body)
+        try:
+            resp = self._client.post(url, json=body)
+        except httpx.TransportError as exc:
+            # Ambiguous: the product may exist. status 0 = no HTTP response;
+            # the caller has already recorded provider_create_attempted.
+            raise PodWriteError(0, f"transport error: {type(exc).__name__}") from exc
         if resp.status_code >= 400:
             raise PodWriteError(resp.status_code, _safe_error(resp))
         return self._to_product(resp.json(), variant_count=len(spec.ref.variants))

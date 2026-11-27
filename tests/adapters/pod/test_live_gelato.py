@@ -295,3 +295,15 @@ def test_delete_product_failure_raises() -> None:
     with pytest.raises(PodWriteError) as exc_info:
         _adapter().delete_product("p1")
     assert exc_info.value.status_code == 404
+
+
+@respx.mock
+def test_create_product_transport_error_is_a_status_0_pod_write_error() -> None:
+    # A timeout is ambiguous (the product may exist): the caller must see a
+    # PodWriteError it can record, never a raw httpx exception.
+    respx.post(f"{BASE}/v1/stores/STORE/products:create-from-template").mock(
+        side_effect=httpx.ReadTimeout("slow")
+    )
+    with pytest.raises(PodWriteError) as exc:
+        _adapter().create_product(_spec())
+    assert exc.value.status_code == 0

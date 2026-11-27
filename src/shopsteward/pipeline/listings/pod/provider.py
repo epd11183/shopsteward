@@ -144,12 +144,21 @@ def link_pod_drafts(
     cfg: PodConfig,
     poll_max: int | None = None,
     force: bool = False,
+    draft_ids: set[str] | None = None,
+    attempt_tag: str | None = None,
 ) -> PodLinkReport:
+    """`draft_ids` restricts the pass to those drafts (None = every eligible
+    draft, the `pod link` default; an EMPTY set means none -- tested with
+    `is not None`, never truthiness). `attempt_tag` rides on the
+    `listingdraft.provider_create_attempted` event so a caller (gapfill) can
+    tell its own creates apart when pacing."""
     report = PodLinkReport()
     max_polls = poll_max if poll_max is not None else cfg.gelato.poll_max
     poll_interval = cfg.gelato.poll_interval_seconds
 
     for row in _eligible_rows(conn, user_id):
+        if draft_ids is not None and row["draft_id"] not in draft_ids:
+            continue
         if not force and row["etsy_listing_id"] is not None:
             report.skipped_idempotent += 1
             continue
@@ -163,6 +172,17 @@ def link_pod_drafts(
             # other spec-construction problem must not stop the rest).
             try:
                 spec = _build_spec(conn, user_id, row, cfg, print_file_host)
+                # Live create sends no idempotency key and a timeout is
+                # ambiguous: record the attempt BEFORE the call, after the
+                # spec/print-file steps (those failing means nothing was sent).
+                append(
+                    conn,
+                    Event(
+                        user_id=user_id,
+                        type="listingdraft.provider_create_attempted",
+                        payload={"draft_id": draft_id, "tag": attempt_tag},
+                    ),
+                )
                 product = adapter.create_product(spec)
             except (ValidationError, PodWriteError, LookupError) as exc:
                 append(

@@ -89,7 +89,11 @@ def test_create_poll_link_succeeds_and_never_leaks_print_file_url(conn, tmp_path
 
     events = read_all(conn, "listingdraft.provider_")
     acrylic_events = [e.type for e in events if e.payload["draft_id"] == acrylic["draft_id"]]
-    assert acrylic_events == ["listingdraft.provider_created", "listingdraft.provider_linked"]
+    assert acrylic_events == [
+        "listingdraft.provider_create_attempted",
+        "listingdraft.provider_created",
+        "listingdraft.provider_linked",
+    ]
 
     # provider_created must record variant_count, never a print_file_url.
     created_payload = next(
@@ -151,6 +155,7 @@ def test_poll_exhaustion_fails_without_raising_and_other_drafts_still_process(co
             if e.payload["draft_id"] == acrylic["draft_id"]
         ]
         assert [e.type for e in events] == [
+            "listingdraft.provider_create_attempted",
             "listingdraft.provider_created",
             "listingdraft.provider_failed",
         ]
@@ -188,3 +193,35 @@ def test_one_bad_catalog_entry_fails_without_stopping_the_other_products(conn, t
     assert acrylic["pod_status"] == "linked"
     assert poster["pod_status"] == "linked"
     assert canvas["pod_status"] == "failed"
+
+
+def test_draft_ids_filter_limits_the_pass_and_an_empty_set_means_none(conn, tmp_path):
+    _seed_hosted_drafts(conn, tmp_path, "p1")
+    cfg = pod_config.get_pod_config(conn, USER_ID)
+    adapter = FakeGelatoAdapter()
+    host = FakePrintFileHost()
+
+    none = link_pod_drafts(
+        conn, USER_ID, adapter=adapter, print_file_host=host, cfg=cfg, draft_ids=set()
+    )
+    assert (none.created, none.linked, none.failed) == (0, 0, 0)  # `is not None`, not truthiness
+    assert adapter.calls == []
+
+    acrylic = _row(conn, "acrylic", "p1")["draft_id"]
+    one = link_pod_drafts(
+        conn,
+        USER_ID,
+        adapter=adapter,
+        print_file_host=host,
+        cfg=cfg,
+        draft_ids={acrylic},
+        attempt_tag="gapfill",
+    )
+    assert one.created == 1
+    assert [c[0] for c in adapter.calls].count("create_product") == 1
+    attempted = [
+        e
+        for e in read_all(conn, "listingdraft.provider_create_attempted")
+        if e.payload["draft_id"] == acrylic
+    ]
+    assert [e.payload["tag"] for e in attempted] == ["gapfill"]
