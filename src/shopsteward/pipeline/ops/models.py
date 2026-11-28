@@ -93,6 +93,7 @@ class _OpsBriefSections(BaseModel):
     pins: bool = True
     pin_experiments: bool = True
     social_queue: bool = True
+    scorecard: bool = True
 
 
 class _OpsLadder(BaseModel):
@@ -213,6 +214,20 @@ class _OpsCatalogExpansion(BaseModel):
     listing_fee_usd: float = Field(gt=0)
     # Candidates the weekly run keeps in source_folder (`listings candidate-status`).
     min_candidates: int = Field(default=15, ge=0)
+
+
+class _OpsEconomics(BaseModel):
+    """Etsy's published US fee schedule (docs/research/2026-08-24-etsy-path-to-
+    profitability.md, unit-economics table), used ONLY by the brief's THE NUMBERS
+    scorecard. Defaults equal config/defaults/ops.json so a config stored before
+    this block existed still validates."""
+
+    transaction_fee_pct: float = Field(default=0.065, ge=0, lt=1)
+    payment_processing_pct: float = Field(default=0.03, ge=0, lt=1)
+    payment_processing_fixed_usd: float = Field(default=0.25, ge=0)
+    # Scorecard windows (days) and the traffic comparison window.
+    windows_days: list[int] = Field(default_factory=lambda: [30, 90, 365])
+    traffic_window_days: int = Field(default=7, gt=1)
 
 
 class _OpsGapfill(BaseModel):
@@ -462,6 +477,7 @@ class OpsConfig(BaseModel):
     renew: _OpsRenew
     catalog_expansion: _OpsCatalogExpansion
     gapfill: _OpsGapfill = Field(default_factory=_OpsGapfill)
+    economics: _OpsEconomics = Field(default_factory=_OpsEconomics)
     caption: _OpsCaption
     pinterest: _OpsPinterest
     buffer: _OpsBuffer = Field(default_factory=_OpsBuffer)
@@ -622,6 +638,47 @@ class ShootMoreSuggestion(BaseModel):
     product_type: str
     listing_count: int
     revenue_usd: float
+
+
+class ScorecardWindow(BaseModel):
+    """Contribution profit over the trailing `days` (THE NUMBERS). Revenue is
+    ITEM revenue (`proj_sale_items`), so fees are computed on it too: shipping
+    and tax are excluded on both sides."""
+
+    days: int
+    revenue_usd: float
+    orders: int
+    units: int
+    transaction_fees_usd: float
+    processing_fees_usd: float
+    listing_fees_usd: float  # listing + renewal fees actually spent (governor ledger)
+    fulfillment_usd: float
+    ad_spend_usd: float = 0.0  # attributed ad spend: none recorded today
+    contribution_usd: float
+    pod_units_cost_unknown: int = 0  # POD units whose variant cost could not be resolved
+
+
+class ScorecardTraffic(BaseModel):
+    """Shop-wide views/favorites, last window vs the one before, summed over
+    listings whose daily snapshots cover BOTH windows (`analytics.
+    window_rate_per_day`'s rule). None = not measurable, never 0."""
+
+    window_days: int
+    end_day: str | None  # the latest snapshot day the windows end on
+    listings_observed: int
+    listings_covered: int  # measured in BOTH windows
+    views_current: float | None = None
+    views_prior: float | None = None
+    favorites_current: float | None = None
+    favorites_prior: float | None = None
+    views_current_only: float | None = None  # current window alone, over its own coverage
+    listings_current_only: int = 0
+
+
+class Scorecard(BaseModel):
+    windows: list[ScorecardWindow]
+    traffic: ScorecardTraffic
+    notes: list[str] = Field(default_factory=list)
 
 
 class PinExperimentResult(BaseModel):
@@ -861,3 +918,5 @@ class Brief(BaseModel):
     pin_experiments: list[PinExperimentResult] = Field(default_factory=list)
     # S8 (Buffer design §6/§12): None iff brief_sections.social_queue is off.
     social_queue: BriefSocialQueue | None = None
+    # THE NUMBERS (contribution-profit scorecard); None iff brief_sections.scorecard is off.
+    scorecard: Scorecard | None = None

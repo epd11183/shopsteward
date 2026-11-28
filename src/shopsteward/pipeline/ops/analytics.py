@@ -811,6 +811,30 @@ def stale_drafts(
     return out
 
 
+_DAILY_COUNTERS = ("views", "num_favorers")  # cumulative counters in proj_listing_daily
+
+
+def window_rate_per_day(
+    conn: sqlite3.Connection,
+    user_id: int,
+    listing_id: int,
+    start: date,
+    end: date,
+    counter: str = "views",
+) -> float | None:
+    """Per-day growth of a cumulative `proj_listing_daily` counter over the
+    inclusive [start, end] window, under `_views_rate_per_day`'s coverage rule:
+    None (never 0) unless the synced snapshots span nearly the whole window."""
+    if counter not in _DAILY_COUNTERS:
+        raise ValueError(f"unknown daily counter {counter!r}")
+    rows = conn.execute(
+        f"SELECT day, {counter} AS views FROM proj_listing_daily "
+        "WHERE user_id=? AND listing_id=? AND day BETWEEN ? AND ? ORDER BY day",
+        (user_id, listing_id, start.isoformat(), end.isoformat()),
+    ).fetchall()
+    return _views_rate_per_day(rows, (end - start).days + 1)
+
+
 def _before_after_views_per_day(
     conn: sqlite3.Connection,
     user_id: int,
@@ -818,6 +842,7 @@ def _before_after_views_per_day(
     anchor: date,
     window_days: int,
     as_of: date,
+    counter: str = "views",
 ) -> tuple[float | None, float | None]:
     """Shared by `pin_experiment_readout()` and `seo_edit_view_delta()`:
     views/day in the `window_days` immediately before `anchor` (baseline)
@@ -836,21 +861,11 @@ def _before_after_views_per_day(
         (user_id, listing_id),
     ).fetchone()
     if min_day_str is not None and date.fromisoformat(min_day_str) <= before_start:
-        before_rows = conn.execute(
-            "SELECT day, views FROM proj_listing_daily WHERE user_id=? AND listing_id=? "
-            "AND day BETWEEN ? AND ? ORDER BY day",
-            (user_id, listing_id, before_start.isoformat(), before_end.isoformat()),
-        ).fetchall()
-        baseline = _views_rate_per_day(before_rows, window_days)
+        baseline = window_rate_per_day(conn, user_id, listing_id, before_start, before_end, counter)
 
     observed: float | None = None
     if as_of >= after_end:
-        after_rows = conn.execute(
-            "SELECT day, views FROM proj_listing_daily WHERE user_id=? AND listing_id=? "
-            "AND day BETWEEN ? AND ? ORDER BY day",
-            (user_id, listing_id, after_start.isoformat(), after_end.isoformat()),
-        ).fetchall()
-        observed = _views_rate_per_day(after_rows, window_days)
+        observed = window_rate_per_day(conn, user_id, listing_id, after_start, after_end, counter)
 
     return baseline, observed
 

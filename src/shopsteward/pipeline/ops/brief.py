@@ -32,6 +32,7 @@ from shopsteward.pipeline.ops.models import (
     OpsConfig,
     ProposedAction,
     RefusalReason,
+    Scorecard,
     Tier,
 )
 from shopsteward.pipeline.ops.projections import (
@@ -40,6 +41,7 @@ from shopsteward.pipeline.ops.projections import (
     capability_states,
 )
 from shopsteward.pipeline.ops.registry import REGISTRY, Capability
+from shopsteward.pipeline.ops.scorecard import build_scorecard
 from shopsteward.pipeline.ops.tiers import effective_tier, effective_tier_for
 
 # ponytail: fixed 7-day lookback for DONE/REFUSED, not a config knob -- add
@@ -492,6 +494,7 @@ def generate_brief(
     )
 
     social_queue = _social_queue(conn, user_id, cfg, as_of) if sections.social_queue else None
+    scorecard = build_scorecard(conn, user_id, cfg, as_of) if sections.scorecard else None
 
     return Brief(
         generated_at=as_of,
@@ -515,11 +518,54 @@ def generate_brief(
         pin_drafts=pin_drafts,
         pin_experiments=pin_experiments,
         social_queue=social_queue,
+        scorecard=scorecard,
     )
 
 
 def _money(usd: float) -> str:
     return f"${usd:,.2f}"
+
+
+def _pct(cur: float, prior: float) -> str:
+    return "n/a" if prior == 0 else f"{(cur - prior) / prior:+.0%}"
+
+
+def _render_scorecard(sc: Scorecard) -> list[str]:
+    lines = ["", "THE NUMBERS (contribution profit; item revenue, trailing windows)"]
+    for w in sc.windows:
+        unknown = (
+            f" [+{w.pod_units_cost_unknown} POD units, cost unknown]"
+            if w.pod_units_cost_unknown
+            else ""
+        )
+        lines.append(
+            f"  {w.days:>3}d: revenue {_money(w.revenue_usd)} | "
+            f"txn fee {_money(w.transaction_fees_usd)}"
+            f" | processing {_money(w.processing_fees_usd)} | listing/renewal fees "
+            f"{_money(w.listing_fees_usd)} | fulfillment {_money(w.fulfillment_usd)}{unknown}"
+            f" | ads {_money(w.ad_spend_usd)} => CONTRIBUTION {_money(w.contribution_usd)} "
+            f"({w.units} units, {w.orders} orders)"
+        )
+    t = sc.traffic
+    n = t.window_days
+    ctx = "market/seasonality context, not shop performance"
+    if t.listings_covered:
+        lines.append(
+            f"  Shop views last {n}d vs prior {n}d ({ctx}): "
+            f"{t.views_current:g} vs {t.views_prior:g} ({_pct(t.views_current, t.views_prior)}); "
+            f"favorites {t.favorites_current:g} vs {t.favorites_prior:g} "
+            f"({_pct(t.favorites_current, t.favorites_prior)}) -- "
+            f"{t.listings_covered} of {t.listings_observed} listings covered"
+        )
+    elif t.views_current_only is not None:
+        lines.append(
+            f"  Shop views last {n}d ({ctx}): {t.views_current_only:g} over "
+            f"{t.listings_current_only} listings; prior {n}d not measurable yet"
+        )
+    else:
+        lines.append(f"  Shop views last {n}d vs prior {n}d ({ctx}): not measurable yet")
+    lines.extend(f"  note: {note}" for note in sc.notes)
+    return lines
 
 
 def render_text(brief: Brief) -> str:
@@ -644,6 +690,9 @@ def render_text(brief: Brief) -> str:
                     for k in _BUFFER_METRIC_KEYS
                 )
                 lines.append(f"    Buffer: {shown}")
+
+    if brief.scorecard is not None:
+        lines.extend(_render_scorecard(brief.scorecard))
 
     lines.append("")
     lines.append("THE SHOP")
