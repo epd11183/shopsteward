@@ -13,9 +13,10 @@ from datetime import UTC, date, datetime
 
 from shopsteward.core.events import read_all
 from shopsteward.pipeline import llm_ledger
-from shopsteward.pipeline.ops import analytics, buffer_publish, cadence, governor
+from shopsteward.pipeline.ops import analytics, buffer_publish, cadence, governor, outcomes
 from shopsteward.pipeline.ops.capabilities import autorenew_on, reprice
 from shopsteward.pipeline.ops.models import (
+    ActionOutcome,
     Brief,
     BriefAction,
     BriefAutonomy,
@@ -495,6 +496,9 @@ def generate_brief(
 
     social_queue = _social_queue(conn, user_id, cfg, as_of) if sections.social_queue else None
     scorecard = build_scorecard(conn, user_id, cfg, as_of) if sections.scorecard else None
+    outcome_list = outcomes.action_outcomes(conn, user_id, cfg, as_of) if sections.outcomes else []
+    rollup_days = cfg.outcomes.rollup_window_days
+    best, worst = outcomes.best_and_worst(outcome_list, rollup_days, cfg.outcomes.top_n)
 
     return Brief(
         generated_at=as_of,
@@ -519,6 +523,12 @@ def generate_brief(
         pin_experiments=pin_experiments,
         social_queue=social_queue,
         scorecard=scorecard,
+        outcome_rollups=[
+            r for n in cfg.outcomes.windows_days for r in outcomes.rollup(outcome_list, n)
+        ],
+        outcome_best=best,
+        outcome_worst=worst,
+        outcomes_total=len(outcome_list),
     )
 
 
@@ -565,6 +575,54 @@ def _render_scorecard(sc: Scorecard) -> list[str]:
     else:
         lines.append(f"  Shop views last {n}d vs prior {n}d ({ctx}): not measurable yet")
     lines.extend(f"  note: {note}" for note in sc.notes)
+    return lines
+
+
+def _fmt_change(v: float | None) -> str:
+    return "n/a" if v is None else f"{v:+.2f}"
+
+
+def _outcome_line(o: ActionOutcome, days: int) -> str:
+    w = outcomes.window_of(o, days)
+    head = f"  {o.capability} on {o.title} ({o.anchor}) {days}d: "
+    if w is None:
+        return head + "not measurable"
+    if w.status != "measured":
+        return head + w.status
+    if w.baseline == "new listing":
+        return head + (
+            f"new listing, {w.views_after_per_day:.2f} views/day after, "
+            f"{w.sales_after} sold (no before)"
+        )
+    raw = _fmt_change(w.views_change_raw)
+    adj = _fmt_change(w.views_change_adjusted) if w.baseline == "ok" else "no baseline"
+    return head + (
+        f"views/day {raw} raw, {adj} vs shop trend ({w.controls_n} controls); "
+        f"sales {w.sales_before}->{w.sales_after}"
+    )
+
+
+def _render_outcomes(brief: Brief) -> list[str]:
+    lines = [
+        "",
+        f"OUTCOMES ({brief.outcomes_total} executed actions; correlational, small samples, "
+        "changes in views/day are relative to the shop-wide trend over the same window)",
+    ]
+    for r in brief.outcome_rollups:
+        lines.append(
+            f"  {r.capability} {r.days}d: n={r.n_actions}, adjusted n={r.n_measured}"
+            f" (no baseline {r.n_no_baseline}; not yet measurable {r.n_not_yet_measurable}; "
+            f"not measurable {r.n_not_measurable}), median adjusted views/day "
+            f"{_fmt_change(r.median_adjusted_views_per_day)} (raw "
+            f"{_fmt_change(r.median_raw_views_per_day)}), sold after {r.sales_after}"
+        )
+    days = brief.outcome_rollups[0].days if brief.outcome_rollups else 7
+    if brief.outcome_best:
+        lines.append(f"  Top {len(brief.outcome_best)} ({days}d, adjusted):")
+        lines.extend("  " + _outcome_line(o, days) for o in brief.outcome_best)
+    if brief.outcome_worst:
+        lines.append(f"  Bottom {len(brief.outcome_worst)} ({days}d, adjusted):")
+        lines.extend("  " + _outcome_line(o, days) for o in brief.outcome_worst)
     return lines
 
 
@@ -693,6 +751,9 @@ def render_text(brief: Brief) -> str:
 
     if brief.scorecard is not None:
         lines.extend(_render_scorecard(brief.scorecard))
+
+    if brief.outcomes_total or brief.outcome_rollups:
+        lines.extend(_render_outcomes(brief))
 
     lines.append("")
     lines.append("THE SHOP")

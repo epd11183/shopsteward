@@ -91,6 +91,12 @@
     "windows_days": [30, 90, 365],
     "traffic_window_days": 7
   },
+  "outcomes": {
+    "windows_days": [7, 28],
+    "rollup_window_days": 7,
+    "min_controls": 5,
+    "top_n": 3
+  },
   "caption": {
     "max_len": 2200,
     "channels": {

@@ -94,6 +94,7 @@ class _OpsBriefSections(BaseModel):
     pin_experiments: bool = True
     social_queue: bool = True
     scorecard: bool = True
+    outcomes: bool = True
 
 
 class _OpsLadder(BaseModel):
@@ -228,6 +229,15 @@ class _OpsEconomics(BaseModel):
     # Scorecard windows (days) and the traffic comparison window.
     windows_days: list[int] = Field(default_factory=lambda: [30, 90, 365])
     traffic_window_days: int = Field(default=7, gt=1)
+
+
+class _OpsOutcomes(BaseModel):
+    """Per-action outcome readout (brief OUTCOMES + planner `action_outcomes`)."""
+
+    windows_days: list[int] = Field(default_factory=lambda: [7, 28])
+    rollup_window_days: int = Field(default=7, gt=0)  # the window the rollup/planner use
+    min_controls: int = Field(default=5, gt=0)  # fewer control listings => "no baseline"
+    top_n: int = Field(default=3, gt=0)
 
 
 class _OpsGapfill(BaseModel):
@@ -478,6 +488,7 @@ class OpsConfig(BaseModel):
     catalog_expansion: _OpsCatalogExpansion
     gapfill: _OpsGapfill = Field(default_factory=_OpsGapfill)
     economics: _OpsEconomics = Field(default_factory=_OpsEconomics)
+    outcomes: _OpsOutcomes = Field(default_factory=_OpsOutcomes)
     caption: _OpsCaption
     pinterest: _OpsPinterest
     buffer: _OpsBuffer = Field(default_factory=_OpsBuffer)
@@ -679,6 +690,59 @@ class Scorecard(BaseModel):
     windows: list[ScorecardWindow]
     traffic: ScorecardTraffic
     notes: list[str] = Field(default_factory=list)
+
+
+class OutcomeWindow(BaseModel):
+    """One executed action's before/after reading over `days` days of the
+    TARGET listing. Per-day figures are cumulative-counter growth under the pin
+    readout's coverage rule: None means unmeasurable, never 0.
+
+    `views_change_adjusted` = the listing's raw change in views/day minus the
+    median change over the same windows across CONTROL listings (other active
+    listings with no executed action in the span) -- i.e. relative to the
+    shop-wide trend, so a market slump is not blamed on the action. `baseline`
+    is "no baseline" when fewer than 5 controls qualify."""
+
+    days: int
+    # "measured" | "not yet measurable" (window not elapsed) | "not measurable"
+    # (snapshots don't cover it) | "no before data" (after measured, before not)
+    status: str
+    views_before_per_day: float | None = None
+    views_after_per_day: float | None = None
+    views_change_raw: float | None = None
+    control_median_change: float | None = None
+    controls_n: int = 0
+    baseline: str = "ok"  # "ok" | "no baseline" | "new listing"
+    views_change_adjusted: float | None = None
+    favorites_before_per_day: float | None = None
+    favorites_after_per_day: float | None = None
+    sales_before: int | None = None
+    sales_after: int | None = None
+
+
+class ActionOutcome(BaseModel):
+    action_id: str
+    capability: str
+    listing_id: int | None
+    title: str
+    anchor: str  # ISO date the action took effect
+    windows: list[OutcomeWindow]
+
+
+class OutcomeRollup(BaseModel):
+    """Per-capability roll-up over one window length. Small n: raw numbers, no
+    significance claim."""
+
+    capability: str
+    days: int
+    n_actions: int
+    n_measured: int  # adjusted change available
+    n_no_baseline: int
+    n_not_yet_measurable: int = 0  # the after-window has not elapsed
+    n_not_measurable: int = 0  # elapsed, but snapshots do not cover it
+    median_adjusted_views_per_day: float | None = None
+    median_raw_views_per_day: float | None = None
+    sales_after: int = 0
 
 
 class PinExperimentResult(BaseModel):
@@ -920,3 +984,8 @@ class Brief(BaseModel):
     social_queue: BriefSocialQueue | None = None
     # THE NUMBERS (contribution-profit scorecard); None iff brief_sections.scorecard is off.
     scorecard: Scorecard | None = None
+    # OUTCOMES (per-action before/after readout); empty iff brief_sections.outcomes is off.
+    outcome_rollups: list[OutcomeRollup] = Field(default_factory=list)
+    outcome_best: list[ActionOutcome] = Field(default_factory=list)
+    outcome_worst: list[ActionOutcome] = Field(default_factory=list)
+    outcomes_total: int = 0
