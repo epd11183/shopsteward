@@ -195,10 +195,8 @@ def test_planner_facts_carry_the_adjusted_rollup_and_the_prompt_is_hedged(tmp_pa
     )
 
     block = facts["action_outcomes"]
-    (row,) = block["by_capability"]
-    assert row["capability"] == "listing.seo_edit"
-    assert row["n_actions"] == 1 and row["n_measured"] == 1
-    assert row["median_adjusted_views_per_day_change"] == pytest.approx(0.0, abs=1e-9)
+    # One measured action is below the planner's minimum sample: it must not steer it.
+    assert block["by_capability"] == []
     assert block["negative_on_listing"] == []
 
     prompt = _plan_system_prompt(

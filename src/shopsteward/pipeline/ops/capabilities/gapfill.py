@@ -256,9 +256,10 @@ def _candidates(
         # photo has no canvas_portrait: build_pod_reprint refuses it terminally).
         buildable = reprint_eligible_types(conn, user_id, source.photo_id, pod_cfg)
         for product_type, provider in provider_by_type.items():
-            if product_type not in buildable:
-                continue
             draft_id = compute_draft_id(source.photo_id, pod_cfg_hash, provider, product_type)
+            # Never strand one of our own in-flight drafts if the eligibility rules move.
+            if product_type not in buildable and draft_id not in claimed:
+                continue
             if _draft_exists(conn, user_id, draft_id) and (
                 draft_id not in claimed or draft_id in skip
             ):

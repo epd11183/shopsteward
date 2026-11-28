@@ -217,6 +217,9 @@ def window_of(outcome: ActionOutcome, days: int) -> OutcomeWindow | None:
     return next((w for w in outcome.windows if w.days == days), None)
 
 
+_MIN_PLANNER_N = 3
+
+
 def rollup(outcomes: list[ActionOutcome], days: int) -> list[OutcomeRollup]:
     """Per capability over the `days` window: n, how many have an adjusted
     change, the median adjusted/raw change in views/day, units sold after."""
@@ -297,6 +300,8 @@ def planner_facts(outcomes: list[ActionOutcome], cfg: OpsConfig, limit: int = 10
                 "sales_after": r.sales_after,
             }
             for r in rollup(outcomes, days)
+            # One or two measured actions are noise: never let them steer the planner.
+            if r.n_measured >= _MIN_PLANNER_N
         ],
         "negative_on_listing": negatives[:limit],
     }
