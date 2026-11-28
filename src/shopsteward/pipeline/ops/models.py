@@ -698,6 +698,16 @@ class BriefProposal(BaseModel):
     expires_at: str  # ISO date
 
 
+class BriefQueued(BriefProposal):
+    """A still-"proposed" action whose capability's EFFECTIVE tier is now
+    AUTO/NOTIFY (e.g. a proposal minted before a tier lift): the next run
+    drives it through the guards itself, so it is NOT waiting on the operator.
+    `will_execute` / `verdict` say whether the guards currently let it run."""
+
+    will_execute: bool
+    verdict: str
+
+
 class BriefReadbackFailure(BaseModel):
     """A pushed draft whose pre-publish read-back failed (latest
     `listingdraft.readback` not ok, never published since): it stays a draft
@@ -834,6 +844,7 @@ class Brief(BaseModel):
     # (generate_brief() with brief_sections.autonomy=False, or any caller
     # that never touches these) stays valid without passing them.
     needs_you: list[BriefProposal] = Field(default_factory=list)
+    queued: list[BriefQueued] = Field(default_factory=list)
     readback_failed: list[BriefReadbackFailure] = Field(default_factory=list)
     done_recent: list[BriefAction] = Field(default_factory=list)
     refused_recent: list[BriefRefusal] = Field(default_factory=list)

@@ -14,6 +14,7 @@ from datetime import UTC, date, datetime
 from shopsteward.core.events import read_all
 from shopsteward.pipeline import llm_ledger
 from shopsteward.pipeline.ops import analytics, buffer_publish, cadence, governor
+from shopsteward.pipeline.ops.capabilities import autorenew_on, reprice
 from shopsteward.pipeline.ops.models import (
     Brief,
     BriefAction,
@@ -22,6 +23,7 @@ from shopsteward.pipeline.ops.models import (
     BriefLadderRow,
     BriefPin,
     BriefProposal,
+    BriefQueued,
     BriefQueuedPost,
     BriefReadbackFailure,
     BriefRefusal,
@@ -29,6 +31,7 @@ from shopsteward.pipeline.ops.models import (
     BriefUnresolvedIntent,
     OpsConfig,
     ProposedAction,
+    RefusalReason,
     Tier,
 )
 from shopsteward.pipeline.ops.projections import (
@@ -36,7 +39,8 @@ from shopsteward.pipeline.ops.projections import (
     action_rows,
     capability_states,
 )
-from shopsteward.pipeline.ops.tiers import effective_tier_for
+from shopsteward.pipeline.ops.registry import REGISTRY, Capability
+from shopsteward.pipeline.ops.tiers import effective_tier, effective_tier_for
 
 # ponytail: fixed 7-day lookback for DONE/REFUSED, not a config knob -- add
 # one under cfg.windows if the operator ever wants a longer/shorter Brief
@@ -63,27 +67,118 @@ def _within_window(created_at: str | None, as_of: date, days: int) -> bool:
     return 0 <= (as_of - day).days <= days
 
 
-def _needs_you(conn: sqlite3.Connection, user_id: int, as_of: date) -> list[BriefProposal]:
+_AUTO_TIERS = (Tier.AUTO, Tier.NOTIFY)  # runner._AUTO_EXECUTE_TIERS
+
+
+class _AssumeReady:
+    """Governor stand-in: the brief runs with the offline REGISTRY (no live
+    adapters), so the real capability's `precondition_ok` is always False. The
+    weekly run is live, so the question here is only "do the GUARDS clear"."""
+
+    def __init__(self, cap: Capability) -> None:
+        self._cap = cap
+        self.key = cap.key
+        self.max_tier = cap.max_tier
+        self.policy_verified = cap.policy_verified
+        self.precondition_ok = True
+
+    def estimate_cost_usd(self, action: ProposedAction) -> float:
+        return self._cap.estimate_cost_usd(action)
+
+
+def _refusal_text(reason: RefusalReason, cap_key: str, cfg: OpsConfig) -> str:
+    if reason == RefusalReason.PACE and cap_key == "listing.gapfill_reprint":
+        return (
+            f"gapfill weekly pace: {cfg.gapfill.max_per_week} new Gelato product(s) per ISO "
+            "week already used, or another gapfill draft is in flight"
+        )
+    if reason == RefusalReason.PACE:
+        return "weekly/channel pace already used"
+    return f"governor refuses: {reason.value}"
+
+
+def _queue_verdict(
+    conn: sqlite3.Connection,
+    user_id: int,
+    cfg: OpsConfig,
+    cap: Capability,
+    action: ProposedAction,
+    as_of: date,
+) -> tuple[bool, str]:
+    """(will the next run execute it, why). Calls the guards -- never copies
+    them: the reprice blackout/cooldown and autorenew_on's sold-in-window check
+    live in their capability modules, everything else in `governor.govern`
+    (record=False: the brief must not append `action.refused`)."""
+    if not cfg.autonomy.enabled:
+        return False, "autonomy is OFF -- the run does nothing"
+    if cap.key == "listing.reprice":
+        if reprice._in_blackout(cfg, as_of):
+            return False, f"reprice blackout until {cfg.reprice.blackout_until}"
+        if int(action.target_id) in reprice._cooling_down(conn, user_id, cfg, as_of):
+            return False, (
+                f"reprice revert cooldown ({cfg.reprice.revert_cooldown_days}d after an undo "
+                "or a restored price)"
+            )
+    elif cap.key == "listing.autorenew_on":
+        if int(action.target_id) not in autorenew_on.sold_in_window_ids(conn, user_id, cfg, as_of):
+            return False, (
+                f"autorenew_on guard: no sale in the last {cfg.dead_listing.window_days}d "
+                "(recurring renewal fees need a recent sale)"
+            )
+        if action.target_id not in autorenew_on._candidates(conn, user_id, cfg):
+            return False, "no longer eligible (renewal posture changed or auto-renew already on)"
+    elif cap.key == "listing.gapfill_reprint":
+        from shopsteward.pipeline.ops.capabilities import gapfill
+
+        if action.target_id not in gapfill._candidates(conn, user_id, cfg):
+            return False, (
+                "no longer eligible (format not buildable for this photo, already built, "
+                "or attempts exhausted) -- the run will close it as stale"
+            )
+    decision = governor.govern(conn, user_id, action, _AssumeReady(cap), cfg, as_of, record=False)
+    if not decision.approved and decision.reason is not None:
+        return False, _refusal_text(decision.reason, cap.key, cfg)
+    return True, "guards clear -- executes in the next run (live gates permitting)"
+
+
+def _split_pending(
+    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, as_of: date
+) -> tuple[list[BriefProposal], list[BriefQueued]]:
+    """Open proposals -> (NEEDS YOU, QUEUED). Mirrors the runner's own tier
+    decision: effective tier from the registry + `autonomy.tier_floor`, then
+    the per-action `auto_hold` clamp back to PROPOSE. A capability that is not
+    registered cannot be judged, so it stays with the operator."""
     proposed = _proposed_by_action_id(conn, user_id)
-    out = []
+    states = capability_states(conn, user_id)
+    needs: list[BriefProposal] = []
+    queued: list[BriefQueued] = []
     for row in action_rows(conn):
         if row["user_id"] != user_id or row["state"] != "proposed":
             continue
         p = proposed.get(row["action_id"])
         if p is None or as_of > date.fromisoformat(p.expires_at):
             continue  # never proposed (shouldn't happen) or expired
-        out.append(
-            BriefProposal(
-                action_id=row["action_id"],
-                capability=row["capability"],
-                target_type=row["target_type"],
-                target_id=row["target_id"],
-                tier=Tier(row["tier"]),
-                reason=row["reason"],
-                expires_at=p.expires_at,
-            )
+        item = BriefProposal(
+            action_id=row["action_id"],
+            capability=row["capability"],
+            target_type=row["target_type"],
+            target_id=row["target_id"],
+            tier=Tier(row["tier"]),
+            reason=row["reason"],
+            expires_at=p.expires_at,
         )
-    return out
+        cap = REGISTRY.get(row["capability"])
+        eff = (
+            effective_tier(cap, states.get(cap.key), cfg.autonomy.tier_floor)
+            if cap is not None
+            else item.tier
+        )
+        if cap is None or eff not in _AUTO_TIERS or p.params.get("auto_hold"):
+            needs.append(item)
+            continue
+        will, why = _queue_verdict(conn, user_id, cfg, cap, p, as_of)
+        queued.append(BriefQueued(**item.model_dump(), will_execute=will, verdict=why))
+    return needs, queued
 
 
 def _readback_failed(conn: sqlite3.Connection, user_id: int) -> list[BriefReadbackFailure]:
@@ -383,7 +478,7 @@ def generate_brief(
         else []
     )
 
-    needs_you = _needs_you(conn, user_id, as_of) if sections.autonomy else []
+    needs_you, queued = _split_pending(conn, user_id, cfg, as_of) if sections.autonomy else ([], [])
     readback_failed = _readback_failed(conn, user_id) if sections.autonomy else []
     done_recent = _done_recent(conn, user_id, as_of) if sections.autonomy else []
     refused_recent = _refused_recent(conn, user_id, as_of) if sections.autonomy else []
@@ -411,6 +506,7 @@ def generate_brief(
         shoot_more=shoot,
         data_quality_notes=notes,
         needs_you=needs_you,
+        queued=queued,
         readback_failed=readback_failed,
         done_recent=done_recent,
         refused_recent=refused_recent,
@@ -444,6 +540,15 @@ def render_text(brief: Brief) -> str:
             lines.append(
                 f"  DRAFT NOT PUBLISHED (read-back failed) {f.draft_id} "
                 f"(etsy {f.etsy_listing_id}) {f.title or ''}: " + "; ".join(f.problems)
+            )
+
+        lines.append("")
+        lines.append(f"QUEUED (next run) -- no action needed from you ({len(brief.queued)})")
+        for q in brief.queued:
+            state = "WILL RUN" if q.will_execute else "BLOCKED"
+            lines.append(
+                f"  [{q.action_id}] {q.capability} -> {q.target_type}:{q.target_id} : "
+                f"{state}: {q.verdict}"
             )
 
         lines.append("")
