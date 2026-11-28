@@ -93,6 +93,8 @@ class _OpsBriefSections(BaseModel):
     pins: bool = True
     pin_experiments: bool = True
     social_queue: bool = True
+    scorecard: bool = True
+    outcomes: bool = True
 
 
 class _OpsLadder(BaseModel):
@@ -213,6 +215,29 @@ class _OpsCatalogExpansion(BaseModel):
     listing_fee_usd: float = Field(gt=0)
     # Candidates the weekly run keeps in source_folder (`listings candidate-status`).
     min_candidates: int = Field(default=15, ge=0)
+
+
+class _OpsEconomics(BaseModel):
+    """Etsy's published US fee schedule (docs/research/2026-08-24-etsy-path-to-
+    profitability.md, unit-economics table), used ONLY by the brief's THE NUMBERS
+    scorecard. Defaults equal config/defaults/ops.json so a config stored before
+    this block existed still validates."""
+
+    transaction_fee_pct: float = Field(default=0.065, ge=0, lt=1)
+    payment_processing_pct: float = Field(default=0.03, ge=0, lt=1)
+    payment_processing_fixed_usd: float = Field(default=0.25, ge=0)
+    # Scorecard windows (days) and the traffic comparison window.
+    windows_days: list[int] = Field(default_factory=lambda: [30, 90, 365])
+    traffic_window_days: int = Field(default=7, gt=1)
+
+
+class _OpsOutcomes(BaseModel):
+    """Per-action outcome readout (brief OUTCOMES + planner `action_outcomes`)."""
+
+    windows_days: list[int] = Field(default_factory=lambda: [7, 28])
+    rollup_window_days: int = Field(default=7, gt=0)  # the window the rollup/planner use
+    min_controls: int = Field(default=5, gt=0)  # fewer control listings => "no baseline"
+    top_n: int = Field(default=3, gt=0)
 
 
 class _OpsGapfill(BaseModel):
@@ -462,6 +487,8 @@ class OpsConfig(BaseModel):
     renew: _OpsRenew
     catalog_expansion: _OpsCatalogExpansion
     gapfill: _OpsGapfill = Field(default_factory=_OpsGapfill)
+    economics: _OpsEconomics = Field(default_factory=_OpsEconomics)
+    outcomes: _OpsOutcomes = Field(default_factory=_OpsOutcomes)
     caption: _OpsCaption
     pinterest: _OpsPinterest
     buffer: _OpsBuffer = Field(default_factory=_OpsBuffer)
@@ -624,6 +651,100 @@ class ShootMoreSuggestion(BaseModel):
     revenue_usd: float
 
 
+class ScorecardWindow(BaseModel):
+    """Contribution profit over the trailing `days` (THE NUMBERS). Revenue is
+    ITEM revenue (`proj_sale_items`), so fees are computed on it too: shipping
+    and tax are excluded on both sides."""
+
+    days: int
+    revenue_usd: float
+    orders: int
+    units: int
+    transaction_fees_usd: float
+    processing_fees_usd: float
+    listing_fees_usd: float  # listing + renewal fees actually spent (governor ledger)
+    fulfillment_usd: float
+    ad_spend_usd: float = 0.0  # attributed ad spend: none recorded today
+    contribution_usd: float
+    pod_units_cost_unknown: int = 0  # POD units whose variant cost could not be resolved
+
+
+class ScorecardTraffic(BaseModel):
+    """Shop-wide views/favorites, last window vs the one before, summed over
+    listings whose daily snapshots cover BOTH windows (`analytics.
+    window_rate_per_day`'s rule). None = not measurable, never 0."""
+
+    window_days: int
+    end_day: str | None  # the latest snapshot day the windows end on
+    listings_observed: int
+    listings_covered: int  # measured in BOTH windows
+    views_current: float | None = None
+    views_prior: float | None = None
+    favorites_current: float | None = None
+    favorites_prior: float | None = None
+    views_current_only: float | None = None  # current window alone, over its own coverage
+    listings_current_only: int = 0
+
+
+class Scorecard(BaseModel):
+    windows: list[ScorecardWindow]
+    traffic: ScorecardTraffic
+    notes: list[str] = Field(default_factory=list)
+
+
+class OutcomeWindow(BaseModel):
+    """One executed action's before/after reading over `days` days of the
+    TARGET listing. Per-day figures are cumulative-counter growth under the pin
+    readout's coverage rule: None means unmeasurable, never 0.
+
+    `views_change_adjusted` = the listing's raw change in views/day minus the
+    median change over the same windows across CONTROL listings (other active
+    listings with no executed action in the span) -- i.e. relative to the
+    shop-wide trend, so a market slump is not blamed on the action. `baseline`
+    is "no baseline" when fewer than 5 controls qualify."""
+
+    days: int
+    # "measured" | "not yet measurable" (window not elapsed) | "not measurable"
+    # (snapshots don't cover it) | "no before data" (after measured, before not)
+    status: str
+    views_before_per_day: float | None = None
+    views_after_per_day: float | None = None
+    views_change_raw: float | None = None
+    control_median_change: float | None = None
+    controls_n: int = 0
+    baseline: str = "ok"  # "ok" | "no baseline" | "new listing"
+    views_change_adjusted: float | None = None
+    favorites_before_per_day: float | None = None
+    favorites_after_per_day: float | None = None
+    sales_before: int | None = None
+    sales_after: int | None = None
+
+
+class ActionOutcome(BaseModel):
+    action_id: str
+    capability: str
+    listing_id: int | None
+    title: str
+    anchor: str  # ISO date the action took effect
+    windows: list[OutcomeWindow]
+
+
+class OutcomeRollup(BaseModel):
+    """Per-capability roll-up over one window length. Small n: raw numbers, no
+    significance claim."""
+
+    capability: str
+    days: int
+    n_actions: int
+    n_measured: int  # adjusted change available
+    n_no_baseline: int
+    n_not_yet_measurable: int = 0  # the after-window has not elapsed
+    n_not_measurable: int = 0  # elapsed, but snapshots do not cover it
+    median_adjusted_views_per_day: float | None = None
+    median_raw_views_per_day: float | None = None
+    sales_after: int = 0
+
+
 class PinExperimentResult(BaseModel):
     """One drafted pin's before/after views-per-day reading (P1, 2026-08-24
     design doc §3) -- **correlational, not attribution**: a view-count
@@ -696,6 +817,16 @@ class BriefProposal(BaseModel):
     tier: Tier
     reason: str
     expires_at: str  # ISO date
+
+
+class BriefQueued(BriefProposal):
+    """A still-"proposed" action whose capability's EFFECTIVE tier is now
+    AUTO/NOTIFY (e.g. a proposal minted before a tier lift): the next run
+    drives it through the guards itself, so it is NOT waiting on the operator.
+    `will_execute` / `verdict` say whether the guards currently let it run."""
+
+    will_execute: bool
+    verdict: str
 
 
 class BriefReadbackFailure(BaseModel):
@@ -834,6 +965,7 @@ class Brief(BaseModel):
     # (generate_brief() with brief_sections.autonomy=False, or any caller
     # that never touches these) stays valid without passing them.
     needs_you: list[BriefProposal] = Field(default_factory=list)
+    queued: list[BriefQueued] = Field(default_factory=list)
     readback_failed: list[BriefReadbackFailure] = Field(default_factory=list)
     done_recent: list[BriefAction] = Field(default_factory=list)
     refused_recent: list[BriefRefusal] = Field(default_factory=list)
@@ -850,3 +982,10 @@ class Brief(BaseModel):
     pin_experiments: list[PinExperimentResult] = Field(default_factory=list)
     # S8 (Buffer design §6/§12): None iff brief_sections.social_queue is off.
     social_queue: BriefSocialQueue | None = None
+    # THE NUMBERS (contribution-profit scorecard); None iff brief_sections.scorecard is off.
+    scorecard: Scorecard | None = None
+    # OUTCOMES (per-action before/after readout); empty iff brief_sections.outcomes is off.
+    outcome_rollups: list[OutcomeRollup] = Field(default_factory=list)
+    outcome_best: list[ActionOutcome] = Field(default_factory=list)
+    outcome_worst: list[ActionOutcome] = Field(default_factory=list)
+    outcomes_total: int = 0

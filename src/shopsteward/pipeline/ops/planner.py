@@ -41,7 +41,7 @@ from shopsteward.adapters.planner.interface import (
 )
 from shopsteward.core.events import Event, append
 from shopsteward.pipeline.llm_ledger import monthly_spend
-from shopsteward.pipeline.ops import analytics, cadence
+from shopsteward.pipeline.ops import analytics, cadence, outcomes
 from shopsteward.pipeline.ops.capabilities.caption_draft import _candidates as _caption_candidates
 from shopsteward.pipeline.ops.capabilities.pinterest_post import _candidates as _pin_candidates
 from shopsteward.pipeline.ops.capabilities.pinterest_post import _last_pinned_at
@@ -345,6 +345,12 @@ def _build_facts_json(
         # configured.
         "cadence_deficit": cadence.cadence_deficit(
             conn, user_id, cfg, (as_of or datetime.now(UTC)).date()
+        ),
+        # Measured results of past executed actions (adjusted for the shop-wide
+        # trend; small n -- the prompt says so). `negative_on_listing` lists the
+        # (capability, listing) pairs that did worse than the shop trend.
+        "action_outcomes": outcomes.planner_facts(
+            outcomes.action_outcomes(conn, user_id, cfg, (as_of or datetime.now(UTC)).date()), cfg
         ),
         "candidate_target_ids": {
             cap.key: [a.target_id for a in cap.propose(conn, user_id, cfg)] for cap in capabilities

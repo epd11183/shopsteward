@@ -49,6 +49,7 @@ occurs -- the symmetric holdout, the cooldown and the budget/cap checks here
 are unchanged and are what still gate those executions."""
 
 import sqlite3
+from collections.abc import Callable
 from datetime import date
 
 from pydantic import BaseModel
@@ -91,6 +92,22 @@ def is_halted(conn: sqlite3.Connection, user_id: int) -> bool:
 # wall-clock vs. the `today` a caller pins for testing) would mis-bucket.
 # Upgrade: derive every window from `created_at` directly instead of a
 # passed-in `today`, if this chassis ever needs backfill/near-midnight runs.
+def _spend_parts(
+    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, in_range: Callable[[str], bool]
+) -> tuple[float, float]:
+    """The shared fold behind `month_spend_parts` and `spend_parts_between`."""
+    actions = 0.0
+    for e in read_all(conn, "action.executed"):
+        if e.user_id == user_id and in_range(e.created_at or ""):
+            actions += e.payload.get("cost_usd", 0.0)
+    published = sum(
+        1
+        for e in read_all(conn, "gate3.published")
+        if e.user_id == user_id and in_range(e.created_at or "")
+    )
+    return actions, published * cfg.catalog_expansion.listing_fee_usd
+
+
 def month_spend_parts(
     conn: sqlite3.Connection, user_id: int, month_prefix: str, cfg: OpsConfig
 ) -> tuple[float, float]:
@@ -99,17 +116,16 @@ def month_spend_parts(
     counts one `catalog_expansion.listing_fee_usd` (the config value the code
     already calls the publish fee). LLM tokens are a separate ledger
     (`llm_ledger.monthly_spend`) and deliberately not folded in here."""
-    actions = 0.0
-    for e in read_all(conn, "action.executed"):
-        if e.user_id != user_id or not (e.created_at or "").startswith(month_prefix):
-            continue
-        actions += e.payload.get("cost_usd", 0.0)
-    published = sum(
-        1
-        for e in read_all(conn, "gate3.published")
-        if e.user_id == user_id and (e.created_at or "").startswith(month_prefix)
-    )
-    return actions, published * cfg.catalog_expansion.listing_fee_usd
+    return _spend_parts(conn, user_id, cfg, lambda ts: ts.startswith(month_prefix))
+
+
+def spend_parts_between(
+    conn: sqlite3.Connection, user_id: int, start: date, end: date, cfg: OpsConfig
+) -> tuple[float, float]:
+    """`month_spend_parts` over an inclusive date range (the brief scorecard's
+    listing/renewal fees actually spent). Compares the ISO event date."""
+    lo, hi = start.isoformat(), end.isoformat()
+    return _spend_parts(conn, user_id, cfg, lambda ts: lo <= ts[:10] <= hi)
 
 
 def month_spend(conn: sqlite3.Connection, user_id: int, month_prefix: str, cfg: OpsConfig) -> float:

@@ -243,29 +243,54 @@ def _cfg():
 # --- eligibility (_candidates / propose / materialize) -----------------------
 
 
-def test_proven_seller_with_archived_source_is_proposed_for_a_missing_format(conn, tmp_path):
+def test_a_landscape_photo_is_never_proposed_a_portrait_only_format(conn, tmp_path):
+    """Orientation gate: acrylic/poster/canvas were all built already and
+    canvas_portrait can never be built for a landscape photo (build_pod_reprint
+    refuses it `not_eligible`, terminally) -- so propose() must offer nothing."""
     _seed_seller_missing_one_ineligible_format(
+        conn, tmp_path, listing_id=LISTING_SELLER, photo_id="p1", file_id="f1", units=5
+    )
+    cap = ListingGapfillReprint(FakePrintFileHost())
+
+    assert cap.propose(conn, USER_ID, _cfg()) == []
+    assert (
+        cap.materialize(
+            conn,
+            USER_ID,
+            _cfg(),
+            ProposalIntent(
+                capability_key="listing.gapfill_reprint",
+                target_id=f"{LISTING_SELLER}:canvas_portrait",
+                params={},
+                reason="x",
+            ),
+        )
+        is None
+    )
+
+
+def test_proven_seller_with_archived_source_is_proposed_for_a_missing_format(conn, tmp_path):
+    _seed_seller_with_a_genuinely_buildable_missing_format(
         conn, tmp_path, listing_id=LISTING_SELLER, photo_id="p1", file_id="f1", units=5
     )
     cap = ListingGapfillReprint(FakePrintFileHost())
 
     actions = cap.propose(conn, USER_ID, _cfg())
 
-    # acrylic/poster/canvas were all built already -- never re-proposed;
-    # canvas_portrait is the one honestly-missing product_type left.
     proposed_types = {a.params["product_type"] for a in actions}
-    assert proposed_types == {"canvas_portrait"}
-    (action,) = actions
+    assert {"acrylic", "canvas"} <= proposed_types
+    assert "canvas_portrait" not in proposed_types  # wrong orientation for this photo
+    action = next(a for a in actions if a.params["product_type"] == "acrylic")
     assert action.capability == "listing.gapfill_reprint"
     assert action.target_type == "listing_reprint"
-    assert action.target_id == f"{LISTING_SELLER}:canvas_portrait"
+    assert action.target_id == f"{LISTING_SELLER}:acrylic"
     assert action.params["photo_id"] == "p1"
     assert action.params["listing_id"] == LISTING_SELLER
     assert action.estimated_cost_usd == 0.2  # the Etsy listing fee, reserved by the governor
     assert action.undo_available is True
     assert action.params["draft_id"]
     assert "top seller (5 sold)" in action.reason
-    assert "no canvas_portrait yet" in action.reason
+    assert "no acrylic yet" in action.reason
 
 
 def test_a_sale_45_days_ago_the_old_7d_gate_excluded_is_now_proposed(conn, tmp_path):

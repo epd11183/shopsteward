@@ -13,8 +13,10 @@ from datetime import UTC, date, datetime
 
 from shopsteward.core.events import read_all
 from shopsteward.pipeline import llm_ledger
-from shopsteward.pipeline.ops import analytics, buffer_publish, cadence, governor
+from shopsteward.pipeline.ops import analytics, buffer_publish, cadence, governor, outcomes
+from shopsteward.pipeline.ops.capabilities import autorenew_on, reprice
 from shopsteward.pipeline.ops.models import (
+    ActionOutcome,
     Brief,
     BriefAction,
     BriefAutonomy,
@@ -22,6 +24,7 @@ from shopsteward.pipeline.ops.models import (
     BriefLadderRow,
     BriefPin,
     BriefProposal,
+    BriefQueued,
     BriefQueuedPost,
     BriefReadbackFailure,
     BriefRefusal,
@@ -29,6 +32,8 @@ from shopsteward.pipeline.ops.models import (
     BriefUnresolvedIntent,
     OpsConfig,
     ProposedAction,
+    RefusalReason,
+    Scorecard,
     Tier,
 )
 from shopsteward.pipeline.ops.projections import (
@@ -36,7 +41,9 @@ from shopsteward.pipeline.ops.projections import (
     action_rows,
     capability_states,
 )
-from shopsteward.pipeline.ops.tiers import effective_tier_for
+from shopsteward.pipeline.ops.registry import REGISTRY, Capability
+from shopsteward.pipeline.ops.scorecard import build_scorecard
+from shopsteward.pipeline.ops.tiers import effective_tier, effective_tier_for
 
 # ponytail: fixed 7-day lookback for DONE/REFUSED, not a config knob -- add
 # one under cfg.windows if the operator ever wants a longer/shorter Brief
@@ -63,27 +70,118 @@ def _within_window(created_at: str | None, as_of: date, days: int) -> bool:
     return 0 <= (as_of - day).days <= days
 
 
-def _needs_you(conn: sqlite3.Connection, user_id: int, as_of: date) -> list[BriefProposal]:
+_AUTO_TIERS = (Tier.AUTO, Tier.NOTIFY)  # runner._AUTO_EXECUTE_TIERS
+
+
+class _AssumeReady:
+    """Governor stand-in: the brief runs with the offline REGISTRY (no live
+    adapters), so the real capability's `precondition_ok` is always False. The
+    weekly run is live, so the question here is only "do the GUARDS clear"."""
+
+    def __init__(self, cap: Capability) -> None:
+        self._cap = cap
+        self.key = cap.key
+        self.max_tier = cap.max_tier
+        self.policy_verified = cap.policy_verified
+        self.precondition_ok = True
+
+    def estimate_cost_usd(self, action: ProposedAction) -> float:
+        return self._cap.estimate_cost_usd(action)
+
+
+def _refusal_text(reason: RefusalReason, cap_key: str, cfg: OpsConfig) -> str:
+    if reason == RefusalReason.PACE and cap_key == "listing.gapfill_reprint":
+        return (
+            f"gapfill weekly pace: {cfg.gapfill.max_per_week} new Gelato product(s) per ISO "
+            "week already used, or another gapfill draft is in flight"
+        )
+    if reason == RefusalReason.PACE:
+        return "weekly/channel pace already used"
+    return f"governor refuses: {reason.value}"
+
+
+def _queue_verdict(
+    conn: sqlite3.Connection,
+    user_id: int,
+    cfg: OpsConfig,
+    cap: Capability,
+    action: ProposedAction,
+    as_of: date,
+) -> tuple[bool, str]:
+    """(will the next run execute it, why). Calls the guards -- never copies
+    them: the reprice blackout/cooldown and autorenew_on's sold-in-window check
+    live in their capability modules, everything else in `governor.govern`
+    (record=False: the brief must not append `action.refused`)."""
+    if not cfg.autonomy.enabled:
+        return False, "autonomy is OFF -- the run does nothing"
+    if cap.key == "listing.reprice":
+        if reprice._in_blackout(cfg, as_of):
+            return False, f"reprice blackout until {cfg.reprice.blackout_until}"
+        if int(action.target_id) in reprice._cooling_down(conn, user_id, cfg, as_of):
+            return False, (
+                f"reprice revert cooldown ({cfg.reprice.revert_cooldown_days}d after an undo "
+                "or a restored price)"
+            )
+    elif cap.key == "listing.autorenew_on":
+        if int(action.target_id) not in autorenew_on.sold_in_window_ids(conn, user_id, cfg, as_of):
+            return False, (
+                f"autorenew_on guard: no sale in the last {cfg.dead_listing.window_days}d "
+                "(recurring renewal fees need a recent sale)"
+            )
+        if action.target_id not in autorenew_on._candidates(conn, user_id, cfg):
+            return False, "no longer eligible (renewal posture changed or auto-renew already on)"
+    elif cap.key == "listing.gapfill_reprint":
+        from shopsteward.pipeline.ops.capabilities import gapfill
+
+        if action.target_id not in gapfill._candidates(conn, user_id, cfg):
+            return False, (
+                "no longer eligible (format not buildable for this photo, already built, "
+                "or attempts exhausted) -- the run will close it as stale"
+            )
+    decision = governor.govern(conn, user_id, action, _AssumeReady(cap), cfg, as_of, record=False)
+    if not decision.approved and decision.reason is not None:
+        return False, _refusal_text(decision.reason, cap.key, cfg)
+    return True, "guards clear -- executes in the next run (live gates permitting)"
+
+
+def _split_pending(
+    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, as_of: date
+) -> tuple[list[BriefProposal], list[BriefQueued]]:
+    """Open proposals -> (NEEDS YOU, QUEUED). Mirrors the runner's own tier
+    decision: effective tier from the registry + `autonomy.tier_floor`, then
+    the per-action `auto_hold` clamp back to PROPOSE. A capability that is not
+    registered cannot be judged, so it stays with the operator."""
     proposed = _proposed_by_action_id(conn, user_id)
-    out = []
+    states = capability_states(conn, user_id)
+    needs: list[BriefProposal] = []
+    queued: list[BriefQueued] = []
     for row in action_rows(conn):
         if row["user_id"] != user_id or row["state"] != "proposed":
             continue
         p = proposed.get(row["action_id"])
         if p is None or as_of > date.fromisoformat(p.expires_at):
             continue  # never proposed (shouldn't happen) or expired
-        out.append(
-            BriefProposal(
-                action_id=row["action_id"],
-                capability=row["capability"],
-                target_type=row["target_type"],
-                target_id=row["target_id"],
-                tier=Tier(row["tier"]),
-                reason=row["reason"],
-                expires_at=p.expires_at,
-            )
+        item = BriefProposal(
+            action_id=row["action_id"],
+            capability=row["capability"],
+            target_type=row["target_type"],
+            target_id=row["target_id"],
+            tier=Tier(row["tier"]),
+            reason=row["reason"],
+            expires_at=p.expires_at,
         )
-    return out
+        cap = REGISTRY.get(row["capability"])
+        eff = (
+            effective_tier(cap, states.get(cap.key), cfg.autonomy.tier_floor)
+            if cap is not None
+            else item.tier
+        )
+        if cap is None or eff not in _AUTO_TIERS or p.params.get("auto_hold"):
+            needs.append(item)
+            continue
+        will, why = _queue_verdict(conn, user_id, cfg, cap, p, as_of)
+        queued.append(BriefQueued(**item.model_dump(), will_execute=will, verdict=why))
+    return needs, queued
 
 
 def _readback_failed(conn: sqlite3.Connection, user_id: int) -> list[BriefReadbackFailure]:
@@ -383,7 +481,7 @@ def generate_brief(
         else []
     )
 
-    needs_you = _needs_you(conn, user_id, as_of) if sections.autonomy else []
+    needs_you, queued = _split_pending(conn, user_id, cfg, as_of) if sections.autonomy else ([], [])
     readback_failed = _readback_failed(conn, user_id) if sections.autonomy else []
     done_recent = _done_recent(conn, user_id, as_of) if sections.autonomy else []
     refused_recent = _refused_recent(conn, user_id, as_of) if sections.autonomy else []
@@ -397,6 +495,10 @@ def generate_brief(
     )
 
     social_queue = _social_queue(conn, user_id, cfg, as_of) if sections.social_queue else None
+    scorecard = build_scorecard(conn, user_id, cfg, as_of) if sections.scorecard else None
+    outcome_list = outcomes.action_outcomes(conn, user_id, cfg, as_of) if sections.outcomes else []
+    rollup_days = cfg.outcomes.rollup_window_days
+    best, worst = outcomes.best_and_worst(outcome_list, rollup_days, cfg.outcomes.top_n)
 
     return Brief(
         generated_at=as_of,
@@ -411,6 +513,7 @@ def generate_brief(
         shoot_more=shoot,
         data_quality_notes=notes,
         needs_you=needs_you,
+        queued=queued,
         readback_failed=readback_failed,
         done_recent=done_recent,
         refused_recent=refused_recent,
@@ -419,11 +522,108 @@ def generate_brief(
         pin_drafts=pin_drafts,
         pin_experiments=pin_experiments,
         social_queue=social_queue,
+        scorecard=scorecard,
+        outcome_rollups=[
+            r for n in cfg.outcomes.windows_days for r in outcomes.rollup(outcome_list, n)
+        ],
+        outcome_best=best,
+        outcome_worst=worst,
+        outcomes_total=len(outcome_list),
     )
 
 
 def _money(usd: float) -> str:
     return f"${usd:,.2f}"
+
+
+def _pct(cur: float, prior: float) -> str:
+    return "n/a" if prior == 0 else f"{(cur - prior) / prior:+.0%}"
+
+
+def _render_scorecard(sc: Scorecard) -> list[str]:
+    lines = ["", "THE NUMBERS (contribution profit; item revenue, trailing windows)"]
+    for w in sc.windows:
+        unknown = (
+            f" [+{w.pod_units_cost_unknown} POD units, cost unknown]"
+            if w.pod_units_cost_unknown
+            else ""
+        )
+        lines.append(
+            f"  {w.days:>3}d: revenue {_money(w.revenue_usd)} | "
+            f"txn fee {_money(w.transaction_fees_usd)}"
+            f" | processing {_money(w.processing_fees_usd)} | listing/renewal fees "
+            f"{_money(w.listing_fees_usd)} | fulfillment {_money(w.fulfillment_usd)}{unknown}"
+            f" | ads {_money(w.ad_spend_usd)} => CONTRIBUTION {_money(w.contribution_usd)} "
+            f"({w.units} units, {w.orders} orders)"
+        )
+    t = sc.traffic
+    n = t.window_days
+    ctx = "market/seasonality context, not shop performance"
+    if t.listings_covered:
+        lines.append(
+            f"  Shop views last {n}d vs prior {n}d ({ctx}): "
+            f"{t.views_current:g} vs {t.views_prior:g} ({_pct(t.views_current, t.views_prior)}); "
+            f"favorites {t.favorites_current:g} vs {t.favorites_prior:g} "
+            f"({_pct(t.favorites_current, t.favorites_prior)}) -- "
+            f"{t.listings_covered} of {t.listings_observed} listings covered"
+        )
+    elif t.views_current_only is not None:
+        lines.append(
+            f"  Shop views last {n}d ({ctx}): {t.views_current_only:g} over "
+            f"{t.listings_current_only} listings; prior {n}d not measurable yet"
+        )
+    else:
+        lines.append(f"  Shop views last {n}d vs prior {n}d ({ctx}): not measurable yet")
+    lines.extend(f"  note: {note}" for note in sc.notes)
+    return lines
+
+
+def _fmt_change(v: float | None) -> str:
+    return "n/a" if v is None else f"{v:+.2f}"
+
+
+def _outcome_line(o: ActionOutcome, days: int) -> str:
+    w = outcomes.window_of(o, days)
+    head = f"  {o.capability} on {o.title} ({o.anchor}) {days}d: "
+    if w is None:
+        return head + "not measurable"
+    if w.status != "measured":
+        return head + w.status
+    if w.baseline == "new listing":
+        return head + (
+            f"new listing, {w.views_after_per_day:.2f} views/day after, "
+            f"{w.sales_after} sold (no before)"
+        )
+    raw = _fmt_change(w.views_change_raw)
+    adj = _fmt_change(w.views_change_adjusted) if w.baseline == "ok" else "no baseline"
+    return head + (
+        f"views/day {raw} raw, {adj} vs shop trend ({w.controls_n} controls); "
+        f"sales {w.sales_before}->{w.sales_after}"
+    )
+
+
+def _render_outcomes(brief: Brief) -> list[str]:
+    lines = [
+        "",
+        f"OUTCOMES ({brief.outcomes_total} executed actions; correlational, small samples, "
+        "changes in views/day are relative to the shop-wide trend over the same window)",
+    ]
+    for r in brief.outcome_rollups:
+        lines.append(
+            f"  {r.capability} {r.days}d: n={r.n_actions}, adjusted n={r.n_measured}"
+            f" (no baseline {r.n_no_baseline}; not yet measurable {r.n_not_yet_measurable}; "
+            f"not measurable {r.n_not_measurable}), median adjusted views/day "
+            f"{_fmt_change(r.median_adjusted_views_per_day)} (raw "
+            f"{_fmt_change(r.median_raw_views_per_day)}), sold after {r.sales_after}"
+        )
+    days = brief.outcome_rollups[0].days if brief.outcome_rollups else 7
+    if brief.outcome_best:
+        lines.append(f"  Top {len(brief.outcome_best)} ({days}d, adjusted):")
+        lines.extend("  " + _outcome_line(o, days) for o in brief.outcome_best)
+    if brief.outcome_worst:
+        lines.append(f"  Bottom {len(brief.outcome_worst)} ({days}d, adjusted):")
+        lines.extend("  " + _outcome_line(o, days) for o in brief.outcome_worst)
+    return lines
 
 
 def render_text(brief: Brief) -> str:
@@ -444,6 +644,15 @@ def render_text(brief: Brief) -> str:
             lines.append(
                 f"  DRAFT NOT PUBLISHED (read-back failed) {f.draft_id} "
                 f"(etsy {f.etsy_listing_id}) {f.title or ''}: " + "; ".join(f.problems)
+            )
+
+        lines.append("")
+        lines.append(f"QUEUED (next run) -- no action needed from you ({len(brief.queued)})")
+        for q in brief.queued:
+            state = "WILL RUN" if q.will_execute else "BLOCKED"
+            lines.append(
+                f"  [{q.action_id}] {q.capability} -> {q.target_type}:{q.target_id} : "
+                f"{state}: {q.verdict}"
             )
 
         lines.append("")
@@ -539,6 +748,12 @@ def render_text(brief: Brief) -> str:
                     for k in _BUFFER_METRIC_KEYS
                 )
                 lines.append(f"    Buffer: {shown}")
+
+    if brief.scorecard is not None:
+        lines.extend(_render_scorecard(brief.scorecard))
+
+    if brief.outcomes_total or brief.outcome_rollups:
+        lines.extend(_render_outcomes(brief))
 
     lines.append("")
     lines.append("THE SHOP")

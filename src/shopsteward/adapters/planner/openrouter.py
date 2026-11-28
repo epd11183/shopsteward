@@ -109,7 +109,12 @@ def _plan_system_prompt(limits: PlannerLimits) -> str:
         "digital art, illustrations, or any other non-photographic medium -- "
         "never adopt a ranker tag (or otherwise word a title/tags/"
         "description) that describes the work as one, even if a competitor "
-        "ranks well using it; doing so would misrepresent the listing."
+        "ranks well using it; doing so would misrepresent the listing.\n\n"
+        'The facts\' "action_outcomes" block reports measured results of past '
+        "actions: favour capabilities with positive measured outcomes and avoid "
+        'repeating ones with negative outcomes on the same listing (see "'
+        'negative_on_listing"); outcomes are relative to the shop-wide trend '
+        "over the same window; samples are small."
     )
 
 

@@ -71,7 +71,11 @@ from shopsteward.pipeline.listings import gate3
 from shopsteward.pipeline.listings.drafts import _completed_mockup_set, _mockup_projections_ready
 from shopsteward.pipeline.listings.pod import config as pod_config
 from shopsteward.pipeline.listings.pod import printfile
-from shopsteward.pipeline.listings.pod.build import _archived_row_for_photo, build_pod_reprint
+from shopsteward.pipeline.listings.pod.build import (
+    _archived_row_for_photo,
+    build_pod_reprint,
+    reprint_eligible_types,
+)
 from shopsteward.pipeline.listings.pod.enrich import enrich_pod_drafts
 from shopsteward.pipeline.listings.pod.provider import claimed_by_gapfill, link_pod_drafts
 from shopsteward.pipeline.listings.projections import rebuild_listings
@@ -248,8 +252,14 @@ def _candidates(
         if source is None or not source.archived or source.photo_id is None:
             continue  # no archived source: never guess a reprint
 
+        # Only formats the build step can actually build for THIS photo (a landscape
+        # photo has no canvas_portrait: build_pod_reprint refuses it terminally).
+        buildable = reprint_eligible_types(conn, user_id, source.photo_id, pod_cfg)
         for product_type, provider in provider_by_type.items():
             draft_id = compute_draft_id(source.photo_id, pod_cfg_hash, provider, product_type)
+            # Never strand one of our own in-flight drafts if the eligibility rules move.
+            if product_type not in buildable and draft_id not in claimed:
+                continue
             if _draft_exists(conn, user_id, draft_id) and (
                 draft_id not in claimed or draft_id in skip
             ):

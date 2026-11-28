@@ -122,7 +122,7 @@ adapter."""
 
 import hashlib
 import sqlite3
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pydantic
 
@@ -209,6 +209,23 @@ def _listings_most_recently_renewed(conn: sqlite3.Connection, user_id: int) -> s
     }
 
 
+def sold_in_window_ids(
+    conn: sqlite3.Connection, user_id: int, cfg: OpsConfig, today: date
+) -> set[int]:
+    """The AUTO guard: listings with a sale inside `cfg.dead_listing.window_days`
+    -- same window and same table `dead_listings()` uses for its "0 sales" test.
+    Also read by `ops brief` to say WHY a queued autorenew_on will not run."""
+    win_start, win_end = analytics._window(today, cfg.dead_listing.window_days)
+    return {
+        r["listing_id"]
+        for r in conn.execute(
+            "SELECT DISTINCT listing_id FROM proj_sale_items WHERE user_id=? "
+            "AND sale_date BETWEEN ? AND ?",
+            (user_id, win_start.isoformat(), win_end.isoformat()),
+        ).fetchall()
+    }
+
+
 def _candidates(
     conn: sqlite3.Connection, user_id: int, cfg: OpsConfig
 ) -> dict[str, ProposedAction]:
@@ -234,16 +251,7 @@ def _candidates(
         return {}
 
     dead_ids = {d.listing_id for d in analytics.dead_listings(conn, user_id, cfg)}
-    # Same window and same table `dead_listings()` uses for its "0 sales" test.
-    win_start, win_end = analytics._window(datetime.now(UTC).date(), cfg.dead_listing.window_days)
-    sold_ids = {
-        r["listing_id"]
-        for r in conn.execute(
-            "SELECT DISTINCT listing_id FROM proj_sale_items WHERE user_id=? "
-            "AND sale_date BETWEEN ? AND ?",
-            (user_id, win_start.isoformat(), win_end.isoformat()),
-        ).fetchall()
-    }
+    sold_ids = sold_in_window_ids(conn, user_id, cfg, datetime.now(UTC).date())
 
     active_rows = conn.execute(
         "SELECT listing_id FROM proj_listings WHERE user_id=? AND state='active'",

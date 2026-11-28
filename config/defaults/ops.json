@@ -84,6 +84,19 @@
     "max_per_week": 1,
     "max_attempts": 3
   },
+  "economics": {
+    "transaction_fee_pct": 0.065,
+    "payment_processing_pct": 0.03,
+    "payment_processing_fixed_usd": 0.25,
+    "windows_days": [30, 90, 365],
+    "traffic_window_days": 7
+  },
+  "outcomes": {
+    "windows_days": [7, 28],
+    "rollup_window_days": 7,
+    "min_controls": 5,
+    "top_n": 3
+  },
   "caption": {
     "max_len": 2200,
     "channels": {
