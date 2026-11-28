@@ -517,6 +517,25 @@ def _archived_row_for_photo(
     return rows[0]
 
 
+def reprint_eligible_types(
+    conn: sqlite3.Connection, user_id: int, photo_id: str, cfg: PodConfig
+) -> set[str]:
+    """Product types `build_pod_reprint` would actually build for this archived
+    photo (read-only: the SAME `_select_and_price` selection -- aspect,
+    orientation, DPI, price ceiling -- and no event appended). Empty when the
+    photo has no archived dims, so a proposer never offers a format the build
+    step would refuse (`not_eligible`/`not_archived`/`no_dimensions`)."""
+    row = _archived_row_for_photo(conn, user_id, photo_id, cfg.print_file.prefer)
+    if row is None or row["width"] is None or row["height"] is None:
+        return set()
+    try:
+        pricing = listing_config.get_config(conn, user_id).pricing
+    except KeyError:  # listing config not seeded/projected yet -- the shipped default is the same
+        pricing = listing_config.load_listing_config().pricing
+    kept, _, _ = _select_and_price(row["width"], row["height"], cfg, pricing)
+    return {v.product_type for v in kept}
+
+
 def build_pod_reprint(
     conn: sqlite3.Connection,
     user_id: int,
